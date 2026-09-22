@@ -1,0 +1,46 @@
+name: impromptu
+
+services:
+  livekit:
+    image: livekit/livekit-server:v1.13.7@sha256:6fd3b7088874c4d119160dd688798dfec852bc014786d392caad15f6f63912a3
+    command: ["--config", "/etc/livekit.yaml"]
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: npm run dev -w @impromptu/api
+    depends_on:
+      - livekit
+    environment:
+      LIVEKIT_API_KEY: devkey
+      LIVEKIT_API_SECRET: local-development-secret-at-least-32-chars
+      LIVEKIT_API_URL: http://livekit:7880
+      LIVEKIT_PUBLIC_URL: ws://localhost:7880
+      NODE_OPTIONS: --conditions=development
+    expose:
+      - "3000"
+    volumes:
+      - ./apps/api/src:/workspace/apps/api/src
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: npm run dev -w @impromptu/web -- --host 0.0.0.0
+    depends_on:
+      - api
+    environment:
+      API_PROXY_TARGET: http://api:3000
+      NODE_OPTIONS: --conditions=development
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./apps/web/app:/workspace/apps/web/app
+      - ./apps/api/src:/workspace/apps/api/src:ro

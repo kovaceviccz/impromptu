@@ -1,0 +1,12 @@
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: false
+
+keys:
+  devkey: local-development-secret-at-least-32-chars
+
+logging:
+  level: info
