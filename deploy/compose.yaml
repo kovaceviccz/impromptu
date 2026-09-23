@@ -1,0 +1,63 @@
+name: impromptu-production
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-file: "3"
+    max-size: 10m
+
+services:
+  envoy:
+    image: envoyproxy/envoy:distroless-v1.39.1@sha256:eb2c01c13125d1629637cb4e4cce7207009fb7cc2c8027f9742758549d15b6f4
+    user: "0:1001"
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    volumes:
+      - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - ./secrets:/etc/envoy/tls:ro
+    depends_on:
+      app:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+    logging: *default-logging
+
+  app:
+    image: ${APP_IMAGE:?Set APP_IMAGE to an immutable image reference}
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    environment:
+      HOST: 127.0.0.1
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?Set LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?Set LIVEKIT_API_SECRET}
+      LIVEKIT_API_URL: http://127.0.0.1:7880
+      LIVEKIT_PUBLIC_URL: wss://${LIVEKIT_HOSTNAME:?Set LIVEKIT_HOSTNAME}
+      PORT: 3000
+    logging: *default-logging
+
+  livekit:
+    image: livekit/livekit-server:v1.13.7@sha256:6fd3b7088874c4d119160dd688798dfec852bc014786d392caad15f6f63912a3
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    command: ["--config", "/etc/livekit.yaml"]
+    environment:
+      LIVEKIT_KEYS:
+        "${LIVEKIT_API_KEY:?Set LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET:?Set
+        LIVEKIT_API_SECRET}"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    logging: *default-logging

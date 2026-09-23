@@ -1,0 +1,10 @@
+.git
+.github
+.env
+.env.*
+**/.react-router
+**/build
+**/dist
+**/node_modules
+deploy
+docs
