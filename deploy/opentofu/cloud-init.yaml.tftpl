@@ -1,0 +1,42 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - docker.io
+  - docker-compose-v2
+  - openssl
+
+users:
+  - default
+  - name: impromptu
+    uid: 1001
+    groups: [docker]
+    lock_passwd: true
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-impromptu.conf
+    permissions: "0644"
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitEmptyPasswords no
+      PermitRootLogin no
+      X11Forwarding no
+      AllowTcpForwarding no
+      AllowUsers impromptu
+  - path: /etc/sysctl.d/99-livekit.conf
+    permissions: "0644"
+    content: |
+      net.core.rmem_max=5000000
+      net.core.wmem_max=5000000
+
+runcmd:
+  - [mkdir, -p, /opt/impromptu/deploy/secrets]
+  - [chown, -R, "impromptu:impromptu", /opt/impromptu]
+  - [sysctl, --system]
+  - [systemctl, enable, --now, docker]
+  - [systemctl, restart, ssh]

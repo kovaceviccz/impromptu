@@ -1,0 +1,7 @@
+cloudflare_zone_id = "replace-me"
+app_hostname       = "impromptu.social"
+livekit_hostname   = "livekit.impromptu.social"
+server_type        = "cpx12"
+location           = "nbg1"
+ssh_source_cidrs   = ["0.0.0.0/0", "::/0"]
+ssh_public_key     = "ssh-ed25519 replace-me"
