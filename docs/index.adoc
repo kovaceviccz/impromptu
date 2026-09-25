@@ -1,0 +1,28 @@
+= Impromptu documentation
+
+These pages document the structural contracts and interface principles.
+
+== Contents
+
+* xref:architecture.adoc[Architecture] explains code ownership, API contracts,
+  realtime authorization, and deployment boundaries.
+* xref:interface.adoc[Interface] records the visual language and interaction
+  principles used across the product.
+
+== Local development
+
+Docker with Compose is the only runtime requirement:
+
+[source,sh]
+----
+docker compose up --build
+----
+
+Open http://localhost:5173[localhost:5173]. `npm install` installs a Husky hook
+that runs the same quality gate as GitHub Actions before each commit. Run the
+gate directly at any time with:
+
+[source,sh]
+----
+npm run ci
+----

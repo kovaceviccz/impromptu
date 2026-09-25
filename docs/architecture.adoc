@@ -1,0 +1,143 @@
+= Architecture
+:toc:
+:toclevels: 2
+
+== System boundaries
+
+Impromptu is split into a browser application, an HTTP API, and a realtime media
+system. React Router owns navigation and page data. Fastify owns trusted
+application decisions and HTTP validation. LiveKit carries room presence and
+WebRTC media.
+
+Zod schemas from the API package form the contract between browser and server.
+Cloudflare and Envoy sit at the public edge, while OpenTofu describes the
+Hetzner and Cloudflare resources.
+
+[source,text]
+----
+Browser -> Cloudflare -> Envoy -> Fastify
+                           `----> LiveKit signaling
+Browser ------------------------> LiveKit media
+----
+
+The product name is `impromptu` and the production domain is
+https://impromptu.social[impromptu.social]. Application code reads both values
+from the shared `PRODUCT` constant.
+
+== Repository boundaries
+
+[source,text]
+----
+apps/api             Fastify API and browser-safe contract export
+apps/web             React Router application and browser tests
+deploy               production containers, configuration, and OpenTofu
+Dockerfile           local development image
+compose.yaml         local development stack
+livekit.yaml         local LiveKit configuration
+----
+
+The API is organized by feature. A feature owns its routes and schemas together
+with their implementation and tests. Shared process configuration and
+application composition stay at the API source root.
+
+The `deploy/` directory is an extractable deployment boundary. It consumes a
+prebuilt application image and contains the files needed to provision and run
+the production stack. Application source is not a runtime dependency of that
+directory.
+
+== API contracts
+
+The API package owns HTTP methods, paths, request schemas, and response schemas.
+TypeScript types are inferred from those schemas. The browser-safe
+`@impromptu/api/contracts` export imports neither Fastify nor LiveKit runtime
+code.
+
+Fastify validates incoming data and serializes responses against the contract.
+The browser parses responses with the same schemas. This keeps static types and
+runtime validation together without parallel DTOs or generated client code.
+
+== Realtime authorization
+
+The backend decides whether a participant can publish. The frontend sends the
+person's requested role and position, then uses the resulting token. It does not
+infer a role from room counts or silently change the request.
+
+LiveKit grants are the security boundary:
+
+[cols="1,1,1,1,1,1",options="header"]
+|===
+|Role |Join |Subscribe |Publish media |Publish data |Update own metadata
+
+|Debater
+|Allowed
+|Allowed
+|Allowed
+|Denied
+|Denied
+
+|Spectator
+|Allowed
+|Allowed
+|Denied
+|Allowed
+|Allowed
+|===
+
+The same role policy applies when the client UI is bypassed. LiveKit remains the
+source for connected participant presence, and backend allocation must handle
+concurrent attempts to claim a limited position.
+
+Room features use LiveKit's official client and React packages.
+
+== Frontend
+
+The web application uses React Router Framework Mode, shadcn/ui, Tailwind, and
+LiveKit's React package. Route data APIs handle navigation-bound reads and
+mutations. Local component state and LiveKit hooks cover transient interface and
+room state.
+
+The API remains the source for application decisions, while LiveKit remains the
+source for connected-room state. The frontend does not copy either source into
+a global application store.
+
+Fastify serves the compiled SPA in production. Vite provides the development
+server and proxies API requests during local development.
+
+== Edge and deployment
+
+Cloudflare provides public DNS, HTTP proxying, and TLS. Envoy is the CNCF origin
+gateway and routes application traffic separately from LiveKit signaling.
+LiveKit media reaches the host directly because a standard Cloudflare HTTP proxy
+does not carry the required media transports.
+
+OpenTofu owns the Hetzner host, firewall, SSH access, Cloudflare DNS records,
+origin certificate, and the zone settings required at the edge. Private keys
+and API credentials remain outside OpenTofu inputs and state. After CI succeeds
+for the current `main` commit, the deployment workflow builds an immutable
+application image, installs the runtime configuration, starts the Compose stack,
+and verifies the public application and signaling routes. A manual deployment
+path remains available for initial provisioning and recovery.
+
+The root Compose files are for source development. Production configuration
+belongs under `deploy/`, including its Dockerfile, Compose stack, service
+configuration, scripts, environment template, and infrastructure code.
+
+== Verification
+
+The Husky pre-commit hook and GitHub Actions both run `npm run ci`. A failed gate
+stops the commit. The command checks formatting, linting, strict TypeScript,
+tests, production builds, documentation generation, containers, workflows, and
+infrastructure configuration.
+
+The TypeScript version comes from the root `package.json`. Tool compatibility
+is resolved by updating or replacing the affected tool rather than holding
+TypeScript to an older release.
+
+== References
+
+* https://reactrouter.com/start/framework/rendering[React Router rendering]
+* https://fastify.dev/docs/latest/Reference/Type-Providers/[Fastify type providers]
+* https://docs.livekit.io/home/server/generating-tokens/[LiveKit token generation]
+* https://docs.livekit.io/transport/self-hosting/ports-firewall/[LiveKit ports and firewall]
+* https://developers.cloudflare.com/network/websockets/[Cloudflare WebSockets]
+* https://www.cncf.io/projects/envoy/[CNCF Envoy project]

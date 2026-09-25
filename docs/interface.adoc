@@ -1,0 +1,154 @@
+= Interface
+:toc:
+:toclevels: 2
+
+== Character
+
+Impromptu should read as a live debate venue, with a visible audience and two
+positions in direct comparison. It should not resemble a generic video call, a
+corporate dashboard, or a marketing page.
+
+Source Serif 4 gives debate content an editorial voice. Inter keeps controls and
+operational text familiar. Oxford Union and newspaper references inform the
+typography and restraint without turning the interface into a print imitation.
+
+The debate itself holds the visual focus. Navigation and status information
+support it without competing for attention.
+
+== Typography and color
+
+[cols="3,2",options="header"]
+|===
+|Use |Treatment
+
+|Wordmark, questions, positions, and editorial headings
+|Source Serif 4
+
+|Controls, status, chat, and form copy
+|Inter
+
+|Brand and general actions
+|Oxford blue
+
+|Affirmative position
+|Green
+
+|Opposing position
+|Red
+
+|Page background
+|Cool near-white with a light blue tint
+
+|Destructive action
+|Red
+|===
+
+Green and red retain the same meaning wherever the two positions appear. The
+position text repeats that meaning, so color does not carry it alone.
+Oxford blue belongs to the brand and actions that are not tied to either
+position.
+
+All topics share one palette. Topic-specific tints would weaken the learned
+meaning of the two position colors.
+
+== Composition
+
+The accepted layout is the starting point for future work. A feature belongs in
+the region where its result appears, and a changed product flow is the reason to
+change the page hierarchy.
+
+Type, space, and small tonal shifts separate regions. Borders remain useful for
+inputs and focus states, but they do not outline every section. Shadows are
+reserved for overlays such as dialogs and popovers. Rounded containers are used
+when they describe a real surface rather than as a default wrapper.
+
+Debate questions and full position text take precedence over generic labels or
+numbered sides. Availability and occupancy appear as plain language when a badge
+would add visual weight without adding meaning.
+
+== Controls and feedback
+
+Ordinary controls use shadcn/ui behavior, sizes, focus treatment, and disabled
+states. Tailwind handles layout and the established debate colors. A custom
+button skin or wrapper needs a reason specific to Impromptu.
+
+Primary actions are easy to find and secondary actions remain visibly
+secondary. Destructive actions use red. Icon-only controls have an accessible
+name and retain a useful pointer and keyboard target.
+
+Feedback appears beside the action or state it describes. Inline errors,
+disabled controls, pressed states, and changed counts cover routine feedback.
+Toast notifications are reserved for outcomes that have no stable place in the
+page.
+
+== Debate roles
+
+Choosing to debate and choosing to spectate are explicit actions. A failed role
+or position request produces an error instead of silently changing the person's
+intent.
+
+The room presents the two arguments as peers, with each heading connected to its
+participant media. Camera video is mirrored. Audience information is distinct
+from the debate media, and occupancy, voting, and chat have separate visual
+hierarchies.
+
+Interactive controls follow the permissions issued by the backend. Spectators
+can use audience actions made available to them; debaters see read-only results
+where participation is restricted. Hiding a control is not treated as the
+permission boundary.
+
+== Chat
+
+Only spectators send messages, while debaters receive a read-only transcript;
+the LiveKit token enforces the same restriction.
+
+Chat follows familiar messaging conventions: participant name, message, and
+local timestamp. Avatars and repeated divider lines are omitted when they add no
+information. The composer keeps its text input and adjacent action at the same
+height.
+
+The message list owns its scrolling. Adding chat should not turn the entire room
+into a long page or displace the debate media.
+
+== Motion
+
+Motion explains a state change. A result can resize to show a changed share.
+Navigation controls do not animate while idle. The interface avoids ornamental
+page transitions, pulsing controls, and movement added only to attract
+attention.
+
+== Copy
+
+Visible copy consistently uses `debate`, `debater`, `spectator`, `topic`,
+`side`, and `position`. A side is the place a debater occupies; a position is the
+argument being presented. Full position text replaces labels such as `Side 1`,
+`For`, and `Against`.
+
+URLs and visible copy use debate terminology rather than `discussion` or
+`discusser`.
+
+Labels are short and literal. Instructions do not repeat a nearby control, and
+status copy does not become promotional. Application-load failures use a direct
+heading and supporting sentence instead of a decorative card.
+
+== Semantics and responsive behavior
+
+The application uses native headings, sections, lists, forms, buttons, links,
+labels, figures, and time elements. ARIA fills gaps left by native semantics or
+visible text, chiefly the name of an icon-only control; keyboard focus remains
+visible, and interactive controls use the pointer cursor.
+
+Responsive changes preserve the relationship between a position and its media.
+Each region owns its overflow, with chat as the usual scrollable area. The page
+adapts through normal layout primitives rather than separate mobile and desktop
+implementations.
+
+== Visual restraint
+
+The interface avoids dashboard grids, decorative metrics, gradients, glass
+effects, glows, and background blobs. Pills and chips are for compact state that
+benefits from a bounded shape, not ordinary prose or counts.
+
+Flat regions are preferred when spacing and tone already establish structure.
+The interface does not add a card, border, shadow, animation, or dependency by
+default. New visual treatment should explain hierarchy, state, or interaction.
