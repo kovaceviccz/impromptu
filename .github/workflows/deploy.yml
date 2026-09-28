@@ -1,0 +1,145 @@
+name: Deploy production
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref ==
+      'refs/heads/main') || (github.event_name == 'workflow_run' &&
+       vars.AUTO_DEPLOY_ENABLED == 'true' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_sha == github.sha)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+
+      - name: Normalize image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push immutable application image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: true
+          tags: ${{ steps.image.outputs.name }}:${{ env.DEPLOY_SHA }}
+
+      - name: Configure SSH
+        env:
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Copy deployment configuration
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          ssh "impromptu@$DEPLOY_HOST" \
+            'mkdir -p /opt/impromptu/deploy/secrets /opt/impromptu/deploy/scripts'
+          scp deploy/compose.yaml deploy/envoy.yaml deploy/livekit.yaml \
+            "impromptu@$DEPLOY_HOST:/opt/impromptu/deploy/"
+          scp deploy/scripts/up.sh \
+            "impromptu@$DEPLOY_HOST:/opt/impromptu/deploy/scripts/"
+
+      - name: Install deployment secrets
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
+          LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
+          LIVEKIT_HOSTNAME: ${{ vars.LIVEKIT_HOSTNAME }}
+          ORIGIN_CERTIFICATE: ${{ secrets.ORIGIN_CERTIFICATE }}
+          ORIGIN_PRIVATE_KEY: ${{ secrets.ORIGIN_PRIVATE_KEY }}
+          APP_IMAGE:
+            ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
+        run: |
+          umask 077
+          printf 'APP_IMAGE=%s\nLIVEKIT_API_KEY=%s\nLIVEKIT_API_SECRET=%s\nLIVEKIT_HOSTNAME=%s\n' \
+            "$APP_IMAGE" "$LIVEKIT_API_KEY" "$LIVEKIT_API_SECRET" "$LIVEKIT_HOSTNAME" \
+            > "$RUNNER_TEMP/impromptu.env"
+          printf '%s\n' "$ORIGIN_CERTIFICATE" > "$RUNNER_TEMP/origin.pem"
+          printf '%s\n' "$ORIGIN_PRIVATE_KEY" > "$RUNNER_TEMP/origin-key.pem"
+          scp "$RUNNER_TEMP/impromptu.env" \
+            "impromptu@$DEPLOY_HOST:/opt/impromptu/deploy/.env"
+          scp "$RUNNER_TEMP/origin.pem" "$RUNNER_TEMP/origin-key.pem" \
+            "impromptu@$DEPLOY_HOST:/opt/impromptu/deploy/secrets/"
+          ssh "impromptu@$DEPLOY_HOST" \
+            'chmod 600 /opt/impromptu/deploy/.env && \
+             chmod 640 /opt/impromptu/deploy/secrets/origin-key.pem && \
+             chmod 644 /opt/impromptu/deploy/secrets/origin.pem'
+
+      - name: Log in to GHCR on the server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | ssh "impromptu@$DEPLOY_HOST" \
+            "docker login ghcr.io --username '${{ github.actor }}' --password-stdin"
+
+      - name: Deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          ssh "impromptu@$DEPLOY_HOST" \
+            'sh /opt/impromptu/deploy/scripts/up.sh'
+
+      - name: Verify public routes
+        env:
+          APP_HOSTNAME: ${{ vars.APP_HOSTNAME }}
+          LIVEKIT_HOSTNAME: ${{ vars.LIVEKIT_HOSTNAME }}
+        run: |
+          curl --fail --silent --show-error \
+            --retry 20 --retry-all-errors --retry-delay 3 \
+            "https://$APP_HOSTNAME/api/health" >/dev/null
+
+          attempt=0
+          livekit_status=
+          while [ "$attempt" -lt 20 ]; do
+            livekit_status=$(curl --silent --output /dev/null \
+              --write-out '%{http_code}' \
+              "https://$LIVEKIT_HOSTNAME/rtc/validate?access_token=invalid" || true)
+            [ "$livekit_status" = 401 ] && break
+            attempt=$((attempt + 1))
+            sleep 3
+          done
+          test "$livekit_status" = 401
+
+      - name: Log out of GHCR on the server
+        if: always()
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          ssh "impromptu@$DEPLOY_HOST" 'docker logout ghcr.io || true' || true
