@@ -1,6 +1,14 @@
-import { PRODUCT, type TopicStatus } from "@impromptu/api/contracts";
-import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import {
+  PRODUCT,
+  type PrivateLobbyPreview,
+  type TopicStatus,
+} from "@impromptu/api/contracts";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  LockKeyholeIcon,
+} from "lucide-react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
   Form,
   useLoaderData,
@@ -20,7 +28,12 @@ import {
 } from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
 
-import { getTopics } from "../api";
+import {
+  createPrivateTopic,
+  getTopics,
+  joinTopicByCode,
+  lookupPrivateLobby,
+} from "../api";
 
 export const MEDIA_PERMISSION_MESSAGE =
   "Video and audio permissions must be given. Try again.";
@@ -45,6 +58,298 @@ type Selection = {
 };
 
 const sideIndexes = [0, 1] as const;
+type LobbyChoice = "spectator" | "0" | "1";
+
+function parseLobbyChoice(value: string): LobbyChoice {
+  return value === "0" || value === "1" ? value : "spectator";
+}
+
+function parseSideIndex(value: LobbyChoice): 0 | 1 | undefined {
+  if (value === "0") return 0;
+  if (value === "1") return 1;
+  return undefined;
+}
+
+function PrivateLobby({ topics }: { topics: TopicStatus[] }) {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [topicId, setTopicId] = useState(topics[0]?.id ?? "");
+  const [joinCode, setJoinCode] = useState("");
+  const [creatorName, setCreatorName] = useState("");
+  const [joinerName, setJoinerName] = useState("");
+  const [creatorChoice, setCreatorChoice] = useState<LobbyChoice>("0");
+  const [joinChoice, setJoinChoice] = useState<LobbyChoice>("spectator");
+  const [preview, setPreview] = useState<PrivateLobbyPreview>();
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+
+  async function createLobby(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError(undefined);
+    try {
+      const sideIndex = parseSideIndex(creatorChoice);
+      const input =
+        sideIndex === undefined
+          ? { displayName: creatorName.trim(), intent: "spectator" as const }
+          : {
+              displayName: creatorName.trim(),
+              intent: "debater" as const,
+              sideIndex,
+            };
+      const result = await createPrivateTopic(topicId, input);
+      if ("code" in result) {
+        setError(result.message);
+        return;
+      }
+      await navigate(`/debates/${result.topicId}`, {
+        state: { joinResult: result },
+      });
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Lobby could not be created.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function findLobby() {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const result = await lookupPrivateLobby(joinCode.trim().toUpperCase());
+      setPreview(result);
+      const firstOpenSide = result.sideAvailability.findIndex(Boolean);
+      setJoinChoice(
+        firstOpenSide === -1
+          ? "spectator"
+          : parseLobbyChoice(String(firstOpenSide)),
+      );
+    } catch (cause) {
+      setPreview(undefined);
+      setError(
+        cause instanceof Error ? cause.message : "Lobby could not be found.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function joinLobby(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!preview) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const code = joinCode.trim().toUpperCase();
+      const sideIndex = parseSideIndex(joinChoice);
+      const input =
+        sideIndex === undefined
+          ? {
+              code,
+              displayName: joinerName.trim(),
+              intent: "spectator" as const,
+            }
+          : {
+              code,
+              displayName: joinerName.trim(),
+              intent: "debater" as const,
+              sideIndex,
+            };
+      const result = await joinTopicByCode(input);
+      if ("code" in result) {
+        setError(result.message);
+        setPreview(undefined);
+        return;
+      }
+      await navigate(`/debates/${result.topicId}`, {
+        state: { joinResult: result },
+      });
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Lobby could not be joined.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <Button
+        className="fixed right-4 bottom-4 z-40 h-11 text-base sm:right-6 sm:bottom-6"
+        size="lg"
+        type="button"
+        onClick={() => setOpen(true)}
+      >
+        <LockKeyholeIcon aria-hidden="true" />
+        Create or join a private lobby
+      </Button>
+      <Dialog
+        open={open}
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen);
+          if (!nextOpen) setError(undefined);
+        }}
+      >
+        <DialogContent className="gap-5 sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="font-editorial text-xl">
+              Private lobby
+            </DialogTitle>
+            <DialogDescription>
+              Create a lobby code or join with one.
+            </DialogDescription>
+          </DialogHeader>
+
+          <section className="grid gap-3">
+            <h2 className="font-medium">Create a lobby</h2>
+            <form className="grid gap-3" onSubmit={createLobby}>
+              <label className="grid gap-1.5 text-sm" htmlFor="private-topic">
+                Topic
+                <select
+                  className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                  id="private-topic"
+                  value={topicId}
+                  onChange={(event) => {
+                    setTopicId(event.target.value);
+                  }}
+                >
+                  {topics.map((topic) => (
+                    <option key={topic.id} value={topic.id}>
+                      {topic.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1.5 text-sm" htmlFor="creator-name">
+                Creator display name
+                <Input
+                  autoComplete="nickname"
+                  id="creator-name"
+                  maxLength={40}
+                  pattern=".*\S.*"
+                  required
+                  value={creatorName}
+                  onChange={(event) => setCreatorName(event.target.value)}
+                />
+              </label>
+              <label className="grid gap-1.5 text-sm" htmlFor="creator-side">
+                Join as
+                <select
+                  className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                  id="creator-side"
+                  value={creatorChoice}
+                  onChange={(event) =>
+                    setCreatorChoice(parseLobbyChoice(event.target.value))
+                  }
+                >
+                  {topics
+                    .find((topic) => topic.id === topicId)
+                    ?.sides.map((side, sideIndex) => (
+                      <option key={side} value={sideIndex}>
+                        {side}
+                      </option>
+                    ))}
+                  <option value="spectator">Spectate</option>
+                </select>
+              </label>
+              <Button disabled={busy || topics.length === 0} type="submit">
+                {busy ? "Please wait…" : "Create and join"}
+              </Button>
+            </form>
+          </section>
+
+          <section className="grid gap-3 border-t pt-4">
+            <h2 className="font-medium">Join a lobby</h2>
+            <form className="grid gap-3" onSubmit={joinLobby}>
+              <label className="grid gap-1.5 text-sm" htmlFor="lobby-code">
+                Lobby code
+                <Input
+                  autoCapitalize="characters"
+                  autoComplete="off"
+                  id="lobby-code"
+                  maxLength={8}
+                  minLength={6}
+                  pattern="[A-Za-z0-9]{6,8}"
+                  required
+                  value={joinCode}
+                  onChange={(event) => {
+                    setJoinCode(event.target.value.toUpperCase());
+                    setPreview(undefined);
+                  }}
+                />
+              </label>
+              <Button
+                disabled={busy || joinCode.trim().length < 6}
+                type="button"
+                variant="outline"
+                onClick={() => void findLobby()}
+              >
+                Find lobby
+              </Button>
+              {preview ? (
+                <div className="grid gap-3 rounded-lg border bg-muted/30 p-3">
+                  <div>
+                    <p className="font-medium">{preview.title}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {preview.debaterCount} debating · {preview.spectatorCount}{" "}
+                      watching
+                    </p>
+                  </div>
+                  <label className="grid gap-1.5 text-sm" htmlFor="join-side">
+                    Position
+                    <select
+                      className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                      id="join-side"
+                      value={joinChoice}
+                      onChange={(event) =>
+                        setJoinChoice(parseLobbyChoice(event.target.value))
+                      }
+                    >
+                      {preview.sideAvailability.map((available, sideIndex) =>
+                        available ? (
+                          <option key={sideIndex} value={sideIndex}>
+                            {preview.sides[sideIndex]}
+                          </option>
+                        ) : null,
+                      )}
+                      <option value="spectator">Spectate</option>
+                    </select>
+                  </label>
+                </div>
+              ) : null}
+              <label
+                className="grid gap-1.5 text-sm"
+                htmlFor="lobby-display-name"
+              >
+                Your display name
+                <Input
+                  autoComplete="nickname"
+                  id="lobby-display-name"
+                  maxLength={40}
+                  pattern=".*\S.*"
+                  required
+                  value={joinerName}
+                  onChange={(event) => setJoinerName(event.target.value)}
+                />
+              </label>
+              <Button disabled={busy || !preview} type="submit">
+                {busy ? "Please wait…" : "Join private lobby"}
+              </Button>
+            </form>
+          </section>
+          {error ? (
+            <p className="text-sm text-destructive" role="alert">
+              {error}
+            </p>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
 
 export function TopicList({ topics }: { topics: TopicStatus[] }) {
   const [selection, setSelection] = useState<Selection>();
@@ -56,9 +361,12 @@ export function TopicList({ topics }: { topics: TopicStatus[] }) {
 
   if (!topic) {
     return (
-      <p className="m-auto text-center text-muted-foreground">
-        No debates are available right now.
-      </p>
+      <>
+        <p className="m-auto text-center text-muted-foreground">
+          No debates are available right now.
+        </p>
+        <PrivateLobby topics={topics} />
+      </>
     );
   }
 
@@ -103,11 +411,11 @@ export function TopicList({ topics }: { topics: TopicStatus[] }) {
               </h2>
               <p className="flex flex-wrap gap-x-2 gap-y-1 text-sm text-muted-foreground">
                 <span>
-                  {topic.debaterCount === 0
-                    ? "Both sides open"
-                    : topic.debaterCount === 1
-                      ? "One side open"
-                      : "Both sides taken"}
+                  {topic.sideAvailability.every((available) => !available)
+                    ? "No debate positions available"
+                    : topic.sideAvailability.every(Boolean)
+                      ? "Both sides open"
+                      : "One side open"}
                 </span>
                 <span aria-hidden="true">·</span>
                 <span>
@@ -256,7 +564,7 @@ export function TopicList({ topics }: { topics: TopicStatus[] }) {
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="secondary"
                   onClick={() => setSelection(undefined)}
                 >
                   Cancel
@@ -269,6 +577,7 @@ export function TopicList({ topics }: { topics: TopicStatus[] }) {
           ) : null}
         </DialogContent>
       </Dialog>
+      <PrivateLobby topics={topics} />
     </>
   );
 }
