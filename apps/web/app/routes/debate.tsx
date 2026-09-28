@@ -1,6 +1,7 @@
 import {
   PRODUCT,
   joinBodySchema,
+  joinResultSchema,
   type JoinResult,
 } from "@impromptu/api/contracts";
 import {
@@ -12,7 +13,7 @@ import {
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
-import { LogOutIcon, SendIcon, SmileIcon } from "lucide-react";
+import { CopyIcon, LogOutIcon, SendIcon, SmileIcon } from "lucide-react";
 import { Track, VideoPresets } from "livekit-client";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
@@ -21,6 +22,7 @@ import {
   Link,
   Navigate,
   useActionData,
+  useLocation,
   useNavigate,
 } from "react-router";
 
@@ -501,7 +503,7 @@ function LeaveButton({
   async function leave() {
     onLeaving();
     await room.disconnect();
-    await leaveTopic(join.topicId, join.participantIdentity);
+    await leaveTopic(join.topicId, join.lobbyId, join.participantIdentity);
     await navigate("/");
   }
 
@@ -537,13 +539,24 @@ function MediaPermissionGuard({
 
     void (async () => {
       await room.disconnect();
-      await leaveTopic(join.topicId, join.participantIdentity).catch(() => {});
+      await leaveTopic(
+        join.topicId,
+        join.lobbyId,
+        join.participantIdentity,
+      ).catch(() => {});
       await navigate("/", {
         replace: true,
         state: { mediaPermissionFailure: true },
       });
     })();
-  }, [failed, join.participantIdentity, join.topicId, navigate, room]);
+  }, [
+    failed,
+    join.lobbyId,
+    join.participantIdentity,
+    join.topicId,
+    navigate,
+    room,
+  ]);
 
   return null;
 }
@@ -552,7 +565,18 @@ export function DebateExperience({ join }: { join: JoinResult }) {
   const [roomError, setRoomError] = useState<string>();
   const [leaving, setLeaving] = useState(false);
   const [mediaPermissionFailed, setMediaPermissionFailed] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
   const isDebater = join.role === "debater";
+
+  async function copyJoinCode() {
+    if (!join.joinCode) return;
+    try {
+      await navigator.clipboard.writeText(join.joinCode);
+      setCodeCopied(true);
+    } catch {
+      setRoomError("Private lobby code could not be copied.");
+    }
+  }
 
   return (
     <main className="grid h-svh grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-muted/30">
@@ -579,6 +603,18 @@ export function DebateExperience({ join }: { join: JoinResult }) {
             <h1 className="font-editorial truncate text-xl font-semibold tracking-tight sm:text-2xl">
               {join.topicTitle}
             </h1>
+            {join.isCreator && join.joinCode ? (
+              <Button
+                className="mt-1 h-8"
+                size="sm"
+                type="button"
+                variant="outline"
+                onClick={() => void copyJoinCode()}
+              >
+                <CopyIcon aria-hidden="true" />
+                {codeCopied ? "Copied" : `Share code ${join.joinCode}`}
+              </Button>
+            ) : null}
           </div>
           <LeaveButton
             join={join}
@@ -607,7 +643,15 @@ export function DebateExperience({ join }: { join: JoinResult }) {
 }
 
 export default function Debate() {
-  const result = useActionData<typeof clientAction>();
+  const actionResult = useActionData<typeof clientAction>();
+  const location = useLocation();
+  const handoff =
+    typeof location.state === "object" &&
+    location.state !== null &&
+    "joinResult" in location.state
+      ? joinResultSchema.safeParse(location.state.joinResult)
+      : undefined;
+  const result = handoff?.success ? handoff.data : actionResult;
   if (!result) return <Navigate to="/" replace />;
 
   if ("code" in result) {
