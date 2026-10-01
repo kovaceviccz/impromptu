@@ -1,8 +1,13 @@
 import { TokenVerifier } from "livekit-server-sdk";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildApp } from "../app.js";
 import { apiContract } from "../contracts.js";
+import { hashLobbyCode } from "../lobbies/codes.js";
+import {
+  createMemoryPrivateLobbyStore,
+  type PrivateLobbyStore,
+} from "../lobbies/store.js";
 import {
   createLiveKitGateway,
   type DebateRole,
@@ -27,24 +32,40 @@ function fakeLiveKit(tokenFor: (role: DebateRole) => string = (role) => role) {
   >();
   const issued: DebateRole[] = [];
   const issuedRooms: string[] = [];
+  const issuedNames: string[] = [];
+  const removed: { roomName: string; identity: string }[] = [];
 
   const gateway: LiveKitGateway = {
     async listParticipants(roomName) {
       return active.get(roomName) ?? [];
     },
-    async issueToken({ role, roomName }) {
+    async removeParticipant(roomName, identity) {
+      removed.push({ roomName, identity });
+      active.set(
+        roomName,
+        (active.get(roomName) ?? []).filter(
+          (participant) => participant.identity !== identity,
+        ),
+      );
+    },
+    async issueToken({ displayName, role, roomName }) {
       issued.push(role);
       issuedRooms.push(roomName);
+      issuedNames.push(displayName);
       return tokenFor(role);
     },
   };
 
-  return { active, gateway, issued, issuedRooms };
+  return { active, gateway, issued, issuedNames, issuedRooms, removed };
 }
 
-async function testApp(livekit: LiveKitGateway) {
+async function testApp(
+  livekit: LiveKitGateway,
+  privateLobbies: PrivateLobbyStore = createMemoryPrivateLobbyStore(),
+) {
   const app = await buildApp({
     livekit,
+    privateLobbies,
     livekitPublicUrl: "ws://localhost:7880",
     tokenTtlSeconds: 60,
   });
@@ -173,7 +194,7 @@ describe("API contracts", () => {
   });
 
   it("isolates private lobby participants and tracks its creator", async () => {
-    const { active, gateway, issuedRooms } = fakeLiveKit();
+    const { active, gateway, issuedNames, issuedRooms } = fakeLiveKit();
     active.set("debate-dream-cheating", [
       { identity: "public-debater", role: "debater", sideIndex: 0 },
     ]);
@@ -232,11 +253,43 @@ describe("API contracts", () => {
     expect(privateJoin).toEqual(
       expect.objectContaining({
         lobbyId: creator.lobbyId,
+        displayName: "Private guest",
         role: "debater",
         sideIndex: 1,
         isCreator: false,
       }),
     );
+    expect(issuedNames).toContain("Private guest");
+
+    const privateRoomName = `debate-${creator.lobbyId}`;
+    active.set(privateRoomName, [
+      {
+        identity: privateJoin.participantIdentity,
+        role: "debater",
+        sideIndex: 1,
+      },
+    ]);
+    const leaveResponse = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/leave",
+      payload: {
+        lobbyId: privateJoin.lobbyId,
+        participantIdentity: privateJoin.participantIdentity,
+      },
+    });
+    expect(leaveResponse.statusCode).toBe(200);
+    expect(await gateway.listParticipants(privateRoomName)).toEqual([]);
+
+    const repeatedLeaveResponse = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/leave",
+      payload: {
+        lobbyId: privateJoin.lobbyId,
+        participantIdentity: privateJoin.participantIdentity,
+      },
+    });
+    expect(repeatedLeaveResponse.statusCode).toBe(200);
+    expect(await gateway.listParticipants(privateRoomName)).toEqual([]);
 
     const privateSpectatorResponse = await app.inject({
       method: "POST",
@@ -281,9 +334,92 @@ describe("API contracts", () => {
     ]);
   });
 
+  it("does not join a private lobby when the requested side is unavailable", async () => {
+    const { gateway, issuedNames } = fakeLiveKit();
+    const app = await testApp(gateway);
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/private",
+      payload: {
+        displayName: "Lobby creator",
+        intent: "debater",
+        sideIndex: 0,
+      },
+    });
+    const creator = apiContract.privateTopic.response.parse(
+      createResponse.json(),
+    );
+
+    const joinResponse = await app.inject({
+      method: "POST",
+      url: apiContract.joinByCode.path,
+      payload: {
+        code: creator.joinCode,
+        displayName: "Waiting guest",
+        intent: "debater",
+        sideIndex: 0,
+      },
+    });
+
+    expect(joinResponse.statusCode).toBe(409);
+    expect(
+      apiContract.joinByCode.errors[409].parse(joinResponse.json()),
+    ).toEqual(
+      expect.objectContaining({
+        code: "SIDE_UNAVAILABLE",
+        message:
+          "That side was just taken. Choose another side or spectate instead.",
+        sideIndex: 0,
+      }),
+    );
+    expect(issuedNames).toEqual(["Lobby creator"]);
+  });
+
+  it("rejects private codes for missing and expired lobbies", async () => {
+    const { gateway } = fakeLiveKit();
+    const privateLobbies = createMemoryPrivateLobbyStore([
+      {
+        id: "expired-lobby",
+        topicId: "dream-cheating",
+        codeHash: hashLobbyCode("EXPIRED1"),
+        creatorIdentity: "creator-identity",
+        createdAt: new Date(Date.now() - 60_000),
+        expiresAt: new Date(Date.now() - 1_000),
+      },
+    ]);
+    const app = await testApp(gateway, privateLobbies);
+
+    for (const code of ["MISSING1", "EXPIRED1"]) {
+      const lookup = await app.inject({
+        method: "POST",
+        url: apiContract.privateLobbyLookup.path,
+        payload: { code },
+      });
+      expect(lookup.statusCode).toBe(404);
+      expect(
+        apiContract.privateLobbyLookup.errors[404].parse(lookup.json()),
+      ).toEqual({
+        message: "Private lobby not found",
+      });
+
+      const join = await app.inject({
+        method: "POST",
+        url: apiContract.joinByCode.path,
+        payload: { code, displayName: "Guest", intent: "spectator" },
+      });
+      expect(join.statusCode).toBe(404);
+      expect(apiContract.joinByCode.errors[404].parse(join.json())).toEqual({
+        message: "Private lobby not found",
+      });
+    }
+  });
+
   it("releases a pending debater reservation when its participant leaves", async () => {
     const { gateway } = fakeLiveKit();
-    const app = await testApp(gateway);
+    const privateLobbies = createMemoryPrivateLobbyStore();
+    const findPrivateLobbyById = vi.spyOn(privateLobbies, "findById");
+    const app = await testApp(gateway, privateLobbies);
 
     const joinResponse = await app.inject({
       method: "POST",
@@ -311,6 +447,7 @@ describe("API contracts", () => {
     });
 
     expect(leaveResponse.statusCode).toBe(200);
+    expect(findPrivateLobbyById).not.toHaveBeenCalled();
     expect(apiContract.leave.response.parse(leaveResponse.json())).toEqual({
       status: "ok",
     });

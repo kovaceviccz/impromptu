@@ -1,9 +1,14 @@
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
+import { createPostgresPrivateLobbyStore } from "./lobbies/postgres-store.js";
 import { createLiveKitGateway } from "./topics/livekit.js";
 
 const config = loadConfig();
+const { store: privateLobbies } = await createPostgresPrivateLobbyStore(
+  config.DATABASE_URL,
+);
 const app = await buildApp({
+  privateLobbies,
   livekit: createLiveKitGateway({
     apiKey: config.LIVEKIT_API_KEY,
     apiSecret: config.LIVEKIT_API_SECRET,

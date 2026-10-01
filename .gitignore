@@ -13,3 +13,4 @@ deploy/opentofu/terraform.tfvars
 deploy/opentofu/*.tfstate
 deploy/opentofu/*.tfstate.*
 deploy/opentofu/*.tfplan
+.neon

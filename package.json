@@ -11,6 +11,7 @@
   "scripts": {
     "build": "npm run build -w @impromptu/api && npm run build -w @impromptu/web",
     "ci": "sh scripts/ci.sh",
+    "db:migrate": "node --env-file-if-exists=.env --import=tsx apps/api/src/migrate.ts",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "lint": "npm run build -w @impromptu/api && oxlint --type-aware --deny-warnings .",
@@ -35,5 +36,11 @@
     "tsx": "4.23.13",
     "typescript": "7.0.2",
     "vitest": "5.0.1"
+  },
+  "dependencies": {
+    "@mikro-orm/cli": "^7.2.3",
+    "@mikro-orm/core": "^7.2.3",
+    "@mikro-orm/migrations": "^7.2.3",
+    "@mikro-orm/postgresql": "^7.2.3"
   }
 }

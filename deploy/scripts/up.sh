@@ -16,6 +16,7 @@ private_key=$(openssl pkey -in secrets/origin-key.pem -pubout -outform DER 2>/de
 test "$certificate_key" = "$private_key"
 
 docker compose pull
+docker compose --profile migrate run --rm --no-deps migrate
 docker compose up --detach --remove-orphans
 docker compose exec -T app \
   wget --quiet --spider http://127.0.0.1:3000/api/health
