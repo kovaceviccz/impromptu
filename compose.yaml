@@ -19,6 +19,7 @@ services:
     depends_on:
       - livekit
     environment:
+      DATABASE_PATH: /data/impromptu.db
       LIVEKIT_API_KEY: devkey
       LIVEKIT_API_SECRET: local-development-secret-at-least-32-chars
       LIVEKIT_API_URL: http://livekit:7880
@@ -28,6 +29,7 @@ services:
       - "3000"
     volumes:
       - ./apps/api/src:/workspace/apps/api/src
+      - api-data:/data
 
   web:
     build:
@@ -44,3 +46,6 @@ services:
     volumes:
       - ./apps/web/app:/workspace/apps/web/app
       - ./apps/api/src:/workspace/apps/api/src:ro
+
+volumes:
+  api-data:

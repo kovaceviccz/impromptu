@@ -1,6 +1,7 @@
 import {
   PRODUCT,
   joinBodySchema,
+  type JoinInput,
   type JoinResult,
 } from "@impromptu/api/contracts";
 import {
@@ -54,6 +55,13 @@ import {
   PopoverTrigger,
 } from "~/components/ui/popover";
 import { ToggleGroup, ToggleGroupItem } from "~/components/ui/toggle-group";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
 
 import { joinTopic, leaveTopic } from "../api";
 
@@ -66,6 +74,10 @@ const chatTimeFormatter = new Intl.DateTimeFormat(undefined, {
 });
 const voteSurface =
   "flex h-14 min-w-24 basis-0 shrink items-center justify-between gap-2 rounded-lg px-3 text-left whitespace-normal transition-[flex-grow,background-color,color] duration-300 ease-out";
+const sideTints = [
+  "bg-emerald-50 text-emerald-900",
+  "bg-red-50 text-red-900",
+] as const;
 const voteSurfaceColors = [
   "bg-emerald-50 text-emerald-800 hover:bg-emerald-100 aria-pressed:bg-emerald-800 aria-pressed:text-white",
   "bg-red-50 text-red-800 hover:bg-red-100 aria-pressed:bg-red-800 aria-pressed:text-white",
@@ -90,17 +102,47 @@ export async function clientAction({
   return joinTopic(params.topicId, input);
 }
 
-function DebateVideos({ sides }: { sides: JoinResult["sides"] }) {
-  const participants = useParticipants();
-  const cameraTracks = useTracks([Track.Source.Camera]);
+type RoomParticipant = ReturnType<typeof useParticipants>[number];
+type ChangeRole = (input: JoinInput) => Promise<string | undefined>;
+
+// LiveKit fills in the local participant's identity, name, and grants after
+// the first render without re-rendering, so the viewer's own details come from
+// the backend's join result instead.
+function isViewer(participant: RoomParticipant, viewer: JoinResult) {
+  return (
+    participant.isLocal || participant.identity === viewer.participantIdentity
+  );
+}
+
+function publishes(participant: RoomParticipant, viewer: JoinResult) {
+  return isViewer(participant, viewer)
+    ? viewer.role === "debater"
+    : participant.permissions?.canPublish === true;
+}
+
+function displayNameOf(participant: RoomParticipant, viewer: JoinResult) {
+  return (
+    participant.name ||
+    (isViewer(participant, viewer) ? viewer.displayName : undefined)
+  );
+}
+
+function sideOf(participant: RoomParticipant, viewer: JoinResult) {
+  return isViewer(participant, viewer)
+    ? String(viewer.sideIndex)
+    : participant.attributes[SIDE_ATTRIBUTE];
+}
+
+/** Places each publishing participant on the side issued in their token. */
+function assignDebaters(participants: RoomParticipant[], viewer: JoinResult) {
   const debaters = participants
-    .filter((participant) => participant.permissions?.canPublish === true)
+    .filter((participant) => publishes(participant, viewer))
     .slice(0, 2);
-  const debatersBySide = new Map<number, (typeof debaters)[number]>();
+  const debatersBySide = new Map<number, RoomParticipant>();
   const unassigned = [];
 
   for (const participant of debaters) {
-    const side = participant.attributes[SIDE_ATTRIBUTE];
+    const side = sideOf(participant, viewer);
     if ((side === "0" || side === "1") && !debatersBySide.has(Number(side))) {
       debatersBySide.set(Number(side), participant);
     } else {
@@ -113,6 +155,15 @@ function DebateVideos({ sides }: { sides: JoinResult["sides"] }) {
     if (openSide !== undefined) debatersBySide.set(openSide, participant);
   }
 
+  return debatersBySide;
+}
+
+function DebateVideos({ join }: { join: JoinResult }) {
+  const { sides } = join;
+  const participants = useParticipants();
+  const cameraTracks = useTracks([Track.Source.Camera]);
+  const debatersBySide = assignDebaters(participants, join);
+
   return (
     <section className="grid min-h-0 grid-cols-2 bg-background">
       {sides.map((side, slot) => {
@@ -121,7 +172,7 @@ function DebateVideos({ sides }: { sides: JoinResult["sides"] }) {
           (candidate) =>
             candidate.participant.identity === participant?.identity,
         );
-        const label = participant?.name;
+        const label = participant && displayNameOf(participant, join);
 
         return (
           <article
@@ -350,26 +401,227 @@ function RoomChat({
   );
 }
 
+function ParticipantRoster({
+  join,
+  onChangeRole,
+}: {
+  join: JoinResult;
+  onChangeRole: ChangeRole;
+}) {
+  const participants = useParticipants();
+  const debatersBySide = assignDebaters(participants, join);
+  const spectators = participants.filter(
+    (participant) => !publishes(participant, join),
+  );
+  const viewerIsDebater = join.role === "debater";
+  const viewer = participants.find((participant) =>
+    isViewer(participant, join),
+  );
+  const viewerName = (viewer && displayNameOf(viewer, join)) ?? "";
+  const [claimedSide, setClaimedSide] = useState<0 | 1>();
+  const [changing, setChanging] = useState(false);
+  const [error, setError] = useState<string>();
+
+  function nameOf(participant: RoomParticipant) {
+    const name =
+      displayNameOf(participant, join) ||
+      (publishes(participant, join) ? "Debater" : "Spectator");
+    return isViewer(participant, join) ? `${name} (you)` : name;
+  }
+
+  async function changeRole(input: JoinInput) {
+    setChanging(true);
+    setError(undefined);
+    try {
+      const message = await onChangeRole(input);
+      if (message) setError(message);
+    } catch {
+      setError("Your role could not be changed. Try again.");
+    } finally {
+      setChanging(false);
+      setClaimedSide(undefined);
+    }
+  }
+
+  function claimSide(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (claimedSide === undefined) return;
+    const displayName = new FormData(event.currentTarget).get("displayName");
+    if (typeof displayName !== "string" || !displayName.trim()) return;
+    void changeRole({
+      displayName: displayName.trim(),
+      intent: "debater",
+      sideIndex: claimedSide,
+    });
+  }
+
+  return (
+    <section
+      aria-label="Participants"
+      className="grid gap-3 bg-primary/5 px-4 py-3"
+    >
+      <div className="grid grid-cols-2 gap-6">
+        <section aria-labelledby="debaters-heading" className="min-w-0">
+          <h2
+            className="flex items-baseline justify-between gap-2 text-xs text-muted-foreground"
+            id="debaters-heading"
+          >
+            Debaters{" "}
+            <span className="tabular-nums">{debatersBySide.size} of 2</span>
+          </h2>
+          <ul className="mt-2 grid gap-1.5">
+            {join.sides.map((side, index) => {
+              const sideIndex = index === 0 ? 0 : 1;
+              const participant = debatersBySide.get(sideIndex);
+              const isOwnSide =
+                participant !== undefined && isViewer(participant, join);
+
+              return (
+                <li
+                  className={
+                    "flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 " +
+                    sideTints[sideIndex]
+                  }
+                  key={side}
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">
+                      {participant ? nameOf(participant) : "Open"}
+                    </p>
+                    <p className="truncate text-xs opacity-80">{side}</p>
+                  </div>
+                  {!participant && !viewerIsDebater ? (
+                    <Button
+                      disabled={changing}
+                      size="xs"
+                      type="button"
+                      onClick={() => setClaimedSide(sideIndex)}
+                    >
+                      Debate<span className="sr-only">: {side}</span>
+                    </Button>
+                  ) : null}
+                  {isOwnSide ? (
+                    <Button
+                      disabled={changing}
+                      size="xs"
+                      type="button"
+                      variant="outline"
+                      onClick={() => void changeRole({ intent: "spectator" })}
+                    >
+                      Spectate
+                    </Button>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+        <section aria-labelledby="spectators-heading" className="min-w-0">
+          <h2
+            className="flex items-baseline justify-between gap-2 text-xs text-muted-foreground"
+            id="spectators-heading"
+          >
+            Spectators <span className="tabular-nums">{spectators.length}</span>
+          </h2>
+          {spectators.length === 0 ? (
+            <p className="mt-2 text-sm text-muted-foreground">
+              No spectators yet.
+            </p>
+          ) : (
+            <ul className="mt-2 grid max-h-24 gap-1 overflow-y-auto text-sm">
+              {spectators.map((participant) => (
+                <li className="truncate" key={participant.identity}>
+                  {nameOf(participant)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <Dialog
+        open={claimedSide !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setClaimedSide(undefined);
+        }}
+      >
+        <DialogContent>
+          {claimedSide !== undefined ? (
+            <form className="grid gap-4" onSubmit={claimSide}>
+              <DialogHeader>
+                <DialogTitle className="font-editorial text-xl">
+                  Debate this topic
+                </DialogTitle>
+                <DialogDescription>{join.topicTitle}</DialogDescription>
+              </DialogHeader>
+              <div>
+                <p className="mb-1 text-xs font-medium text-muted-foreground">
+                  Your position
+                </p>
+                <p className="font-medium">{join.sides[claimedSide]}</p>
+              </div>
+              <div>
+                <label className="sr-only" htmlFor="room-display-name">
+                  Display name
+                </label>
+                <Input
+                  autoComplete="nickname"
+                  defaultValue={
+                    viewerName && viewerName !== "Spectator"
+                      ? viewerName
+                      : undefined
+                  }
+                  id="room-display-name"
+                  maxLength={40}
+                  name="displayName"
+                  pattern=".*\S.*"
+                  placeholder="Display name"
+                  required
+                  title="Enter a display name."
+                />
+              </div>
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setClaimedSide(undefined)}
+                >
+                  Cancel
+                </Button>
+                <Button disabled={changing} type="submit">
+                  Debate
+                </Button>
+              </div>
+            </form>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+    </section>
+  );
+}
+
 function AudiencePanel({
   canVote,
-  participantIdentity,
-  sides,
+  join,
+  onChangeRole,
 }: {
   canVote: boolean;
-  participantIdentity: string;
-  sides: JoinResult["sides"];
+  join: JoinResult;
+  onChangeRole: ChangeRole;
 }) {
+  const { participantIdentity, sides } = join;
   const participants = useParticipants();
   const room = useRoomContext();
   const [isVoting, setIsVoting] = useState(false);
   const [error, setError] = useState<string>();
-  const debaterCount = participants.filter(
-    (participant) => participant.permissions?.canPublish === true,
-  ).length;
   const spectators = participants.filter(
-    (participant) => participant.permissions?.canPublish !== true,
+    (participant) => !publishes(participant, join),
   );
-  const spectatorCount = spectators.length;
   const rawVote = room.localParticipant.attributes[VOTE_ATTRIBUTE];
   const selectedVote =
     canVote && (rawVote === "0" || rawVote === "1") ? rawVote : undefined;
@@ -401,22 +653,7 @@ function AudiencePanel({
 
   return (
     <aside className="flex min-h-0 flex-col bg-background">
-      <section className="bg-primary/5 px-4 py-3">
-        <dl className="grid grid-cols-2 gap-6">
-          <div>
-            <dt className="text-xs text-muted-foreground">Sides filled</dt>
-            <dd className="font-editorial text-2xl font-semibold">
-              {debaterCount} of 2
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Spectators</dt>
-            <dd className="font-editorial text-2xl font-semibold">
-              {spectatorCount}
-            </dd>
-          </div>
-        </dl>
-      </section>
+      <ParticipantRoster join={join} onChangeRole={onChangeRole} />
 
       <section className="grid gap-3 px-4 pt-5 pb-4">
         <div>
@@ -548,15 +785,32 @@ function MediaPermissionGuard({
   return null;
 }
 
-export function DebateExperience({ join }: { join: JoinResult }) {
+export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
+  const [join, setJoin] = useState(initialJoin);
   const [roomError, setRoomError] = useState<string>();
   const [leaving, setLeaving] = useState(false);
   const [mediaPermissionFailed, setMediaPermissionFailed] = useState(false);
   const isDebater = join.role === "debater";
 
+  // A role change is a fresh join: the backend re-checks availability and
+  // issues a token with the new grants, then the previous identity leaves.
+  async function changeRole(input: JoinInput) {
+    const result = await joinTopic(join.topicId, input);
+    if ("code" in result) return result.message;
+
+    const previous = join;
+    setRoomError(undefined);
+    setJoin(result);
+    void leaveTopic(previous.topicId, previous.participantIdentity).catch(
+      () => {},
+    );
+    return undefined;
+  }
+
   return (
     <main className="grid h-svh grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-muted/30">
       <LiveKitRoom
+        key={join.participantIdentity}
         audio={isDebater}
         connect={!leaving}
         serverUrl={join.livekitUrl}
@@ -593,11 +847,11 @@ export function DebateExperience({ join }: { join: JoinResult }) {
         </header>
 
         <div className="grid min-h-0 grid-rows-[minmax(12rem,36svh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)] lg:grid-rows-1">
-          <DebateVideos sides={join.sides} />
+          <DebateVideos join={join} />
           <AudiencePanel
             canVote={!isDebater}
-            participantIdentity={join.participantIdentity}
-            sides={join.sides}
+            join={join}
+            onChangeRole={changeRole}
           />
           <RoomAudioRenderer />
         </div>
@@ -633,5 +887,5 @@ export default function Debate() {
     );
   }
 
-  return <DebateExperience join={result} />;
+  return <DebateExperience join={result} key={result.participantIdentity} />;
 }

@@ -12,6 +12,11 @@ export type TopicRoutesOptions = {
   tokenTtlSeconds: number;
 };
 
+const unavailableMessages = {
+  full: "Both debater positions are taken. You can still join as a spectator.",
+  taken: "That side was just taken. Choose another side or spectate instead.",
+} as const;
+
 export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
   app,
   options,
@@ -27,8 +32,12 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
     async () =>
       Promise.all(
         topics.map(async (topic) => {
-          const { debaterCount, sideAvailability, spectatorCount } =
-            await allocation.status(topic.id);
+          const {
+            debaterCount,
+            participants,
+            sideAvailability,
+            spectatorCount,
+          } = await allocation.status(topic.id);
           return {
             ...topic,
             sides: [topic.sides[0], topic.sides[1]] satisfies [string, string],
@@ -38,6 +47,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
             ] satisfies [boolean, boolean],
             debaterCount,
             spectatorCount,
+            participants,
           };
         }),
       ),
@@ -74,14 +84,13 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         displayName,
         request.body.intent === "debater" ? request.body.sideIndex : null,
       );
-      if (allocationResult === undefined) {
+      if ("unavailable" in allocationResult) {
         if (request.body.intent === "spectator") {
           throw new Error("Spectator token allocation unexpectedly failed");
         }
         return reply.code(409).send({
           code: "SIDE_UNAVAILABLE",
-          message:
-            "That side was just taken. Choose another side or spectate instead.",
+          message: unavailableMessages[allocationResult.unavailable],
           sideIndex: request.body.sideIndex,
           topicTitle: topic.title,
         });

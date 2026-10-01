@@ -18,6 +18,8 @@ Spectators can watch, vote, and participate in chat.
 - Live video and audio with LiveKit
 - Spectator mode with chat
 - Real-time voting
+- Switching between debating and spectating from the room
+- Accounts with registration, login, and persistent sessions
 
 ## Run locally
 

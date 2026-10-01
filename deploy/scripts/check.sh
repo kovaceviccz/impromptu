@@ -3,6 +3,13 @@ set -eu
 
 deploy_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
+# See scripts/ci.sh: Git Bash on Windows needs literal container paths and
+# Windows-style host paths for Docker mounts.
+if command -v cygpath >/dev/null 2>&1; then
+  export MSYS_NO_PATHCONV=1
+  deploy_root=$(cygpath -m "$deploy_root")
+fi
+
 APP_IMAGE=impromptu:ci \
   LIVEKIT_API_KEY=ci-key \
   LIVEKIT_API_SECRET=ci-secret-at-least-32-characters-long \
@@ -11,6 +18,9 @@ APP_IMAGE=impromptu:ci \
     --file "$deploy_root/compose.yaml" config --quiet
 
 envoy_tls_directory=$(mktemp -d)
+if command -v cygpath >/dev/null 2>&1; then
+  envoy_tls_directory=$(cygpath -m "$envoy_tls_directory")
+fi
 cleanup_envoy_tls() {
   if [ -d "$envoy_tls_directory" ]; then
     find "$envoy_tls_directory" -type f -delete
