@@ -3,7 +3,14 @@ import { z } from "zod";
 import { healthSchema } from "../health/contract.js";
 
 export const debateSideSchema = z.union([z.literal(0), z.literal(1)]);
+export const debateRoleSchema = z.enum(["debater", "spectator"]);
 export const topicVisibilitySchema = z.enum(["public", "private"]);
+
+export const lobbyParticipantSchema = z.strictObject({
+  displayName: z.string().min(1),
+  role: debateRoleSchema,
+  sideIndex: debateSideSchema.nullable(),
+});
 
 export const topicStatusSchema = z.strictObject({
   id: z.string().min(1),
@@ -12,6 +19,7 @@ export const topicStatusSchema = z.strictObject({
   sideAvailability: z.tuple([z.boolean(), z.boolean()]),
   debaterCount: z.number().int().min(0).max(2),
   spectatorCount: z.number().int().min(0),
+  participants: z.array(lobbyParticipantSchema),
 });
 
 export const privateLobbyPreviewSchema = topicStatusSchema.extend({
@@ -30,13 +38,18 @@ export const topicParamsSchema = z.strictObject({
   topicId: z.string().min(1),
 });
 
+// lobbyId selects a private lobby of this topic, used when a participant
+// changes role from inside it; without one, the public lobby is joined.
+const joinLobbySchema = z.string().min(1).optional();
+
 export const joinBodySchema = z.discriminatedUnion("intent", [
   z.strictObject({
     displayName: z.string().trim().min(1).max(40),
     intent: z.literal("debater"),
+    lobbyId: joinLobbySchema,
     sideIndex: debateSideSchema,
   }),
-  z.strictObject({ intent: z.literal("spectator") }),
+  z.strictObject({ intent: z.literal("spectator"), lobbyId: joinLobbySchema }),
 ]);
 
 export const privateLobbyCreateBodySchema = z.discriminatedUnion("intent", [
@@ -96,8 +109,8 @@ export const joinResultSchema = z.strictObject({
   sides: z.tuple([z.string().min(1), z.string().min(1)]),
   participantIdentity: z.string().uuid(),
   displayName: z.string().min(1).max(40),
-  role: z.enum(["debater", "spectator"]),
-  sideIndex: z.union([z.literal(0), z.literal(1)]).nullable(),
+  role: debateRoleSchema,
+  sideIndex: debateSideSchema.nullable(),
   isCreator: z.boolean(),
   joinCode: z.string().min(1).optional(),
   livekitUrl: z.string().min(1),
@@ -162,6 +175,7 @@ export const topicContracts = {
 } as const;
 
 export type TopicStatus = z.output<typeof topicStatusSchema>;
+export type LobbyParticipant = z.output<typeof lobbyParticipantSchema>;
 export type JoinInput = z.output<typeof joinBodySchema>;
 export type PrivateLobbyCreateInput = z.output<
   typeof privateLobbyCreateBodySchema

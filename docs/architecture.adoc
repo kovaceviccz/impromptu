@@ -28,10 +28,12 @@ from the shared `PRODUCT` constant.
 
 [source,text]
 ----
-apps/api             Fastify API and browser-safe contract export
-apps/api/src/lobbies  Private lobby persistence and lifecycle
+apps/api               Fastify API and browser-safe contract export
+apps/api/src/accounts  Account registration, login, and sessions
+apps/api/src/lobbies   Private lobby persistence and lifecycle
+apps/api/src/migrations  Versioned PostgreSQL migrations for every feature
 apps/web             React Router application and browser tests
-deploy               production containers, configuration, and OpenTofu
+deploy               production and staging containers, configuration, and OpenTofu
 Dockerfile           local development image
 compose.yaml         local development stack
 livekit.yaml         local LiveKit configuration
@@ -43,7 +45,7 @@ application composition stay at the API source root.
 
 The `deploy/` directory is an extractable deployment boundary. It consumes a
 prebuilt application image and contains the files needed to provision and run
-the production stack. Application source is not a runtime dependency of that
+both server stacks. Application source is not a runtime dependency of that
 directory.
 
 == API contracts
@@ -90,6 +92,45 @@ concurrent attempts to claim a limited position.
 
 Room features use LiveKit's official client and React packages.
 
+A participant changes role by joining again with the new intent and the
+current lobby's id, so a change made inside a private lobby stays in that lobby.
+The backend accepts the id only for a live private lobby of the same topic,
+applies the same availability check as the first join, and issues a token with
+the new grants; the browser then connects with that token and releases the
+previous identity. A rejected change leaves the participant in their current
+role with the backend's message.
+
+Topic status lists each connected or reserved participant with their role and
+side, so the browser can present debaters and spectators separately without
+deciding roles itself.
+
+== Accounts and persistence
+
+Accounts and sessions are stored in PostgreSQL through MikroORM, on the same
+connection as private lobbies. `database.ts` opens that connection with every
+feature's entities, and each feature keeps its entities and store beside its
+routes. Tables change only through the versioned migrations in
+`apps/api/src/migrations`, which deployment applies before the application
+starts. Tests use in-memory stores with the same interface.
+
+Usernames and email addresses are unique without regard to case: email
+addresses are stored in lower case, and a lower-cased username key carries the
+username constraint while the username keeps its original spelling. Passwords are hashed with salted scrypt and
+never stored or logged in plain text.
+
+Signing in creates an opaque random session token. The browser holds it in an
+`HttpOnly`, `SameSite=Lax` cookie, marked `Secure` in production, and the
+database stores only its SHA-256 digest with a 30-day expiry. Logging out
+deletes the session. `GET /api/auth/session` reports the current account, or
+none, while account-only endpoints such as `GET /api/account` answer `401`
+without a valid session.
+
+The browser validates forms with the same Zod schemas the API enforces. Field
+errors from the API use one `{ message, fieldErrors }` shape, so client and
+server validation appear beside the same fields. Account-only pages check the
+session in their loader and redirect to the login page with a same-origin
+`redirectTo` path.
+
 == Frontend
 
 The web application uses React Router Framework Mode, shadcn/ui, Tailwind, and
@@ -115,10 +156,10 @@ requested debater side is still available; in that case the API rejects the
 join with a reason and leaves the participant out of the room. Spectating remains
 available when both sides are occupied.
 
-Guests join public and private lobbies without creating an account. Their chosen
-display name is included in the LiveKit token and appears in the room participant
-list. Account-backed identity is not currently configured, so authenticated
-account entry and account ownership are not implemented yet. Leave requests
+Guests join public and private lobbies without signing in. Their chosen display
+name is included in the LiveKit token and appears in the room participant list.
+Signed-in people have their username suggested as a display name, but lobby
+participation and private lobby ownership are not yet tied to an account. Leave requests
 release pending side reservations and remove the participant from LiveKit;
 repeating a leave request is safe. After a successful leave, the browser returns
 to lobby selection.
@@ -133,19 +174,20 @@ gateway and routes application traffic separately from LiveKit signaling.
 LiveKit media reaches the host directly because a standard Cloudflare HTTP proxy
 does not carry the required media transports.
 
+Production and staging share the Hetzner host and Envoy. They use separate
+Compose projects, LiveKit instances, media ports, and Neon database branches.
+Staging stays online at `staging.impromptu.social`. Its database branch persists
+across deployments; each deployment applies versioned migrations before starting
+the new application image.
+
 OpenTofu owns the Hetzner host, firewall, SSH access, Cloudflare DNS records,
 origin certificates, and the zone settings required at the edge. Private keys
-and API credentials remain outside OpenTofu inputs and state. Production and
-staging share the Hetzner host and Envoy but use separate application and
-LiveKit containers and media ports. Staging uses a persistent Neon branch and
-serves `staging.impromptu.social`.
-
-After CI succeeds for the current `main` or `staging` commit, the corresponding
-workflow builds an immutable application image, installs its runtime
-configuration, starts its Compose stack, and verifies the public application
-and signaling routes. Staging applies versioned migrations to its persistent
-database branch before starting the new image. Manual deployment remains
-available for initial provisioning and recovery.
+and API credentials remain outside OpenTofu inputs and state. Successful CI for
+the current `main` or `staging` commit gates deployment to its corresponding
+environment. Each workflow builds an immutable application image, installs its
+runtime configuration, starts its Compose stack, and verifies the public
+application and signaling routes. Manual deployment remains available for
+initial provisioning and recovery.
 
 The root Compose files are for source development. Server configuration
 belongs under `deploy/`, including its Dockerfile, Compose stacks, service

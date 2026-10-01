@@ -21,15 +21,6 @@ for command in gh docker; do
   fi
 done
 
-for file in \
-  "$deploy_root/secrets/staging-origin.pem" \
-  "$deploy_root/secrets/staging-origin-key.pem"; do
-  if [ ! -s "$file" ]; then
-    echo "Missing $file" >&2
-    exit 1
-  fi
-done
-
 if [ -s "$github_token_file" ]; then
   GH_TOKEN=$(sed -n '1p' "$github_token_file")
   export GH_TOKEN
@@ -44,6 +35,15 @@ for file in \
   "$deploy_root/secrets/known_hosts" \
   "$deploy_root/secrets/origin.pem" \
   "$deploy_root/secrets/origin-key.pem"; do
+  if [ ! -s "$file" ]; then
+    echo "Missing $file" >&2
+    exit 1
+  fi
+done
+
+for file in \
+  "$deploy_root/secrets/staging-origin.pem" \
+  "$deploy_root/secrets/staging-origin-key.pem"; do
   if [ ! -s "$file" ]; then
     echo "Missing $file" >&2
     exit 1
