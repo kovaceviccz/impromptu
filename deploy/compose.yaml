@@ -38,11 +38,26 @@ services:
     tmpfs: [/tmp]
     environment:
       HOST: 127.0.0.1
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?Set LIVEKIT_API_KEY}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?Set LIVEKIT_API_SECRET}
       LIVEKIT_API_URL: http://127.0.0.1:7880
       LIVEKIT_PUBLIC_URL: wss://${LIVEKIT_HOSTNAME:?Set LIVEKIT_HOSTNAME}
       PORT: 3000
+    logging: *default-logging
+
+  migrate:
+    image: ${APP_IMAGE:?Set APP_IMAGE to an immutable image reference}
+    network_mode: host
+    profiles: [migrate]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    entrypoint: [node, apps/api/dist/migrate.js]
+    environment:
+      MIGRATION_DATABASE_URL:
+        ${MIGRATION_DATABASE_URL:?Set MIGRATION_DATABASE_URL}
     logging: *default-logging
 
   livekit:
