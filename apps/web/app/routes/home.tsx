@@ -18,6 +18,7 @@ import {
 } from "react-router";
 
 import { Button } from "~/components/ui/button";
+import { SiteHeader } from "~/components/site-header";
 import { Card, CardContent } from "~/components/ui/card";
 import {
   Dialog,
@@ -30,6 +31,7 @@ import { Input } from "~/components/ui/input";
 
 import {
   createPrivateTopic,
+  getSession,
   getTopics,
   joinTopicByCode,
   lookupPrivateLobby,
@@ -49,7 +51,15 @@ export function meta() {
 }
 
 export async function clientLoader() {
-  return getTopics();
+  const [topics, account] = await Promise.all([
+    getTopics(),
+    // Topics remain usable when the session cannot be read.
+    getSession().then(
+      (session) => session.account,
+      () => null,
+    ),
+  ]);
+  return { account, topics };
 }
 
 type Selection = {
@@ -351,7 +361,13 @@ function PrivateLobby({ topics }: { topics: TopicStatus[] }) {
   );
 }
 
-export function TopicList({ topics }: { topics: TopicStatus[] }) {
+export function TopicList({
+  defaultDisplayName,
+  topics,
+}: {
+  defaultDisplayName?: string;
+  topics: TopicStatus[];
+}) {
   const [selection, setSelection] = useState<Selection>();
   const [topicIndex, setTopicIndex] = useState(0);
   const touchStart = useRef<number | undefined>(undefined);
@@ -432,6 +448,11 @@ export function TopicList({ topics }: { topics: TopicStatus[] }) {
               {sideIndexes.map((sideIndex) => {
                 const side = topic.sides[sideIndex];
                 const available = topic.sideAvailability[sideIndex];
+                const debater = topic.participants.find(
+                  (participant) =>
+                    participant.role === "debater" &&
+                    participant.sideIndex === sideIndex,
+                );
 
                 return (
                   <section
@@ -449,6 +470,18 @@ export function TopicList({ topics }: { topics: TopicStatus[] }) {
                     >
                       {side}
                     </h3>
+                    {debater ? (
+                      <p
+                        className={
+                          "text-sm " +
+                          (sideIndex === 0
+                            ? "text-emerald-900"
+                            : "text-red-900")
+                        }
+                      >
+                        {debater.displayName} is debating
+                      </p>
+                    ) : null}
                     <Button
                       className={
                         "mt-auto h-11 w-full text-base " +
@@ -546,6 +579,7 @@ export function TopicList({ topics }: { topics: TopicStatus[] }) {
                 </label>
                 <Input
                   autoComplete="nickname"
+                  defaultValue={defaultDisplayName}
                   id="display-name"
                   maxLength={40}
                   name="displayName"
@@ -583,7 +617,7 @@ export function TopicList({ topics }: { topics: TopicStatus[] }) {
 }
 
 export default function Home() {
-  const topics = useLoaderData<typeof clientLoader>();
+  const { account, topics } = useLoaderData<typeof clientLoader>();
   const location = useLocation();
   const navigate = useNavigate();
   const arrivedAfterMediaPermissionFailure =
@@ -616,20 +650,14 @@ export default function Home() {
 
   return (
     <main className="grid h-svh grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-background">
-      <header className="bg-[#f8fafc]">
-        <div className="mx-auto flex h-14 w-full max-w-3xl items-center px-4 sm:px-6">
-          <p className="font-editorial text-xl font-semibold tracking-tight text-primary">
-            {PRODUCT.name}
-          </p>
-        </div>
-      </header>
+      <SiteHeader account={account} />
       <section className="mx-auto flex min-h-0 w-full max-w-3xl flex-col gap-3 px-4 py-3 sm:px-6 sm:py-5">
         {showMediaPermissionFailure ? (
           <p className="text-sm font-medium text-destructive" role="alert">
             {MEDIA_PERMISSION_MESSAGE}
           </p>
         ) : null}
-        <TopicList topics={topics} />
+        <TopicList defaultDisplayName={account?.username} topics={topics} />
       </section>
     </main>
   );

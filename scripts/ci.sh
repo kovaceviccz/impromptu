@@ -4,6 +4,21 @@ set -eu
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$project_root"
 
+# Git Bash on Windows rewrites container paths such as /documents and passes
+# /c/... host paths that Docker cannot mount. Keep container paths literal and
+# give Docker Windows-style host paths instead.
+host_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+if command -v cygpath >/dev/null 2>&1; then
+  export MSYS_NO_PATHCONV=1
+fi
+project_root=$(host_path "$project_root")
+
 npm ci
 npm run format:check
 npm run lint
@@ -11,7 +26,7 @@ npm run typecheck
 npm test
 npm run build
 
-docs_output=$(mktemp -d)
+docs_output=$(host_path "$(mktemp -d)")
 docker run --rm --user "$(id -u):$(id -g)" \
   --volume "$project_root/docs:/documents:ro" \
   --volume "$docs_output:/output" \
@@ -66,14 +81,16 @@ for attempt in 1 2; do
     impromptu:ci node apps/api/dist/migrate.js
 done
 test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
-  -Atc 'select count(*) from mikro_orm_migrations')" = 1
-test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
-  -Atc "select to_regclass('public.private_lobby')")" = private_lobby
+  -Atc 'select count(*) from mikro_orm_migrations')" = 2
+for table in account account_session private_lobby; do
+  test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
+    -Atc "select to_regclass('public.$table')")" = "$table"
+done
 docker run --rm --network "container:$postgres_container" \
   --env DATABASE_URL=postgresql://impromptu:impromptu@127.0.0.1:5432/migration_check \
   impromptu:ci node --input-type=module -e '
-    import { createPostgresPrivateLobbyStore } from "./apps/api/dist/lobbies/postgres-store.js";
-    const { orm } = await createPostgresPrivateLobbyStore(process.env.DATABASE_URL);
+    import { openDatabase } from "./apps/api/dist/database.js";
+    const orm = await openDatabase(process.env.DATABASE_URL);
     try {
       const changes = await orm.schema.getUpdateSchemaSQL();
       if (changes.trim()) throw new Error(`Migration schema drift:\n${changes}`);
@@ -82,10 +99,18 @@ docker run --rm --network "container:$postgres_container" \
     }
   '
 
-docker run --rm --network host --ipc host \
-  --env CI=1 \
-  --env PLAYWRIGHT_EXTERNAL_SERVER=1 \
-  --volume "$project_root:/work" \
-  --workdir /work \
-  mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27 \
-  npx playwright test --config apps/web/playwright.config.ts
+if command -v cygpath >/dev/null 2>&1; then
+  # A Linux container cannot follow npm's Windows workspace links or share the
+  # host network under Docker Desktop, so run Playwright on the host instead.
+  npx playwright install chromium
+  CI=1 PLAYWRIGHT_EXTERNAL_SERVER=1 \
+    npx playwright test --config apps/web/playwright.config.ts
+else
+  docker run --rm --network host --ipc host \
+    --env CI=1 \
+    --env PLAYWRIGHT_EXTERNAL_SERVER=1 \
+    --volume "$project_root:/work" \
+    --workdir /work \
+    mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27 \
+    npx playwright test --config apps/web/playwright.config.ts
+fi

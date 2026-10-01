@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildApp } from "../app.js";
 import { apiContract } from "../contracts.js";
+import { createMemoryAccountStore } from "../accounts/store.js";
 import { hashLobbyCode } from "../lobbies/codes.js";
 import {
   createMemoryPrivateLobbyStore,
@@ -12,6 +13,7 @@ import {
   createLiveKitGateway,
   type DebateRole,
   type LiveKitGateway,
+  type RoomParticipant,
 } from "./livekit.js";
 
 const apps: Awaited<ReturnType<typeof buildApp>>[] = [];
@@ -26,10 +28,7 @@ afterEach(async () => {
 });
 
 function fakeLiveKit(tokenFor: (role: DebateRole) => string = (role) => role) {
-  const active = new Map<
-    string,
-    { identity: string; role: DebateRole; sideIndex: 0 | 1 | null }[]
-  >();
+  const active = new Map<string, RoomParticipant[]>();
   const issued: DebateRole[] = [];
   const issuedRooms: string[] = [];
   const issuedNames: string[] = [];
@@ -64,6 +63,7 @@ async function testApp(
   privateLobbies: PrivateLobbyStore = createMemoryPrivateLobbyStore(),
 ) {
   const app = await buildApp({
+    accounts: createMemoryAccountStore(),
     livekit,
     privateLobbies,
     livekitPublicUrl: "ws://localhost:7880",
@@ -77,9 +77,24 @@ describe("API contracts", () => {
   it("returns the predefined topics with runtime-valid status data", async () => {
     const { active, gateway } = fakeLiveKit();
     active.set("debate-dream-cheating", [
-      { identity: "debater", role: "debater", sideIndex: 0 },
-      { identity: "spectator-one", role: "spectator", sideIndex: null },
-      { identity: "spectator-two", role: "spectator", sideIndex: null },
+      {
+        displayName: "Ada",
+        identity: "debater",
+        role: "debater",
+        sideIndex: 0,
+      },
+      {
+        displayName: "Spectator",
+        identity: "spectator-one",
+        role: "spectator",
+        sideIndex: null,
+      },
+      {
+        displayName: "Grace",
+        identity: "spectator-two",
+        role: "spectator",
+        sideIndex: null,
+      },
     ]);
     const app = await testApp(gateway);
 
@@ -99,6 +114,11 @@ describe("API contracts", () => {
       sideAvailability: [false, true],
       debaterCount: 1,
       spectatorCount: 2,
+      participants: [
+        { displayName: "Ada", role: "debater", sideIndex: 0 },
+        { displayName: "Spectator", role: "spectator", sideIndex: null },
+        { displayName: "Grace", role: "spectator", sideIndex: null },
+      ],
     });
   });
 
@@ -130,7 +150,7 @@ describe("API contracts", () => {
     expect(apiContract.join.errors[409].parse(joins[2]?.json())).toEqual({
       code: "SIDE_UNAVAILABLE",
       message:
-        "That side was just taken. Choose another side or spectate instead.",
+        "Both debater positions are taken. You can still join as a spectator.",
       sideIndex: 1,
       topicTitle: "Can you cheat in a dream?",
     });
@@ -159,6 +179,8 @@ describe("API contracts", () => {
     expect(apiContract.join.errors[409].parse(competing.json())).toEqual(
       expect.objectContaining({
         code: "SIDE_UNAVAILABLE",
+        message:
+          "That side was just taken. Choose another side or spectate instead.",
         sideIndex: 0,
       }),
     );
@@ -196,7 +218,12 @@ describe("API contracts", () => {
   it("isolates private lobby participants and tracks its creator", async () => {
     const { active, gateway, issuedNames, issuedRooms } = fakeLiveKit();
     active.set("debate-dream-cheating", [
-      { identity: "public-debater", role: "debater", sideIndex: 0 },
+      {
+        displayName: "Public debater",
+        identity: "public-debater",
+        role: "debater",
+        sideIndex: 0,
+      },
     ]);
     const app = await testApp(gateway);
 
@@ -264,6 +291,7 @@ describe("API contracts", () => {
     const privateRoomName = `debate-${creator.lobbyId}`;
     active.set(privateRoomName, [
       {
+        displayName: "Private guest",
         identity: privateJoin.participantIdentity,
         role: "debater",
         sideIndex: 1,
@@ -332,6 +360,82 @@ describe("API contracts", () => {
       `debate-${creator.lobbyId}`,
       "debate-dream-cheating",
     ]);
+  });
+
+  it("changes roles inside a private lobby without leaving it", async () => {
+    const { active, gateway, issuedRooms } = fakeLiveKit();
+    const app = await testApp(gateway);
+    const creator = apiContract.privateTopic.response.parse(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/topics/dream-cheating/private",
+          payload: { displayName: "Creator", intent: "spectator" },
+        })
+      ).json(),
+    );
+    const privateRoomName = `debate-${creator.lobbyId}`;
+    active.set(privateRoomName, [
+      {
+        displayName: "Creator",
+        identity: creator.participantIdentity,
+        role: "spectator",
+        sideIndex: null,
+      },
+    ]);
+
+    const lookup = apiContract.privateLobbyLookup.response.parse(
+      (
+        await app.inject({
+          method: "POST",
+          url: apiContract.privateLobbyLookup.path,
+          payload: { code: creator.joinCode },
+        })
+      ).json(),
+    );
+    expect(lookup.participants).toEqual([
+      { displayName: "Creator", role: "spectator", sideIndex: null },
+    ]);
+
+    const switchResponse = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/join",
+      payload: { ...debaterInput, lobbyId: creator.lobbyId, sideIndex: 1 },
+    });
+
+    expect(switchResponse.statusCode).toBe(200);
+    expect(apiContract.join.response.parse(switchResponse.json())).toEqual(
+      expect.objectContaining({
+        lobbyId: creator.lobbyId,
+        role: "debater",
+        sideIndex: 1,
+      }),
+    );
+    expect(issuedRooms.at(-1)).toBe(privateRoomName);
+  });
+
+  it("rejects a role change into a lobby of another topic", async () => {
+    const { gateway, issued } = fakeLiveKit();
+    const app = await testApp(gateway);
+    const otherTopicLobby = apiContract.privateTopic.response.parse(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/topics/moral-lying/private",
+          payload: { displayName: "Creator", intent: "spectator" },
+        })
+      ).json(),
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/join",
+      payload: { intent: "spectator", lobbyId: otherTopicLobby.lobbyId },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ message: "Lobby not found" });
+    expect(issued).toEqual(["spectator"]);
   });
 
   it("does not join a private lobby when the requested side is unavailable", async () => {
@@ -436,6 +540,9 @@ describe("API contracts", () => {
       occupiedResponse.json(),
     );
     expect(occupiedTopics[0]?.debaterCount).toBe(1);
+    expect(occupiedTopics[0]?.participants).toEqual([
+      { displayName: "Test debater", role: "debater", sideIndex: 0 },
+    ]);
 
     const leaveResponse = await app.inject({
       method: "POST",
@@ -460,6 +567,101 @@ describe("API contracts", () => {
       availableResponse.json(),
     );
     expect(availableTopics[0]?.debaterCount).toBe(0);
+    expect(availableTopics[0]?.participants).toEqual([]);
+  });
+
+  it("moves a spectator into an open side without holding a side while spectating", async () => {
+    const { active, gateway, issued } = fakeLiveKit();
+    const app = await testApp(gateway);
+
+    const spectatorResponse = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/join",
+      payload: { intent: "spectator" },
+    });
+    const spectator = apiContract.join.response.parse(spectatorResponse.json());
+    active.set("debate-dream-cheating", [
+      {
+        displayName: spectator.displayName,
+        identity: spectator.participantIdentity,
+        role: "spectator",
+        sideIndex: null,
+      },
+    ]);
+
+    const spectatingStatus = apiContract.topics.response.parse(
+      (await app.inject({ method: "GET", url: "/api/topics" })).json(),
+    )[0];
+    expect(spectatingStatus).toEqual(
+      expect.objectContaining({
+        debaterCount: 0,
+        sideAvailability: [true, true],
+        spectatorCount: 1,
+      }),
+    );
+
+    const debaterResponse = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/join",
+      payload: { ...debaterInput, displayName: "Former spectator" },
+    });
+    const debater = apiContract.join.response.parse(debaterResponse.json());
+    expect(debater).toEqual(
+      expect.objectContaining({
+        displayName: "Former spectator",
+        role: "debater",
+        sideIndex: 0,
+      }),
+    );
+    expect(debater.participantIdentity).not.toBe(spectator.participantIdentity);
+    active.set("debate-dream-cheating", [
+      {
+        displayName: "Former spectator",
+        identity: debater.participantIdentity,
+        role: "debater",
+        sideIndex: 0,
+      },
+    ]);
+
+    const debatingStatus = apiContract.topics.response.parse(
+      (await app.inject({ method: "GET", url: "/api/topics" })).json(),
+    )[0];
+    expect(debatingStatus).toEqual(
+      expect.objectContaining({
+        debaterCount: 1,
+        participants: [
+          { displayName: "Former spectator", role: "debater", sideIndex: 0 },
+        ],
+        sideAvailability: [false, true],
+        spectatorCount: 0,
+      }),
+    );
+    expect(issued).toEqual(["spectator", "debater"]);
+  });
+
+  it("rejects a debater request when both positions are occupied", async () => {
+    const { active, gateway, issued } = fakeLiveKit();
+    active.set("debate-dream-cheating", [
+      { displayName: "Ada", identity: "a", role: "debater", sideIndex: 0 },
+      { displayName: "Alan", identity: "b", role: "debater", sideIndex: 1 },
+    ]);
+    const app = await testApp(gateway);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/join",
+      payload: debaterInput,
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(apiContract.join.errors[409].parse(response.json())).toEqual({
+      code: "SIDE_UNAVAILABLE",
+      message:
+        "Both debater positions are taken. You can still join as a spectator.",
+      sideIndex: 0,
+      topicTitle: "Can you cheat in a dream?",
+    });
+    expect(issued).toEqual([]);
   });
 
   it("rejects an unknown topic", async () => {

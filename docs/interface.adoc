@@ -92,10 +92,24 @@ participant media. Camera video is mirrored. Audience information is distinct
 from the debate media, and occupancy, voting, and chat have separate visual
 hierarchies.
 
+The participant list sits above the audience vote. Debaters appear by side in
+the position colors with the position text; spectators appear in a separate
+list. The current participant is marked `(you)`. A spectator can take an open
+side from its row, and a debater can give up their side with Spectate on their
+own row. Lists update from room presence as roles change.
+
 Interactive controls follow the permissions issued by the backend. Spectators
 can use audience actions made available to them; debaters see read-only results
 where participation is restricted. Hiding a control is not treated as the
 permission boundary.
+
+== Accounts
+
+Registration, login, and account pages share a narrow single-column form.
+Each field has a visible label, and a validation error appears directly beneath
+the field it describes. Errors that do not belong to a field appear as an alert
+above the form. The header shows Log in and Register to guests, and the username
+linking to the account page for signed-in people.
 
 == Chat
 

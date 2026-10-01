@@ -1,36 +1,12 @@
-import { fileURLToPath } from "node:url";
+import type { MikroORM } from "@mikro-orm/postgresql";
 
-import { MikroORM } from "@mikro-orm/postgresql";
-import { Migrator } from "@mikro-orm/migrations";
-
-import { PrivateLobbyEntity, PrivateLobbySchema } from "./entity.js";
+import { PrivateLobbyEntity } from "./entity.js";
 import type { PrivateLobbyRecord, PrivateLobbyStore } from "./store.js";
 
-export async function createPostgresPrivateLobbyStore(databaseUrl: string) {
-  const connectionUrl = new URL(databaseUrl);
-  const sslMode = connectionUrl.searchParams.get("sslmode");
-  const orm = await MikroORM.init({
-    clientUrl: databaseUrl,
-    driverOptions: {
-      ssl:
-        sslMode === "require" ||
-        sslMode === "verify-ca" ||
-        sslMode === "verify-full"
-          ? { rejectUnauthorized: true }
-          : false,
-      enableChannelBinding:
-        connectionUrl.searchParams.get("channel_binding") === "require",
-    },
-    entities: [PrivateLobbySchema],
-    extensions: [Migrator],
-    migrations: {
-      path: fileURLToPath(new URL("./migrations", import.meta.url)),
-      snapshotOnMigrate: false,
-      transactional: true,
-    },
-  });
-
-  const store: PrivateLobbyStore = {
+export function createPostgresPrivateLobbyStore(
+  orm: MikroORM,
+): PrivateLobbyStore {
+  return {
     async create(lobby) {
       const em = orm.em.fork();
       em.create(PrivateLobbyEntity, lobby);
@@ -50,21 +26,9 @@ export async function createPostgresPrivateLobbyStore(databaseUrl: string) {
       const em = orm.em.fork();
       await em.nativeDelete(PrivateLobbyEntity, { id });
     },
-    async close() {
-      await orm.close(true);
-    },
+    // The shared connection is closed by the process that opened it.
+    async close() {},
   };
-
-  return { orm, store };
-}
-
-export async function migratePrivateLobbies(databaseUrl: string) {
-  const { orm } = await createPostgresPrivateLobbyStore(databaseUrl);
-  try {
-    await orm.migrator.up();
-  } finally {
-    await orm.close(true);
-  }
 }
 
 function toRecord(entity: PrivateLobbyEntity): PrivateLobbyRecord {

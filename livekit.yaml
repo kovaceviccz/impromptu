@@ -4,6 +4,9 @@ rtc:
   tcp_port: 7881
   udp_port: 7882
   use_external_ip: false
+  # Browsers reach LiveKit through the ports Compose publishes on the host.
+  # Docker Desktop cannot route to the container's own address.
+  node_ip: 127.0.0.1
 
 keys:
   devkey: local-development-secret-at-least-32-chars

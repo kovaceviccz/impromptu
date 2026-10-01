@@ -119,7 +119,7 @@ test("loads backend topics and enters a debate", async ({ page }) => {
   ).toBeVisible();
   await expect(
     page.getByText(
-      "That side was just taken. Choose another side or spectate instead.",
+      "Both debater positions are taken. You can still join as a spectator.",
     ),
   ).toBeVisible();
 
@@ -205,7 +205,7 @@ test("spectators can chat while debaters have a read-only view", async ({
   ).toBeVisible({ timeout: 15_000 });
 
   const noVote = spectator.getByRole("button", {
-    name: /No: dreams are involuntary/,
+    name: /No: dreams are involuntary.*vote/,
   });
   await noVote.click();
   await expect(spectator.getByText("1 spectator vote")).toBeVisible();
@@ -237,4 +237,92 @@ test("spectators can chat while debaters have a read-only view", async ({
 
   await spectator.getByRole("button", { name: "Leave lobby" }).click();
   await page.getByRole("button", { name: "Leave lobby" }).click();
+});
+
+test("participants switch between spectating and debating in the room", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const topic = page.locator('[data-slot="card"]').filter({
+    has: page.getByRole("heading", { name: "Can you cheat in a dream?" }),
+  });
+  await topic.getByRole("button", { name: "Watch live" }).click();
+  await page.getByRole("tab", { name: /Participants/ }).click();
+
+  const participants = page.getByRole("region", { name: "Participants" });
+  const debaters = participants.getByRole("region", { name: /^Debaters/ });
+  const spectators = participants.getByRole("region", { name: /^Spectators/ });
+  await expect(spectators.getByText("Spectator (you)")).toBeVisible();
+
+  await debaters
+    .getByRole("button", { name: /Debate.*No: dreams are involuntary/ })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByPlaceholder("Display name")
+    .fill("Switcher");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Debate" })
+    .click();
+
+  await expect(debaters.getByText("Switcher (you)")).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(spectators.getByText("No spectators yet.")).toBeVisible();
+
+  await debaters.getByRole("button", { name: "Spectate" }).click();
+  await expect(spectators.getByText("Spectator (you)")).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(
+    page.getByRole("heading", { name: "Debaters 0 of 2" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Leave lobby" }).click();
+  await expect(topic.getByText("Both sides open")).toBeVisible();
+});
+
+test("registers, keeps the session, logs out, and logs back in", async ({
+  page,
+}) => {
+  const username = `e2e_${Date.now().toString(36)}`;
+  const password = "e2e-password-123";
+
+  await page.goto("/account");
+  await expect(page).toHaveURL(/\/login\?redirectTo=%2Faccount$/);
+
+  await page.getByRole("link", { name: "Create an account" }).click();
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(page.getByText("Enter a username.")).toBeVisible();
+
+  await page.getByLabel("Username").fill(username);
+  await page.getByLabel("Email").fill(`${username}@example.com`);
+  await page.getByLabel("Password").fill(password);
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Account created" }),
+  ).toBeVisible();
+
+  await page.reload();
+  await page.goto("/account");
+  await expect(
+    page.getByRole("heading", { name: "Your account" }),
+  ).toBeVisible();
+  await expect(page.getByText(`${username}@example.com`)).toBeVisible();
+
+  await page.getByRole("button", { name: "Log out" }).click();
+  await expect(page.getByRole("link", { name: "Log in" })).toBeVisible();
+
+  await page.getByRole("link", { name: "Log in" }).click();
+  await page.getByLabel("Username or email").fill(username);
+  await page.getByLabel("Password").fill("not-the-password");
+  await page.getByRole("button", { name: "Log in" }).click();
+  await expect(page.getByRole("alert")).toHaveText(
+    "Incorrect username, email, or password.",
+  );
+
+  await page.getByLabel("Password").fill(password);
+  await page.getByRole("button", { name: "Log in" }).click();
+  await expect(page.getByRole("link", { name: username })).toBeVisible();
 });
