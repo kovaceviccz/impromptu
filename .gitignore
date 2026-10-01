@@ -2,6 +2,9 @@ node_modules/
 apps/api/dist/
 apps/web/build/
 apps/web/.react-router/
+*.db
+*.db-shm
+*.db-wal
 .env
 .env.*
 !deploy/.env.example

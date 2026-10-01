@@ -9,12 +9,21 @@ export type DebateSide = 0 | 1;
 
 const SIDE_ATTRIBUTE = "debate.side";
 
+export type RoomParticipant = {
+  displayName: string;
+  identity: string;
+  role: DebateRole;
+  sideIndex: DebateSide | null;
+};
+
+type Reservation = {
+  displayName: string;
+  expiresAt: number;
+  sideIndex: DebateSide;
+};
+
 export type LiveKitGateway = {
-  listParticipants(
-    roomName: string,
-  ): Promise<
-    { identity: string; role: DebateRole; sideIndex: DebateSide | null }[]
-  >;
+  listParticipants(roomName: string): Promise<RoomParticipant[]>;
   removeParticipant(roomName: string, identity: string): Promise<void>;
   issueToken(input: {
     displayName: string;
@@ -57,19 +66,25 @@ export function createLiveKitGateway(
     async listParticipants(roomName) {
       try {
         const participants = await rooms.listParticipants(roomName);
-        return participants.map((participant) => ({
-          identity: participant.identity,
-          role:
+        return participants.map((participant) => {
+          const role: DebateRole =
             participant.permission?.canPublish === true
               ? "debater"
-              : "spectator",
-          sideIndex:
-            participant.attributes[SIDE_ATTRIBUTE] === "0"
-              ? 0
-              : participant.attributes[SIDE_ATTRIBUTE] === "1"
-                ? 1
-                : null,
-        }));
+              : "spectator";
+          return {
+            displayName:
+              participant.name ||
+              (role === "debater" ? "Debater" : "Spectator"),
+            identity: participant.identity,
+            role,
+            sideIndex:
+              participant.attributes[SIDE_ATTRIBUTE] === "0"
+                ? 0
+                : participant.attributes[SIDE_ATTRIBUTE] === "1"
+                  ? 1
+                  : null,
+          };
+        });
       } catch (error) {
         if (isMissingRoom(error)) return [];
         throw error;
@@ -118,10 +133,7 @@ export function createRoleAllocator(
   livekit: LiveKitGateway,
   tokenTtlSeconds: number,
 ) {
-  const pending = new Map<
-    string,
-    Map<string, { expiresAt: number; sideIndex: DebateSide }>
-  >();
+  const pending = new Map<string, Map<string, Reservation>>();
   const locks = new Map<string, Promise<void>>();
 
   async function inLobbyLock<T>(lobbyId: string, action: () => Promise<T>) {
@@ -149,9 +161,7 @@ export function createRoleAllocator(
         .filter((participant) => participant.role === "debater")
         .map((participant) => participant.identity),
     );
-    const reservations =
-      pending.get(lobbyId) ??
-      new Map<string, { expiresAt: number; sideIndex: DebateSide }>();
+    const reservations = pending.get(lobbyId) ?? new Map<string, Reservation>();
 
     for (const [identity, reservation] of reservations) {
       if (reservation.expiresAt <= Date.now() || activeDebaters.has(identity)) {
@@ -174,6 +184,18 @@ export function createRoleAllocator(
           (reservation) => reservation.sideIndex,
         ),
       ]),
+      participants: [
+        ...active.map(({ displayName, role, sideIndex }) => ({
+          displayName,
+          role,
+          sideIndex,
+        })),
+        ...[...reservations.values()].map(({ displayName, sideIndex }) => ({
+          displayName,
+          role: "debater" as const,
+          sideIndex,
+        })),
+      ],
       spectatorCount: active.filter(
         (participant) => participant.role === "spectator",
       ).length,
@@ -183,10 +205,15 @@ export function createRoleAllocator(
   return {
     status(lobbyId: string) {
       return inLobbyLock(lobbyId, async () => {
-        const { debaterIdentities, occupiedSides, spectatorCount } =
-          await occupancy(lobbyId);
+        const {
+          debaterIdentities,
+          occupiedSides,
+          participants,
+          spectatorCount,
+        } = await occupancy(lobbyId);
         return {
           debaterCount: Math.min(debaterIdentities.size, 2),
+          participants,
           sideAvailability: [
             !occupiedSides.has(0),
             !occupiedSides.has(1),
@@ -202,7 +229,10 @@ export function createRoleAllocator(
       role: DebateRole,
       displayName: string,
       requestedSide: DebateSide | null,
-    ) {
+    ): Promise<
+      | { token: string; sideIndex: DebateSide | null }
+      | { unavailable: "full" | "taken" }
+    > {
       if (role === "spectator") {
         const token = await livekit.issueToken({
           displayName,
@@ -216,19 +246,18 @@ export function createRoleAllocator(
 
       return inLobbyLock(lobbyId, async () => {
         const { debaterIdentities, occupiedSides } = await occupancy(lobbyId);
-        if (
-          requestedSide === null ||
-          debaterIdentities.size >= 2 ||
-          occupiedSides.has(requestedSide)
-        ) {
-          return undefined;
+        if (debaterIdentities.size >= 2 || occupiedSides.size >= 2) {
+          return { unavailable: "full" };
+        }
+        if (requestedSide === null || occupiedSides.has(requestedSide)) {
+          return { unavailable: "taken" };
         }
         const sideIndex = requestedSide;
 
         const reservations =
-          pending.get(lobbyId) ??
-          new Map<string, { expiresAt: number; sideIndex: DebateSide }>();
+          pending.get(lobbyId) ?? new Map<string, Reservation>();
         reservations.set(identity, {
+          displayName,
           expiresAt: Date.now() + tokenTtlSeconds * 1000,
           sideIndex,
         });

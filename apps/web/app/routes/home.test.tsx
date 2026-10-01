@@ -61,6 +61,10 @@ describe("TopicList", () => {
         sideAvailability: [true, false],
         debaterCount: 1,
         spectatorCount: 3,
+        participants: [
+          { displayName: "Alan", role: "debater", sideIndex: 1 },
+          { displayName: "Spectator", role: "spectator", sideIndex: null },
+        ],
       },
       {
         id: "moral-lying",
@@ -69,10 +73,16 @@ describe("TopicList", () => {
         sideAvailability: [false, false],
         debaterCount: 2,
         spectatorCount: 1,
+        participants: [],
       },
     ];
     const router = createMemoryRouter([
-      { path: "/", element: <TopicList topics={topics} /> },
+      {
+        path: "/",
+        element: (
+          <TopicList defaultDisplayName="ada_lovelace" topics={topics} />
+        ),
+      },
       {
         path: "/debates/:topicId",
         action: async ({ request }) => {
@@ -86,8 +96,11 @@ describe("TopicList", () => {
     render(<RouterProvider router={router} />);
 
     expect(screen.getByText("Can you cheat in a dream?")).toBeVisible();
+    expect(screen.getByText("1 of 2")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Next topic" }));
     expect(screen.getByText("Is lying ever moral?")).toBeVisible();
-    expect(screen.getByText("2 available")).toBeVisible();
+    expect(screen.getByText("2 of 2")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Previous topic" }));
 
     const dreamTopic = screen
       .getByText("Can you cheat in a dream?")
@@ -104,6 +117,10 @@ describe("TopicList", () => {
         name: /Side taken.*No: dreams are involuntary/,
       }),
     ).toBeDisabled();
+    expect(within(dreamTopic!).getByText("Alan is debating")).toBeVisible();
+    expect(
+      within(dreamTopic!).queryByText("Spectator is debating"),
+    ).not.toBeInTheDocument();
     fireEvent.click(
       within(dreamTopic!).getByRole("button", {
         name: /Debate.*Yes: intention still matters/,
@@ -116,10 +133,14 @@ describe("TopicList", () => {
     expect(
       within(debaterDialog).getByPlaceholderText("Display name"),
     ).toBeRequired();
+    expect(
+      within(debaterDialog).getByPlaceholderText("Display name"),
+    ).toHaveValue("ada_lovelace");
     fireEvent.click(
       within(debaterDialog).getByRole("button", { name: "Cancel" }),
     );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next topic" }));
 
     const lyingTopic = screen
       .getByText("Is lying ever moral?")
@@ -145,7 +166,7 @@ describe("TopicList", () => {
       [
         {
           path: "/",
-          loader: () => [],
+          loader: () => ({ account: null, topics: [] }),
           element: <Home />,
         },
       ],
@@ -190,6 +211,7 @@ describe("TopicList", () => {
         sideAvailability: [true, true],
         debaterCount: 0,
         spectatorCount: 0,
+        participants: [],
       },
     ];
     const router = createMemoryRouter(
@@ -238,6 +260,7 @@ describe("TopicList", () => {
       sideAvailability: [false, true],
       debaterCount: 1,
       spectatorCount: 2,
+      participants: [],
     });
     joinTopicByCodeMock.mockResolvedValue({
       lobbyId: "private-lobby-id",
@@ -307,6 +330,7 @@ describe("TopicList", () => {
       sideAvailability: [false, false],
       debaterCount: 2,
       spectatorCount: 0,
+      participants: [],
     });
     joinTopicByCodeMock.mockResolvedValue({
       lobbyId: "private-lobby-id",
@@ -356,5 +380,46 @@ describe("TopicList", () => {
       displayName: "Sam",
       intent: "spectator",
     });
+  });
+
+  it("shows account links that reflect the session", async () => {
+    const account = {
+      id: "0f7f2c2e-9d1b-4d3c-8f33-5b6f0d8f5a10",
+      username: "ada_lovelace",
+      email: "ada@example.com",
+      createdAt: "2026-09-01T12:00:00.000Z",
+    };
+    const guestRouter = createMemoryRouter([
+      {
+        path: "/",
+        loader: () => ({ account: null, topics: [] }),
+        element: <Home />,
+      },
+    ]);
+    render(<RouterProvider router={guestRouter} />);
+
+    const guestNav = await screen.findByRole("navigation", { name: "Account" });
+    expect(
+      within(guestNav).getByRole("link", { name: "Log in" }),
+    ).toHaveAttribute("href", "/login");
+    expect(
+      within(guestNav).getByRole("link", { name: "Register" }),
+    ).toHaveAttribute("href", "/register");
+    cleanup();
+
+    const memberRouter = createMemoryRouter([
+      { path: "/", loader: () => ({ account, topics: [] }), element: <Home /> },
+    ]);
+    render(<RouterProvider router={memberRouter} />);
+
+    const memberNav = await screen.findByRole("navigation", {
+      name: "Account",
+    });
+    expect(
+      within(memberNav).getByRole("link", { name: "ada_lovelace" }),
+    ).toHaveAttribute("href", "/account");
+    expect(
+      within(memberNav).queryByRole("link", { name: "Log in" }),
+    ).toBeNull();
   });
 });

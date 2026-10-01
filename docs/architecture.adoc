@@ -90,6 +90,40 @@ concurrent attempts to claim a limited position.
 
 Room features use LiveKit's official client and React packages.
 
+A participant changes role by joining again with the new intent. The backend
+applies the same availability check as the first join and issues a token with
+the new grants; the browser then connects with that token and releases the
+previous identity. A rejected change leaves the participant in their current
+role with the backend's message.
+
+Topic status lists each connected or reserved participant with their role and
+side, so the browser can present debaters and spectators separately without
+deciding roles itself.
+
+== Accounts and persistence
+
+Accounts are stored in SQLite through Node's built-in `node:sqlite` module. The
+database file lives at `DATABASE_PATH` and is kept on a named volume in both
+Compose stacks. The `accounts` feature owns its tables and creates them when the
+API starts.
+
+Usernames and email addresses are unique without regard to case, and email
+addresses are stored in lower case. Passwords are hashed with salted scrypt and
+never stored or logged in plain text.
+
+Signing in creates an opaque random session token. The browser holds it in an
+`HttpOnly`, `SameSite=Lax` cookie, marked `Secure` in production, and the
+database stores only its SHA-256 digest with a 30-day expiry. Logging out
+deletes the session. `GET /api/auth/session` reports the current account, or
+none, while account-only endpoints such as `GET /api/account` answer `401`
+without a valid session.
+
+The browser validates forms with the same Zod schemas the API enforces. Field
+errors from the API use one `{ message, fieldErrors }` shape, so client and
+server validation appear beside the same fields. Account-only pages check the
+session in their loader and redirect to the login page with a same-origin
+`redirectTo` path.
+
 == Frontend
 
 The web application uses React Router Framework Mode, shadcn/ui, Tailwind, and
