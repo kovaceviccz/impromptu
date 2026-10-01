@@ -78,6 +78,8 @@ jobs:
       - name: Install deployment secrets
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
           LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
           LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
           LIVEKIT_HOSTNAME: ${{ vars.LIVEKIT_HOSTNAME }}
@@ -87,8 +89,10 @@ jobs:
             ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
         run: |
           umask 077
-          printf 'APP_IMAGE=%s\nLIVEKIT_API_KEY=%s\nLIVEKIT_API_SECRET=%s\nLIVEKIT_HOSTNAME=%s\n' \
-            "$APP_IMAGE" "$LIVEKIT_API_KEY" "$LIVEKIT_API_SECRET" "$LIVEKIT_HOSTNAME" \
+          : "${DATABASE_URL:?Set DATABASE_URL in the production environment}"
+          : "${MIGRATION_DATABASE_URL:?Set MIGRATION_DATABASE_URL in the production environment}"
+          printf 'APP_IMAGE=%s\nDATABASE_URL=%s\nMIGRATION_DATABASE_URL=%s\nLIVEKIT_API_KEY=%s\nLIVEKIT_API_SECRET=%s\nLIVEKIT_HOSTNAME=%s\n' \
+            "$APP_IMAGE" "$DATABASE_URL" "$MIGRATION_DATABASE_URL" "$LIVEKIT_API_KEY" "$LIVEKIT_API_SECRET" "$LIVEKIT_HOSTNAME" \
             > "$RUNNER_TEMP/impromptu.env"
           printf '%s\n' "$ORIGIN_CERTIFICATE" > "$RUNNER_TEMP/origin.pem"
           printf '%s\n' "$ORIGIN_PRIVATE_KEY" > "$RUNNER_TEMP/origin-key.pem"

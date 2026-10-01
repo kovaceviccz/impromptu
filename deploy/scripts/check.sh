@@ -4,6 +4,8 @@ set -eu
 deploy_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 APP_IMAGE=impromptu:ci \
+  DATABASE_URL=postgresql://ci:ci@localhost/ci \
+  MIGRATION_DATABASE_URL=postgresql://ci:ci@localhost/ci \
   LIVEKIT_API_KEY=ci-key \
   LIVEKIT_API_SECRET=ci-secret-at-least-32-characters-long \
   LIVEKIT_HOSTNAME=livekit.example.com \
