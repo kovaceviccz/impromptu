@@ -26,18 +26,20 @@ function fakeLiveKit(tokenFor: (role: DebateRole) => string = (role) => role) {
     { identity: string; role: DebateRole; sideIndex: 0 | 1 | null }[]
   >();
   const issued: DebateRole[] = [];
+  const issuedRooms: string[] = [];
 
   const gateway: LiveKitGateway = {
     async listParticipants(roomName) {
       return active.get(roomName) ?? [];
     },
-    async issueToken({ role }) {
+    async issueToken({ role, roomName }) {
       issued.push(role);
+      issuedRooms.push(roomName);
       return tokenFor(role);
     },
   };
 
-  return { active, gateway, issued };
+  return { active, gateway, issued, issuedRooms };
 }
 
 async function testApp(livekit: LiveKitGateway) {
@@ -170,6 +172,115 @@ describe("API contracts", () => {
     expect(issued).toEqual(["spectator"]);
   });
 
+  it("isolates private lobby participants and tracks its creator", async () => {
+    const { active, gateway, issuedRooms } = fakeLiveKit();
+    active.set("debate-dream-cheating", [
+      { identity: "public-debater", role: "debater", sideIndex: 0 },
+    ]);
+    const app = await testApp(gateway);
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/private",
+      payload: {
+        displayName: "Lobby creator",
+        intent: "debater",
+        sideIndex: 0,
+      },
+    });
+    const creator = apiContract.privateTopic.response.parse(
+      createResponse.json(),
+    );
+
+    expect(createResponse.statusCode).toBe(200);
+    expect(creator).toEqual(
+      expect.objectContaining({
+        topicId: "dream-cheating",
+        role: "debater",
+        sideIndex: 0,
+        isCreator: true,
+        joinCode: expect.any(String),
+      }),
+    );
+    expect(creator.lobbyId).not.toBe("dream-cheating");
+
+    const lookupResponse = await app.inject({
+      method: "POST",
+      url: apiContract.privateLobbyLookup.path,
+      payload: { code: creator.joinCode },
+    });
+    const preview = apiContract.privateLobbyLookup.response.parse(
+      lookupResponse.json(),
+    );
+    expect(preview.sideAvailability).toEqual([false, true]);
+    expect(preview.debaterCount).toBe(1);
+
+    const privateJoinResponse = await app.inject({
+      method: "POST",
+      url: apiContract.joinByCode.path,
+      payload: {
+        code: creator.joinCode,
+        displayName: "Private guest",
+        intent: "debater",
+        sideIndex: 1,
+      },
+    });
+    const privateJoin = apiContract.joinByCode.response.parse(
+      privateJoinResponse.json(),
+    );
+    expect(privateJoinResponse.statusCode).toBe(200);
+    expect(privateJoin).toEqual(
+      expect.objectContaining({
+        lobbyId: creator.lobbyId,
+        role: "debater",
+        sideIndex: 1,
+        isCreator: false,
+      }),
+    );
+
+    const privateSpectatorResponse = await app.inject({
+      method: "POST",
+      url: apiContract.joinByCode.path,
+      payload: {
+        code: creator.joinCode,
+        displayName: "Private spectator",
+        intent: "spectator",
+      },
+    });
+    expect(privateSpectatorResponse.statusCode).toBe(200);
+    expect(
+      apiContract.joinByCode.response.parse(privateSpectatorResponse.json()),
+    ).toEqual(
+      expect.objectContaining({
+        lobbyId: creator.lobbyId,
+        displayName: "Private spectator",
+        role: "spectator",
+        sideIndex: null,
+        isCreator: false,
+      }),
+    );
+
+    const publicJoinResponse = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/join",
+      payload: { ...debaterInput, sideIndex: 1 },
+    });
+    expect(publicJoinResponse.statusCode).toBe(200);
+    expect(apiContract.join.response.parse(publicJoinResponse.json())).toEqual(
+      expect.objectContaining({
+        lobbyId: "dream-cheating",
+        sideIndex: 1,
+        isCreator: false,
+      }),
+    );
+    expect(issuedRooms).toEqual([
+      `debate-${creator.lobbyId}`,
+      `debate-${creator.lobbyId}`,
+      `debate-${creator.lobbyId}`,
+      "debate-dream-cheating",
+    ]);
+  });
+
   it("releases a pending debater reservation when its participant leaves", async () => {
     const { gateway } = fakeLiveKit();
     const app = await testApp(gateway);
@@ -193,7 +304,10 @@ describe("API contracts", () => {
     const leaveResponse = await app.inject({
       method: "POST",
       url: "/api/topics/dream-cheating/leave",
-      payload: { participantIdentity: join.participantIdentity },
+      payload: {
+        lobbyId: join.lobbyId,
+        participantIdentity: join.participantIdentity,
+      },
     });
 
     expect(leaveResponse.statusCode).toBe(200);

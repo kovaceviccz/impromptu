@@ -4,8 +4,13 @@ import { topicContracts } from "./topics/contract.js";
 export {
   errorSchema,
   joinBodySchema,
+  joinResultSchema,
+  sideUnavailableErrorSchema,
   type JoinInput,
+  type JoinByCodeInput,
   type JoinResult,
+  type PrivateLobbyCreateInput,
+  type PrivateLobbyPreview,
   type SideUnavailableError,
   type TopicStatus,
 } from "./topics/contract.js";
