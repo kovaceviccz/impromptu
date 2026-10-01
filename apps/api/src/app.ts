@@ -9,11 +9,13 @@ import {
 import Fastify from "fastify";
 
 import { healthRoutes } from "./health/routes.js";
+import type { PrivateLobbyStore } from "./lobbies/store.js";
 import type { LiveKitGateway } from "./topics/livekit.js";
 import { topicRoutes } from "./topics/routes.js";
 
 type BuildAppOptions = {
   livekit: LiveKitGateway;
+  privateLobbies: PrivateLobbyStore;
   livekitPublicUrl: string;
   tokenTtlSeconds: number;
   logger?: boolean;
@@ -38,9 +40,11 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(healthRoutes);
   await app.register(topicRoutes, {
     livekit: options.livekit,
+    privateLobbies: options.privateLobbies,
     livekitPublicUrl: options.livekitPublicUrl,
     tokenTtlSeconds: options.tokenTtlSeconds,
   });
+  app.addHook("onClose", async () => options.privateLobbies.close());
 
   if (options.serveWeb) {
     const root = fileURLToPath(

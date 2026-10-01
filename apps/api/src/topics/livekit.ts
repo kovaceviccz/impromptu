@@ -15,6 +15,7 @@ export type LiveKitGateway = {
   ): Promise<
     { identity: string; role: DebateRole; sideIndex: DebateSide | null }[]
   >;
+  removeParticipant(roomName: string, identity: string): Promise<void>;
   issueToken(input: {
     displayName: string;
     identity: string;
@@ -71,6 +72,15 @@ export function createLiveKitGateway(
         }));
       } catch (error) {
         if (isMissingRoom(error)) return [];
+        throw error;
+      }
+    },
+
+    async removeParticipant(roomName, identity) {
+      try {
+        await rooms.removeParticipant(roomName, identity);
+      } catch (error) {
+        if (isMissingRoom(error)) return;
         throw error;
       }
     },

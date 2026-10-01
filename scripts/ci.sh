@@ -57,6 +57,31 @@ until docker compose exec -T web wget -q -O /dev/null http://127.0.0.1:5173/api/
   sleep 1
 done
 
+docker compose exec -T postgres psql -U impromptu -d postgres \
+  -c 'create database migration_check'
+postgres_container=$(docker compose ps -q postgres)
+for attempt in 1 2; do
+  docker run --rm --network "container:$postgres_container" \
+    --env MIGRATION_DATABASE_URL=postgresql://impromptu:impromptu@127.0.0.1:5432/migration_check \
+    impromptu:ci node apps/api/dist/migrate.js
+done
+test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
+  -Atc 'select count(*) from mikro_orm_migrations')" = 1
+test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
+  -Atc "select to_regclass('public.private_lobby')")" = private_lobby
+docker run --rm --network "container:$postgres_container" \
+  --env DATABASE_URL=postgresql://impromptu:impromptu@127.0.0.1:5432/migration_check \
+  impromptu:ci node --input-type=module -e '
+    import { createPostgresPrivateLobbyStore } from "./apps/api/dist/lobbies/postgres-store.js";
+    const { orm } = await createPostgresPrivateLobbyStore(process.env.DATABASE_URL);
+    try {
+      const changes = await orm.schema.getUpdateSchemaSQL();
+      if (changes.trim()) throw new Error(`Migration schema drift:\n${changes}`);
+    } finally {
+      await orm.close(true);
+    }
+  '
+
 docker run --rm --network host --ipc host \
   --env CI=1 \
   --env PLAYWRIGHT_EXTERNAL_SERVER=1 \

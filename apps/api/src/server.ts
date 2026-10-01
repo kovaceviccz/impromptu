@@ -1,9 +1,26 @@
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
+import { createPostgresPrivateLobbyStore } from "./lobbies/postgres-store.js";
 import { createLiveKitGateway } from "./topics/livekit.js";
 
 const config = loadConfig();
+const { orm, store: privateLobbies } = await createPostgresPrivateLobbyStore(
+  config.DATABASE_URL,
+);
+if (config.DEV_DATABASE_RESET === "true") {
+  if (
+    process.env.NODE_ENV !== "development" ||
+    new URL(config.DATABASE_URL).hostname !== "postgres"
+  ) {
+    throw new Error(
+      "Development database reset requires local Compose PostgreSQL",
+    );
+  }
+  await orm.schema.drop({ dropMigrationsTable: true });
+  await orm.migrator.up();
+}
 const app = await buildApp({
+  privateLobbies,
   livekit: createLiveKitGateway({
     apiKey: config.LIVEKIT_API_KEY,
     apiSecret: config.LIVEKIT_API_SECRET,
