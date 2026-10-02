@@ -68,6 +68,18 @@ test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
   -Atc 'select count(*) from mikro_orm_migrations')" = 1
 test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
   -Atc "select to_regclass('public.private_lobby')")" = private_lobby
+docker run --rm --network "container:$postgres_container" \
+  --env DATABASE_URL=postgresql://impromptu:impromptu@127.0.0.1:5432/migration_check \
+  impromptu:ci node --input-type=module -e '
+    import { createPostgresPrivateLobbyStore } from "./apps/api/dist/lobbies/postgres-store.js";
+    const { orm } = await createPostgresPrivateLobbyStore(process.env.DATABASE_URL);
+    try {
+      const changes = await orm.schema.getUpdateSchemaSQL();
+      if (changes.trim()) throw new Error(`Migration schema drift:\n${changes}`);
+    } finally {
+      await orm.close(true);
+    }
+  '
 
 docker run --rm --network host --ipc host \
   --env CI=1 \
