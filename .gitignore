@@ -5,6 +5,7 @@ apps/web/.react-router/
 .env
 .env.*
 !deploy/.env.example
+!deploy/.env.staging.example
 !deploy/opentofu/.env.example
 deploy/secrets/*
 !deploy/secrets/.gitkeep

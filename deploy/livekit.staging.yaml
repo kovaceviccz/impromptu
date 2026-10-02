@@ -1,0 +1,13 @@
+port: 7890
+
+rtc:
+  tcp_port: 7891
+  udp_port: 7892
+  use_external_ip: true
+
+turn:
+  enabled: true
+  udp_port: 3479
+
+logging:
+  level: info

@@ -25,3 +25,8 @@ output "origin_certificate" {
   description = "Cloudflare Origin CA certificate to install beside the local private key."
   value       = cloudflare_origin_ca_certificate.origin.certificate
 }
+
+output "staging_origin_certificate" {
+  description = "Staging Cloudflare Origin CA certificate to install beside its local private key."
+  value       = cloudflare_origin_ca_certificate.staging.certificate
+}

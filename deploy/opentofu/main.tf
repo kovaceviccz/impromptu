@@ -29,6 +29,17 @@ resource "cloudflare_origin_ca_certificate" "origin" {
   }
 }
 
+resource "cloudflare_origin_ca_certificate" "staging" {
+  csr                = var.staging_origin_csr
+  hostnames          = [var.staging_app_hostname, var.staging_livekit_hostname]
+  request_type       = "origin-rsa"
+  requested_validity = 5475
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 resource "hcloud_ssh_key" "deploy" {
   name       = "${var.server_name}-deploy"
   public_key = var.ssh_public_key
@@ -74,6 +85,27 @@ resource "hcloud_firewall" "server" {
     port       = "3478"
     source_ips = ["0.0.0.0/0", "::/0"]
   }
+
+  rule {
+    direction  = "in"
+    protocol   = "tcp"
+    port       = "7891"
+    source_ips = ["0.0.0.0/0", "::/0"]
+  }
+
+  rule {
+    direction  = "in"
+    protocol   = "udp"
+    port       = "7892"
+    source_ips = ["0.0.0.0/0", "::/0"]
+  }
+
+  rule {
+    direction  = "in"
+    protocol   = "udp"
+    port       = "3479"
+    source_ips = ["0.0.0.0/0", "::/0"]
+  }
 }
 
 resource "hcloud_server" "app" {
@@ -105,6 +137,24 @@ resource "cloudflare_dns_record" "app" {
 resource "cloudflare_dns_record" "livekit" {
   zone_id = var.cloudflare_zone_id
   name    = var.livekit_hostname
+  content = hcloud_server.app.ipv4_address
+  type    = "A"
+  proxied = true
+  ttl     = 1
+}
+
+resource "cloudflare_dns_record" "staging_app" {
+  zone_id = var.cloudflare_zone_id
+  name    = var.staging_app_hostname
+  content = hcloud_server.app.ipv4_address
+  type    = "A"
+  proxied = true
+  ttl     = 1
+}
+
+resource "cloudflare_dns_record" "staging_livekit" {
+  zone_id = var.cloudflare_zone_id
+  name    = var.staging_livekit_hostname
   content = hcloud_server.app.ipv4_address
   type    = "A"
   proxied = true

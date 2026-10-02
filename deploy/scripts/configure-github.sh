@@ -21,6 +21,15 @@ for command in gh docker; do
   fi
 done
 
+for file in \
+  "$deploy_root/secrets/staging-origin.pem" \
+  "$deploy_root/secrets/staging-origin-key.pem"; do
+  if [ ! -s "$file" ]; then
+    echo "Missing $file" >&2
+    exit 1
+  fi
+done
+
 if [ -s "$github_token_file" ]; then
   GH_TOKEN=$(sed -n '1p' "$github_token_file")
   export GH_TOKEN
@@ -73,6 +82,10 @@ gh secret set ORIGIN_CERTIFICATE --repo "$repository" --env production \
   < "$deploy_root/secrets/origin.pem"
 gh secret set ORIGIN_PRIVATE_KEY --repo "$repository" --env production \
   < "$deploy_root/secrets/origin-key.pem"
+gh secret set STAGING_ORIGIN_CERTIFICATE --repo "$repository" --env production \
+  < "$deploy_root/secrets/staging-origin.pem"
+gh secret set STAGING_ORIGIN_PRIVATE_KEY --repo "$repository" --env production \
+  < "$deploy_root/secrets/staging-origin-key.pem"
 
 echo "Configured the production environment for $repository."
 echo "Automatic main deployment: $auto_deploy"
