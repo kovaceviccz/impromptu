@@ -1,18 +1,30 @@
+import { fileURLToPath } from "node:url";
+
 import { MikroORM } from "@mikro-orm/postgresql";
 import { Migrator } from "@mikro-orm/migrations";
 
 import { PrivateLobbyEntity, PrivateLobbySchema } from "./entity.js";
-import { Migration20260930000000 } from "./migrations/Migration20260930000000.js";
 import type { PrivateLobbyRecord, PrivateLobbyStore } from "./store.js";
 
 export async function createPostgresPrivateLobbyStore(databaseUrl: string) {
+  const connectionUrl = new URL(databaseUrl);
+  const sslMode = connectionUrl.searchParams.get("sslmode");
   const orm = await MikroORM.init({
     clientUrl: databaseUrl,
-    driverOptions: { ssl: false },
+    driverOptions: {
+      ssl:
+        sslMode === "require" ||
+        sslMode === "verify-ca" ||
+        sslMode === "verify-full"
+          ? { rejectUnauthorized: true }
+          : false,
+      enableChannelBinding:
+        connectionUrl.searchParams.get("channel_binding") === "require",
+    },
     entities: [PrivateLobbySchema],
     extensions: [Migrator],
     migrations: {
-      migrationsList: [Migration20260930000000],
+      path: fileURLToPath(new URL("./migrations", import.meta.url)),
       snapshotOnMigrate: false,
       transactional: true,
     },

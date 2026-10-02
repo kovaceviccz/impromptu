@@ -12,14 +12,21 @@ export class PrivateLobbyEntity {
 export const PrivateLobbySchema = new EntitySchema<PrivateLobbyEntity>({
   class: PrivateLobbyEntity,
   tableName: "private_lobby",
+  indexes: [
+    {
+      name: "private_lobby_expires_at_idx",
+      properties: ["expiresAt"],
+      where: "expires_at is not null",
+    },
+  ],
   properties: {
     id: { type: "uuid", primary: true },
-    topicId: { type: "string", fieldName: "topic_id" },
+    topicId: { type: "string", fieldName: "topic_id", columnType: "text" },
     codeHash: {
       type: "string",
       fieldName: "code_hash",
-      length: 64,
-      unique: true,
+      columnType: "char(64)",
+      unique: "private_lobby_code_hash_key",
     },
     creatorIdentity: { type: "uuid", fieldName: "creator_identity" },
     createdAt: {
