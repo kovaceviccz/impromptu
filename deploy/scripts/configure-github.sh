@@ -41,6 +41,15 @@ for file in \
   fi
 done
 
+for file in \
+  "$deploy_root/secrets/staging-origin.pem" \
+  "$deploy_root/secrets/staging-origin-key.pem"; do
+  if [ ! -s "$file" ]; then
+    echo "Missing $file" >&2
+    exit 1
+  fi
+done
+
 set -a
 . "$deploy_root/.env"
 set +a
@@ -79,6 +88,10 @@ gh secret set ORIGIN_CERTIFICATE --repo "$repository" --env production \
   < "$deploy_root/secrets/origin.pem"
 gh secret set ORIGIN_PRIVATE_KEY --repo "$repository" --env production \
   < "$deploy_root/secrets/origin-key.pem"
+gh secret set STAGING_ORIGIN_CERTIFICATE --repo "$repository" --env production \
+  < "$deploy_root/secrets/staging-origin.pem"
+gh secret set STAGING_ORIGIN_PRIVATE_KEY --repo "$repository" --env production \
+  < "$deploy_root/secrets/staging-origin-key.pem"
 
 echo "Configured the production environment for $repository."
 echo "Automatic main deployment: $auto_deploy"

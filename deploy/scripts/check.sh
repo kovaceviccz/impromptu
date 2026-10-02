@@ -12,6 +12,15 @@ APP_IMAGE=impromptu:ci \
   docker compose --project-directory "$deploy_root" \
     --file "$deploy_root/compose.yaml" config --quiet
 
+APP_IMAGE=impromptu:ci \
+  DATABASE_URL=postgresql://ci:ci@localhost/ci \
+  MIGRATION_DATABASE_URL=postgresql://ci:ci@localhost/ci \
+  LIVEKIT_API_KEY=ci-key \
+  LIVEKIT_API_SECRET=ci-secret-at-least-32-characters-long \
+  LIVEKIT_HOSTNAME=livekit-dev.example.com \
+  docker compose --project-directory "$deploy_root" \
+    --file "$deploy_root/compose.staging.yaml" config --quiet
+
 envoy_tls_directory=$(mktemp -d)
 cleanup_envoy_tls() {
   if [ -d "$envoy_tls_directory" ]; then
@@ -28,6 +37,10 @@ openssl req -x509 -newkey rsa:2048 -nodes \
 chmod 755 "$envoy_tls_directory"
 chmod 640 "$envoy_tls_directory/origin-key.pem"
 chmod 644 "$envoy_tls_directory/origin.pem"
+cp "$envoy_tls_directory/origin.pem" \
+  "$envoy_tls_directory/staging-origin.pem"
+cp "$envoy_tls_directory/origin-key.pem" \
+  "$envoy_tls_directory/staging-origin-key.pem"
 docker run --rm \
   --user "0:$(id -g)" \
   --cap-drop ALL \

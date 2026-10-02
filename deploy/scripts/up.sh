@@ -5,20 +5,13 @@ deploy_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$deploy_root"
 
 docker compose config --quiet
-test -s secrets/origin.pem
-test -s secrets/origin-key.pem
-openssl x509 -in secrets/origin.pem -noout -checkend 604800
-
-certificate_key=$(openssl x509 -in secrets/origin.pem -pubkey -noout | \
-  openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256)
-private_key=$(openssl pkey -in secrets/origin-key.pem -pubout -outform DER 2>/dev/null | \
-  openssl dgst -sha256)
-test "$certificate_key" = "$private_key"
+sh scripts/validate-envoy.sh
 
 docker compose pull
 docker compose run --rm --no-deps -T --entrypoint node app \
   apps/api/dist/migrate.js
 docker compose up --detach --remove-orphans
+docker compose restart envoy
 docker compose exec -T app \
   wget --quiet --spider http://127.0.0.1:3000/api/health
 

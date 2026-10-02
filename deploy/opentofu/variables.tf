@@ -23,6 +23,23 @@ variable "origin_csr" {
   type        = string
 }
 
+variable "staging_origin_csr" {
+  description = "PEM-encoded CSR for the staging Cloudflare Origin CA certificate."
+  type        = string
+}
+
+variable "staging_app_hostname" {
+  description = "Public staging application hostname."
+  type        = string
+  default     = "staging.impromptu.social"
+}
+
+variable "staging_livekit_hostname" {
+  description = "Public staging LiveKit signaling hostname."
+  type        = string
+  default     = "livekit-staging.impromptu.social"
+}
+
 variable "server_name" {
   description = "Hetzner server name."
   type        = string

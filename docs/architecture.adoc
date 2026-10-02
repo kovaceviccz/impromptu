@@ -31,7 +31,7 @@ from the shared `PRODUCT` constant.
 apps/api             Fastify API and browser-safe contract export
 apps/api/src/lobbies  Private lobby persistence and lifecycle
 apps/web             React Router application and browser tests
-deploy               production containers, configuration, and OpenTofu
+deploy               production and staging containers, configuration, and OpenTofu
 Dockerfile           local development image
 compose.yaml         local development stack
 livekit.yaml         local LiveKit configuration
@@ -43,7 +43,7 @@ application composition stay at the API source root.
 
 The `deploy/` directory is an extractable deployment boundary. It consumes a
 prebuilt application image and contains the files needed to provision and run
-the production stack. Application source is not a runtime dependency of that
+both server stacks. Application source is not a runtime dependency of that
 directory.
 
 == API contracts
@@ -133,16 +133,23 @@ gateway and routes application traffic separately from LiveKit signaling.
 LiveKit media reaches the host directly because a standard Cloudflare HTTP proxy
 does not carry the required media transports.
 
-OpenTofu owns the Hetzner host, firewall, SSH access, Cloudflare DNS records,
-origin certificate, and the zone settings required at the edge. Private keys
-and API credentials remain outside OpenTofu inputs and state. After CI succeeds
-for the current `main` commit, the deployment workflow builds an immutable
-application image, installs the runtime configuration, starts the Compose stack,
-and verifies the public application and signaling routes. A manual deployment
-path remains available for initial provisioning and recovery.
+Production and staging share the Hetzner host and Envoy. They use separate
+Compose projects, LiveKit instances, media ports, and Neon database branches.
+Staging stays online at `staging.impromptu.social`. Its database branch persists
+across deployments; each deployment applies versioned migrations before starting
+the new application image.
 
-The root Compose files are for source development. Production configuration
-belongs under `deploy/`, including its Dockerfile, Compose stack, service
+OpenTofu owns the Hetzner host, firewall, SSH access, Cloudflare DNS records,
+origin certificates, and the zone settings required at the edge. Private keys
+and API credentials remain outside OpenTofu inputs and state. Successful CI for
+the current `main` or `staging` commit gates deployment to its corresponding
+environment. Each workflow builds an immutable application image, installs its
+runtime configuration, starts its Compose stack, and verifies the public
+application and signaling routes. Manual deployment remains available for
+initial provisioning and recovery.
+
+The root Compose files are for source development. Server configuration
+belongs under `deploy/`, including its Dockerfile, Compose stacks, service
 configuration, scripts, environment template, and infrastructure code.
 
 == Verification

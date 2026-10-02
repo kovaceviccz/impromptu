@@ -27,7 +27,8 @@ docker run --rm \
   --volume "$project_root:/repo" \
   --workdir /repo \
   rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
-  .github/workflows/ci.yml .github/workflows/deploy.yml .github/workflows/docs.yml
+  .github/workflows/ci.yml .github/workflows/deploy.yml \
+  .github/workflows/deploy-staging.yml .github/workflows/docs.yml
 
 docker compose config --quiet
 docker build --file deploy/Dockerfile --tag impromptu:ci .
