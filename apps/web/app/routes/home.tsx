@@ -174,12 +174,13 @@ function PrivateLobby({ topics }: { topics: TopicStatus[] }) {
   return (
     <>
       <Button
-        className="fixed right-4 bottom-4 z-40 h-11 shadow-lg sm:right-8 sm:bottom-8"
+        className="fixed right-4 bottom-4 z-40 h-11 text-base sm:right-6 sm:bottom-6"
+        size="lg"
         type="button"
         onClick={() => setOpen(true)}
       >
         <LockKeyholeIcon aria-hidden="true" />
-        Private lobby
+        Create or join a private lobby
       </Button>
       <Dialog
         open={open}
