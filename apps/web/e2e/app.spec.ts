@@ -74,7 +74,7 @@ test("loads backend topics and enters a debate", async ({ page }) => {
   await expect(firstSide.locator("video")).toBeVisible({
     timeout: 15_000,
   });
-  await page.getByRole("button", { name: "Leave debate" }).click();
+  await page.getByRole("button", { name: "Leave lobby" }).click();
   await expect(
     page.getByRole("heading", {
       level: 1,
@@ -142,7 +142,7 @@ test("loads backend topics and enters a debate", async ({ page }) => {
   await expect(
     page.getByRole("textbox", { name: "Display name" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Leave debate" }).click();
+  await page.getByRole("button", { name: "Leave lobby" }).click();
   await expect(dreamTopic.getByText("Both sides open")).toBeVisible();
   expect(joinRequests).toBe(3);
   expect(leaveRequests).toBe(2);
@@ -235,6 +235,6 @@ test("spectators can chat while debaters have a read-only view", async ({
     0,
   );
 
-  await spectator.getByRole("button", { name: "Leave debate" }).click();
-  await page.getByRole("button", { name: "Leave debate" }).click();
+  await spectator.getByRole("button", { name: "Leave lobby" }).click();
+  await page.getByRole("button", { name: "Leave lobby" }).click();
 });

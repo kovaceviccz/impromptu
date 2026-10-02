@@ -5,12 +5,10 @@ import type { FastifyPluginAsyncZod } from "@fastify/type-provider-zod";
 import { topicContracts } from "./contract.js";
 import {
   createPrivateLobby,
-  deletePrivateLobby,
   findPrivateLobbyByCode,
-  findPrivateLobbyById,
-  findTopic,
-  topics,
-} from "./data.js";
+} from "../lobbies/codes.js";
+import type { PrivateLobbyStore } from "../lobbies/store.js";
+import { findTopic, topics } from "./data.js";
 import {
   createRoleAllocator,
   type DebateRole,
@@ -21,6 +19,7 @@ import type { JoinResult } from "./contract.js";
 
 export type TopicRoutesOptions = {
   livekit: LiveKitGateway;
+  privateLobbies: PrivateLobbyStore;
   livekitPublicUrl: string;
   tokenTtlSeconds: number;
 };
@@ -86,8 +85,11 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       },
     },
     async (request, reply) => {
-      const lobby = findPrivateLobbyByCode(request.body.code);
-      if (!lobby) {
+      const lobby = await findPrivateLobbyByCode(
+        options.privateLobbies,
+        request.body.code,
+      );
+      if (!lobby || (lobby.expiresAt && lobby.expiresAt <= new Date())) {
         return reply.code(404).send({ message: "Private lobby not found" });
       }
 
@@ -97,10 +99,10 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       }
 
       const { debaterCount, sideAvailability, spectatorCount } =
-        await allocation.status(lobby.lobbyId);
+        await allocation.status(lobby.id);
       return {
         id: topic.id,
-        lobbyId: lobby.lobbyId,
+        lobbyId: lobby.id,
         title: topic.title,
         sides: [topic.sides[0], topic.sides[1]] satisfies [string, string],
         sideAvailability: [sideAvailability[0], sideAvailability[1]] satisfies [
@@ -126,9 +128,12 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       },
     },
     async (request, reply) => {
-      const lobby = findPrivateLobbyByCode(request.body.code);
-      if (!lobby) {
-        return reply.code(404).send({ message: "Private topic not found" });
+      const lobby = await findPrivateLobbyByCode(
+        options.privateLobbies,
+        request.body.code,
+      );
+      if (!lobby || (lobby.expiresAt && lobby.expiresAt <= new Date())) {
+        return reply.code(404).send({ message: "Private lobby not found" });
       }
 
       const topic = findTopic(lobby.topicId);
@@ -141,7 +146,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       const sideIndex =
         request.body.intent === "debater" ? request.body.sideIndex : null;
       const allocationResult = await allocation.join(
-        lobby.lobbyId,
+        lobby.id,
         participantIdentity,
         role,
         request.body.displayName,
@@ -160,7 +165,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       }
 
       return makeJoinResult({
-        lobbyId: lobby.lobbyId,
+        lobbyId: lobby.id,
         topicId: topic.id,
         topicTitle: topic.title,
         sides: [topic.sides[0], topic.sides[1]] satisfies [string, string],
@@ -195,21 +200,30 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       }
 
       const participantIdentity = randomUUID();
-      const lobbyId = `private-${randomUUID()}`;
-      const code = createPrivateLobby(topic.id, lobbyId, participantIdentity);
+      const lobby = await createPrivateLobby(
+        options.privateLobbies,
+        topic.id,
+        participantIdentity,
+      );
       const role = request.body.intent satisfies DebateRole;
       const sideIndex =
         request.body.intent === "debater" ? request.body.sideIndex : null;
-      const allocationResult = await allocation.join(
-        lobbyId,
-        participantIdentity,
-        role,
-        request.body.displayName,
-        sideIndex,
-      );
+      let allocationResult;
+      try {
+        allocationResult = await allocation.join(
+          lobby.id,
+          participantIdentity,
+          role,
+          request.body.displayName,
+          sideIndex,
+        );
+      } catch (error) {
+        await options.privateLobbies.delete(lobby.id);
+        throw error;
+      }
 
       if (allocationResult === undefined) {
-        deletePrivateLobby(code);
+        await options.privateLobbies.delete(lobby.id);
         return reply.code(409).send({
           code: "SIDE_UNAVAILABLE",
           message: "That side is unavailable. Choose another side or spectate.",
@@ -220,7 +234,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       }
 
       return makeJoinResult({
-        lobbyId,
+        lobbyId: lobby.id,
         topicId: topic.id,
         topicTitle: topic.title,
         sides: [topic.sides[0], topic.sides[1]] satisfies [string, string],
@@ -229,7 +243,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         role,
         sideIndex: allocationResult.sideIndex,
         isCreator: true,
-        joinCode: code,
+        joinCode: lobby.code,
         livekitUrl: options.livekitPublicUrl,
         token: allocationResult.token,
       });
@@ -314,16 +328,21 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         return reply.code(404).send({ message: "Topic not found" });
       }
 
-      const privateLobby = findPrivateLobbyById(request.body.lobbyId);
-      if (
-        request.body.lobbyId !== topic.id &&
-        privateLobby?.topicId !== topic.id
-      ) {
-        return reply.code(404).send({ message: "Lobby not found" });
+      if (request.body.lobbyId !== topic.id) {
+        const privateLobby = await options.privateLobbies.findById(
+          request.body.lobbyId,
+        );
+        if (privateLobby?.topicId !== topic.id) {
+          return reply.code(404).send({ message: "Lobby not found" });
+        }
       }
 
       await allocation.leave(
         request.body.lobbyId,
+        request.body.participantIdentity,
+      );
+      await options.livekit.removeParticipant(
+        `debate-${request.body.lobbyId}`,
         request.body.participantIdentity,
       );
       return { status: "ok" as const };
