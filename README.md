@@ -20,6 +20,11 @@ Spectators can watch, vote, and participate in chat.
 - Spectator mode with chat
 - Real-time voting
 
+Visit [impromptu.social](https://impromptu.social/) to join a live debate. A
+staging environment is available at
+[staging.impromptu.social](https://staging.impromptu.social/) for validating
+changes from the `staging` branch before they reach production.
+
 ## Run locally
 
 Docker Compose is the easiest way to run the project.
