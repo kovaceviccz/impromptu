@@ -205,7 +205,9 @@ describe("TopicList", () => {
 
     render(<RouterProvider router={router} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Private lobby" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create or join a private lobby" }),
+    );
     fireEvent.change(screen.getByLabelText("Creator display name"), {
       target: { value: "Sam" },
     });
@@ -263,7 +265,9 @@ describe("TopicList", () => {
     expect(
       screen.getByText("No debates are available right now."),
     ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Private lobby" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create or join a private lobby" }),
+    );
     expect(
       screen.getByRole("button", { name: "Create and join" }),
     ).toBeDisabled();
@@ -330,7 +334,9 @@ describe("TopicList", () => {
     expect(
       screen.getByText("No debates are available right now."),
     ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Private lobby" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create or join a private lobby" }),
+    );
     expect(
       screen.getByRole("button", { name: "Create and join" }),
     ).toBeDisabled();
