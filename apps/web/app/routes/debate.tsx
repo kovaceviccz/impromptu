@@ -8,19 +8,22 @@ import {
   RoomAudioRenderer,
   VideoTrack,
   useChat,
+  useConnectionState,
   useParticipants,
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
 import { LogOutIcon, SendIcon, SmileIcon } from "lucide-react";
-import { Track, VideoPresets } from "livekit-client";
+import { ConnectionState, Track, VideoPresets } from "livekit-client";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
   type ClientActionFunctionArgs,
+  type ClientLoaderFunctionArgs,
   Form,
   Link,
   Navigate,
   useActionData,
+  useLoaderData,
   useNavigate,
 } from "react-router";
 
@@ -56,6 +59,13 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "~/components/ui/toggle-group";
 
 import { joinTopic, leaveTopic } from "../api";
+import {
+  type DebateSession,
+  clearDebateSession,
+  loadDebateSession,
+  saveDebateSession,
+  updateDebateSession,
+} from "../debate-session";
 
 const VOTE_ATTRIBUTE = "debate.vote";
 const SIDE_ATTRIBUTE = "debate.side";
@@ -76,9 +86,9 @@ export function meta() {
 }
 
 export async function clientAction({
-  params,
-  request,
-}: ClientActionFunctionArgs) {
+                                     params,
+                                     request,
+                                   }: ClientActionFunctionArgs) {
   if (!params.topicId) throw new Response("Topic not found", { status: 404 });
   const formData = await request.formData();
   const values = Object.fromEntries(formData);
@@ -87,7 +97,21 @@ export async function clientAction({
       ? { ...values, sideIndex: Number(values.sideIndex) }
       : values,
   );
-  return joinTopic(params.topicId, input);
+  const result = await joinTopic(params.topicId, input);
+  if (!("code" in result)) {
+    const name =
+      typeof values.displayName === "string"
+        ? values.displayName.trim()
+        : "";
+    saveDebateSession({ join: result, displayName: name || undefined });
+  }
+  return result;
+}
+
+// Runs on refresh / direct navigation, when there is no action data.
+export async function clientLoader({ params }: ClientLoaderFunctionArgs) {
+  if (!params.topicId) return null;
+  return loadDebateSession(params.topicId);
 }
 
 function DebateVideos({ sides }: { sides: JoinResult["sides"] }) {
@@ -184,18 +208,24 @@ function DebateVideos({ sides }: { sides: JoinResult["sides"] }) {
 }
 
 function RoomChat({
-  canSend,
-  participantIdentity,
-}: {
+                    canSend,
+                    initialDisplayName,
+                    participantIdentity,
+                    topicId,
+                  }: {
   canSend: boolean;
+  initialDisplayName?: string;
   participantIdentity: string;
+  topicId: string;
 }) {
   const { chatMessages, isSending, send } = useChat();
   const room = useRoomContext();
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string>();
   const [emojiOpen, setEmojiOpen] = useState(false);
-  const [hasDisplayName, setHasDisplayName] = useState(false);
+  const [hasDisplayName, setHasDisplayName] = useState(
+    Boolean(initialDisplayName),
+  );
   const [isNaming, setIsNaming] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
@@ -209,6 +239,7 @@ function RoomChat({
       if (!hasDisplayName) {
         setIsNaming(true);
         await room.localParticipant.setName(value);
+        updateDebateSession(topicId, { displayName: value });
         setHasDisplayName(true);
       } else {
         await send(value);
@@ -351,13 +382,17 @@ function RoomChat({
 }
 
 function AudiencePanel({
-  canVote,
-  participantIdentity,
-  sides,
-}: {
+                         canVote,
+                         displayName,
+                         participantIdentity,
+                         sides,
+                         topicId,
+                       }: {
   canVote: boolean;
+  displayName?: string;
   participantIdentity: string;
   sides: JoinResult["sides"];
+  topicId: string;
 }) {
   const participants = useParticipants();
   const room = useRoomContext();
@@ -391,6 +426,9 @@ function AudiencePanel({
     try {
       await room.localParticipant.setAttributes({
         [VOTE_ATTRIBUTE]: choice,
+      });
+      updateDebateSession(topicId, {
+        vote: choice === "0" || choice === "1" ? choice : undefined,
       });
     } catch {
       setError("Your vote could not be recorded.");
@@ -481,16 +519,21 @@ function AudiencePanel({
           </Alert>
         ) : null}
       </section>
-      <RoomChat canSend={canVote} participantIdentity={participantIdentity} />
+      <RoomChat
+        canSend={canVote}
+        initialDisplayName={displayName}
+        participantIdentity={participantIdentity}
+        topicId={topicId}
+      />
     </aside>
   );
 }
 
 function LeaveButton({
-  join,
-  leaving,
-  onLeaving,
-}: {
+                       join,
+                       leaving,
+                       onLeaving,
+                     }: {
   join: JoinResult;
   leaving: boolean;
   onLeaving: () => void;
@@ -501,6 +544,7 @@ function LeaveButton({
   async function leave() {
     onLeaving();
     await room.disconnect();
+    clearDebateSession(join.topicId);
     await leaveTopic(join.topicId, join.participantIdentity);
     await navigate("/");
   }
@@ -521,9 +565,9 @@ function LeaveButton({
 }
 
 function MediaPermissionGuard({
-  failed,
-  join,
-}: {
+                                failed,
+                                join,
+                              }: {
   failed: boolean;
   join: JoinResult;
 }) {
@@ -537,6 +581,7 @@ function MediaPermissionGuard({
 
     void (async () => {
       await room.disconnect();
+      clearDebateSession(join.topicId);
       await leaveTopic(join.topicId, join.participantIdentity).catch(() => {});
       await navigate("/", {
         replace: true,
@@ -548,7 +593,46 @@ function MediaPermissionGuard({
   return null;
 }
 
-export function DebateExperience({ join }: { join: JoinResult }) {
+// After a refresh the reconnecting participant has no name or vote attribute.
+// Re-apply the saved ones as soon as the room is connected.
+function SessionRestorer({ session }: { session?: DebateSession }) {
+  const room = useRoomContext();
+  const connectionState = useConnectionState();
+  const restored = useRef(false);
+
+  useEffect(() => {
+    if (connectionState !== ConnectionState.Connected || restored.current) {
+      return;
+    }
+    restored.current = true;
+    if (!session) return;
+
+    void (async () => {
+      try {
+        if (session.displayName) {
+          await room.localParticipant.setName(session.displayName);
+        }
+        if (session.vote && session.join.role === "spectator") {
+          await room.localParticipant.setAttributes({
+            [VOTE_ATTRIBUTE]: session.vote,
+          });
+        }
+      } catch {
+        // Best effort: the user can re-enter a name or vote manually.
+      }
+    })();
+  }, [connectionState, room, session]);
+
+  return null;
+}
+
+export function DebateExperience({
+                                   join,
+                                   session,
+                                 }: {
+  join: JoinResult;
+  session?: DebateSession;
+}) {
   const [roomError, setRoomError] = useState<string>();
   const [leaving, setLeaving] = useState(false);
   const [mediaPermissionFailed, setMediaPermissionFailed] = useState(false);
@@ -571,6 +655,7 @@ export function DebateExperience({ join }: { join: JoinResult }) {
         }}
       >
         <MediaPermissionGuard failed={mediaPermissionFailed} join={join} />
+        <SessionRestorer session={session} />
         <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 bg-[#fbfcfe] px-4 py-2">
           <div className="min-w-0">
             <p className="font-editorial text-base font-semibold text-primary">
@@ -596,8 +681,10 @@ export function DebateExperience({ join }: { join: JoinResult }) {
           <DebateVideos sides={join.sides} />
           <AudiencePanel
             canVote={!isDebater}
+            displayName={session?.displayName}
             participantIdentity={join.participantIdentity}
             sides={join.sides}
+            topicId={join.topicId}
           />
           <RoomAudioRenderer />
         </div>
@@ -607,7 +694,10 @@ export function DebateExperience({ join }: { join: JoinResult }) {
 }
 
 export default function Debate() {
-  const result = useActionData<typeof clientAction>();
+  const actionResult = useActionData<typeof clientAction>();
+  const stored = useLoaderData<typeof clientLoader>();
+  // Fresh join -> action data; refresh -> session restored from storage.
+  const result = actionResult ?? stored?.join;
   if (!result) return <Navigate to="/" replace />;
 
   if ("code" in result) {
@@ -633,5 +723,10 @@ export default function Debate() {
     );
   }
 
-  return <DebateExperience join={result} />;
+  const session =
+    stored?.join.participantIdentity === result.participantIdentity
+      ? stored
+      : undefined;
+
+  return <DebateExperience join={result} session={session} />;
 }
