@@ -64,9 +64,10 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
 
       const participantIdentity = randomUUID();
       const displayName =
-        request.body.intent === "debater"
+        request.body.displayName ??
+        (request.body.intent === "debater"
           ? request.body.displayName
-          : "Spectator";
+          : "Spectator");
       const allocationResult = await allocation.join(
         topic.id,
         participantIdentity,
