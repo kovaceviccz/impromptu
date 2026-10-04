@@ -1,16 +1,39 @@
-import { PRODUCT } from "@impromptu/api/contracts";
 import {
+  PRODUCT,
+  firstFieldErrors,
+  updateAccountBodySchema,
+} from "@impromptu/api/contracts";
+import { useState } from "react";
+import {
+  type ClientActionFunctionArgs,
   type ClientLoaderFunctionArgs,
   Form,
   redirect,
+  useActionData,
   useLoaderData,
   useNavigation,
 } from "react-router";
 
+import { FormField } from "~/components/form-field";
 import { SiteHeader } from "~/components/site-header";
+import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
 
-import { ApiError, getAccount, logout } from "../api";
+import {
+  ApiError,
+  deleteAccount,
+  getAccount,
+  logout,
+  updateAccount,
+} from "../api";
 
 const memberSinceFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "long",
@@ -37,51 +60,198 @@ export async function clientLoader({
   }
 }
 
-export async function clientAction() {
-  await logout();
-  return redirect("/");
+export async function clientAction({
+  request,
+}: Pick<ClientActionFunctionArgs, "request">) {
+  const values = Object.fromEntries(await request.formData());
+
+  if (values.intent === "logout") {
+    await logout();
+    return redirect("/");
+  }
+  if (values.intent === "delete") {
+    await deleteAccount();
+    return redirect("/");
+  }
+
+  const input = updateAccountBodySchema.safeParse({
+    username: values.username,
+    email: values.email,
+  });
+  if (!input.success) {
+    return {
+      status: "invalid" as const,
+      fieldErrors: firstFieldErrors(input.error),
+      message: "",
+    };
+  }
+
+  try {
+    const { account } = await updateAccount(input.data);
+    return {
+      status: "updated" as const,
+      account,
+      fieldErrors: {},
+      message: "",
+    };
+  } catch (error) {
+    if (!(error instanceof ApiError)) throw error;
+    return {
+      status: "invalid" as const,
+      fieldErrors: error.fieldErrors,
+      message: Object.keys(error.fieldErrors).length === 0 ? error.message : "",
+    };
+  }
 }
 
 export default function AccountPage() {
   const account = useLoaderData<typeof clientLoader>();
+  const result = useActionData<typeof clientAction>();
   const navigation = useNavigation();
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const submittingIntent = navigation.formData?.get("intent");
+  const fieldErrors: Record<string, string> = result?.fieldErrors ?? {};
 
   return (
     <>
       <SiteHeader account={account} />
-      <main className="mx-auto grid w-full max-w-sm gap-6 px-4 py-10 sm:py-16">
-        <h1 className="font-editorial text-3xl font-semibold tracking-tight">
-          Your account
-        </h1>
-        <dl className="grid gap-4">
-          <div>
-            <dt className="text-xs text-muted-foreground">Username</dt>
-            <dd className="font-medium">{account.username}</dd>
+      <main className="mx-auto grid w-full max-w-sm gap-8 px-4 py-10 sm:py-16">
+        <header className="grid gap-2">
+          <h1 className="font-editorial text-3xl font-semibold tracking-tight">
+            Your account
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Member since{" "}
+            <time dateTime={account.createdAt}>
+              {memberSinceFormatter.format(new Date(account.createdAt))}
+            </time>
+          </p>
+        </header>
+
+        <section className="grid gap-4" aria-labelledby="profile-heading">
+          <h2 className="text-lg font-semibold" id="profile-heading">
+            Profile
+          </h2>
+          <Form className="grid gap-4" method="post" noValidate>
+            <input name="intent" type="hidden" value="update" />
+            {result?.status === "updated" ? (
+              <Alert>
+                <AlertDescription>Profile updated.</AlertDescription>
+              </Alert>
+            ) : null}
+            {result?.message ? (
+              <Alert variant="destructive">
+                <AlertDescription>{result.message}</AlertDescription>
+              </Alert>
+            ) : null}
+            <FormField
+              autoCapitalize="none"
+              autoComplete="username"
+              defaultValue={account.username}
+              error={fieldErrors.username}
+              hint="3–30 letters, numbers, or underscores."
+              label="Username"
+              maxLength={30}
+              name="username"
+              required
+            />
+            <FormField
+              autoComplete="email"
+              defaultValue={account.email}
+              error={fieldErrors.email}
+              label="Email"
+              maxLength={254}
+              name="email"
+              required
+              type="email"
+            />
+            <Button
+              disabled={navigation.state !== "idle"}
+              size="lg"
+              type="submit"
+            >
+              {submittingIntent === "update" ? "Saving…" : "Save changes"}
+            </Button>
+          </Form>
+        </section>
+
+        <section
+          className="grid gap-3 border-t pt-6"
+          aria-labelledby="access-heading"
+        >
+          <h2 className="text-lg font-semibold" id="access-heading">
+            Account access
+          </h2>
+          <Form method="post">
+            <Button
+              disabled={navigation.state !== "idle"}
+              name="intent"
+              size="lg"
+              type="submit"
+              value="logout"
+              variant="outline"
+            >
+              {submittingIntent === "logout" ? "Logging out…" : "Log out"}
+            </Button>
+          </Form>
+        </section>
+
+        <section
+          className="grid gap-3 border-t pt-6"
+          aria-labelledby="danger-heading"
+        >
+          <div className="grid gap-1">
+            <h2 className="text-lg font-semibold" id="danger-heading">
+              Delete account
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Permanently remove your account and end all of its sessions.
+            </p>
           </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Email</dt>
-            <dd className="font-medium break-all">{account.email}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Member since</dt>
-            <dd className="font-medium">
-              <time dateTime={account.createdAt}>
-                {memberSinceFormatter.format(new Date(account.createdAt))}
-              </time>
-            </dd>
-          </div>
-        </dl>
-        <Form method="post">
           <Button
-            disabled={navigation.state !== "idle"}
-            size="lg"
-            type="submit"
+            className="w-fit"
+            onClick={() => setDeleteDialogOpen(true)}
+            type="button"
             variant="destructive"
           >
-            Log out
+            Delete account
           </Button>
-        </Form>
+        </section>
       </main>
+
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete your account?</DialogTitle>
+            <DialogDescription>
+              This permanently deletes your account. This action cannot be
+              undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              onClick={() => setDeleteDialogOpen(false)}
+              type="button"
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Form method="post">
+              <Button
+                disabled={navigation.state !== "idle"}
+                name="intent"
+                type="submit"
+                value="delete"
+                variant="destructive"
+              >
+                {submittingIntent === "delete"
+                  ? "Deleting…"
+                  : "Permanently delete"}
+              </Button>
+            </Form>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

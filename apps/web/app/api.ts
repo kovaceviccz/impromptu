@@ -7,6 +7,7 @@ import {
   type LoginInput,
   type PrivateLobbyCreateInput,
   type RegisterInput,
+  type UpdateAccountInput,
 } from "@impromptu/api/contracts";
 
 export class ApiError extends Error {
@@ -148,4 +149,24 @@ export async function getAccount() {
     headers: { accept: "application/json" },
   });
   return readResponse(response, apiContract.account.response);
+}
+
+export async function updateAccount(input: UpdateAccountInput) {
+  const response = await fetch(apiContract.updateAccount.path, {
+    method: apiContract.updateAccount.method,
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  return readResponse(response, apiContract.updateAccount.response);
+}
+
+export async function deleteAccount() {
+  const response = await fetch(apiContract.deleteAccount.path, {
+    method: apiContract.deleteAccount.method,
+    headers: { accept: "application/json" },
+  });
+  return readResponse(response, apiContract.deleteAccount.response);
 }

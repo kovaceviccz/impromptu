@@ -312,3 +312,138 @@ describe("sessions", () => {
     expect(afterLogout.statusCode).toBe(401);
   });
 });
+
+describe("account management", () => {
+  it("updates the signed-in account and preserves its session", async () => {
+    const app = await testApp();
+    const cookies = sessionCookie(await register(app));
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: apiContract.updateAccount.path,
+      cookies,
+      payload: { username: "ada_byron", email: "BYRON@example.com" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const { account } = apiContract.updateAccount.response.parse(
+      response.json(),
+    );
+    expect(account).toEqual(
+      expect.objectContaining({
+        username: "ada_byron",
+        email: "byron@example.com",
+      }),
+    );
+
+    const session = await app.inject({
+      method: "GET",
+      url: apiContract.session.path,
+      cookies,
+    });
+    expect(apiContract.session.response.parse(session.json())).toEqual({
+      account,
+    });
+  });
+
+  it("allows unchanged details and rejects another account's details", async () => {
+    const app = await testApp();
+    const firstCookies = sessionCookie(await register(app));
+    await register(app, {
+      username: "grace_hopper",
+      email: "grace@example.com",
+      password: "compiler-pioneer",
+    });
+
+    const unchanged = await app.inject({
+      method: "PATCH",
+      url: apiContract.updateAccount.path,
+      cookies: firstCookies,
+      payload: {
+        username: registration.username,
+        email: registration.email,
+      },
+    });
+    const duplicate = await app.inject({
+      method: "PATCH",
+      url: apiContract.updateAccount.path,
+      cookies: firstCookies,
+      payload: {
+        username: "GRACE_HOPPER",
+        email: "GRACE@example.com",
+      },
+    });
+
+    expect(unchanged.statusCode).toBe(200);
+    expect(duplicate.statusCode).toBe(409);
+    expect(
+      apiContract.updateAccount.errors[409].parse(duplicate.json()).fieldErrors,
+    ).toEqual({
+      email: "An account with this email address already exists.",
+      username: "This username is already taken.",
+    });
+  });
+
+  it("validates updates and requires a session", async () => {
+    const app = await testApp();
+    const cookies = sessionCookie(await register(app));
+
+    const invalid = await app.inject({
+      method: "PATCH",
+      url: apiContract.updateAccount.path,
+      cookies,
+      payload: { username: "x", email: "invalid" },
+    });
+    const guest = await app.inject({
+      method: "PATCH",
+      url: apiContract.updateAccount.path,
+      payload: { username: "valid_name", email: "valid@example.com" },
+    });
+
+    expect(invalid.statusCode).toBe(400);
+    expect(
+      apiContract.updateAccount.errors[400].parse(invalid.json()).fieldErrors,
+    ).toEqual({
+      email: "Enter a valid email address.",
+      username: "Username must be at least 3 characters.",
+    });
+    expect(guest.statusCode).toBe(401);
+  });
+
+  it("deletes the account, all sessions, and the current cookie", async () => {
+    const accounts = createMemoryAccountStore();
+    const app = await testApp(accounts);
+    const cookies = sessionCookie(await register(app));
+
+    const response = await app.inject({
+      method: "DELETE",
+      url: apiContract.deleteAccount.path,
+      cookies,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(apiContract.deleteAccount.response.parse(response.json())).toEqual({
+      status: "ok",
+    });
+    expect(
+      response.cookies.find(({ name }) => name === SESSION_COOKIE)?.value,
+    ).toBe("");
+    expect(await accounts.findCredentials(registration.email)).toBeUndefined();
+
+    const afterDeletion = await app.inject({
+      method: "GET",
+      url: apiContract.account.path,
+      cookies,
+    });
+    expect(afterDeletion.statusCode).toBe(401);
+  });
+
+  it("does not allow guests to delete accounts", async () => {
+    const app = await testApp();
+    const response = await app.inject({
+      method: "DELETE",
+      url: apiContract.deleteAccount.path,
+    });
+    expect(response.statusCode).toBe(401);
+  });
+});

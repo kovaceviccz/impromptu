@@ -43,6 +43,11 @@ export const loginBodySchema = z.strictObject({
     .max(128, "Enter your password."),
 });
 
+export const updateAccountBodySchema = z.strictObject({
+  username: usernameSchema,
+  email: emailSchema,
+});
+
 export const accountSchema = z.strictObject({
   id: z.uuid(),
   username: z.string().min(1),
@@ -104,9 +109,27 @@ export const accountContracts = {
     response: accountResponseSchema,
     errors: { 401: errorSchema },
   },
+  updateAccount: {
+    method: "PATCH",
+    path: "/api/account",
+    body: updateAccountBodySchema,
+    response: accountResponseSchema,
+    errors: {
+      400: formErrorSchema,
+      401: errorSchema,
+      409: formErrorSchema,
+    },
+  },
+  deleteAccount: {
+    method: "DELETE",
+    path: "/api/account",
+    response: healthSchema,
+    errors: { 401: errorSchema },
+  },
 } as const;
 
 export type Account = z.output<typeof accountSchema>;
 export type RegisterInput = z.output<typeof registerBodySchema>;
 export type LoginInput = z.output<typeof loginBodySchema>;
+export type UpdateAccountInput = z.output<typeof updateAccountBodySchema>;
 export type FormError = z.output<typeof formErrorSchema>;
