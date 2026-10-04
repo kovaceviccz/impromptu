@@ -156,4 +156,62 @@ export const accountRoutes: FastifyPluginAsyncZod<
       return { account };
     },
   );
+
+  app.patch(
+    accountContracts.updateAccount.path,
+    {
+      schema: {
+        body: accountContracts.updateAccount.body,
+        response: {
+          200: accountContracts.updateAccount.response,
+          400: accountContracts.updateAccount.errors[400],
+          401: accountContracts.updateAccount.errors[401],
+          409: accountContracts.updateAccount.errors[409],
+        },
+      },
+    },
+    async (request, reply) => {
+      const account = await currentAccount(request);
+      if (!account) {
+        return reply.code(401).send({ message: "Log in to continue." });
+      }
+
+      const result = await accounts.update(account.id, request.body);
+      if (!result) {
+        reply.clearCookie(SESSION_COOKIE, { path: "/" });
+        return reply.code(401).send({ message: "Log in to continue." });
+      }
+      if ("duplicates" in result) {
+        return reply.code(409).send({
+          message: "An account with these details already exists.",
+          fieldErrors: Object.fromEntries(
+            result.duplicates.map((field) => [field, duplicateMessages[field]]),
+          ),
+        });
+      }
+      return result;
+    },
+  );
+
+  app.delete(
+    accountContracts.deleteAccount.path,
+    {
+      schema: {
+        response: {
+          200: accountContracts.deleteAccount.response,
+          401: accountContracts.deleteAccount.errors[401],
+        },
+      },
+    },
+    async (request, reply) => {
+      const account = await currentAccount(request);
+      if (!account) {
+        return reply.code(401).send({ message: "Log in to continue." });
+      }
+
+      await accounts.delete(account.id);
+      reply.clearCookie(SESSION_COOKIE, { path: "/" });
+      return { status: "ok" as const };
+    },
+  );
 };

@@ -283,7 +283,7 @@ test("participants switch between spectating and debating in the room", async ({
   await expect(topic.getByText("Both sides open")).toBeVisible();
 });
 
-test("registers, keeps the session, logs out, and logs back in", async ({
+test("manages an account across registration, login, editing, and deletion", async ({
   page,
 }) => {
   const username = `e2e_${Date.now().toString(36)}`;
@@ -309,7 +309,7 @@ test("registers, keeps the session, logs out, and logs back in", async ({
   await expect(
     page.getByRole("heading", { name: "Your account" }),
   ).toBeVisible();
-  await expect(page.getByText(`${username}@example.com`)).toBeVisible();
+  await expect(page.getByLabel("Email")).toHaveValue(`${username}@example.com`);
 
   await page.getByRole("button", { name: "Log out" }).click();
   await expect(page.getByRole("link", { name: "Log in" })).toBeVisible();
@@ -325,4 +325,20 @@ test("registers, keeps the session, logs out, and logs back in", async ({
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Log in" }).click();
   await expect(page.getByRole("link", { name: username })).toBeVisible();
+
+  await page.getByRole("link", { name: username }).click();
+  await page.getByLabel("Username").fill(`${username}_edited`);
+  await page.getByLabel("Email").fill(`${username}_edited@example.com`);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("Profile updated.")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: `${username}_edited` }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Delete account" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Delete your account?" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Permanently delete" }).click();
+  await expect(page.getByRole("link", { name: "Log in" })).toBeVisible();
 });

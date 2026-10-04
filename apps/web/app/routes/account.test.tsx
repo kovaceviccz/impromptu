@@ -2,7 +2,13 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -72,7 +78,7 @@ describe("Account page", () => {
     expect(
       await screen.findByRole("heading", { name: "Your account" }),
     ).toBeVisible();
-    expect(screen.getByText("ada@example.com")).toBeVisible();
+    expect(screen.getByLabelText("Email")).toHaveValue("ada@example.com");
     expect(screen.getByRole("link", { name: "ada_lovelace" })).toHaveAttribute(
       "href",
       "/account",
@@ -102,6 +108,103 @@ describe("Account page", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/auth/logout",
       expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("edits the username and email", async () => {
+    const updatedAccount = {
+      ...account,
+      username: "ada_byron",
+      email: "byron@example.com",
+    };
+    let currentAccount = account;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (input === "/api/account" && init?.method === "PATCH") {
+        currentAccount = updatedAccount;
+        return jsonResponse(200, { account: updatedAccount });
+      }
+      return jsonResponse(200, { account: currentAccount });
+    });
+    renderAccount();
+
+    fireEvent.change(await screen.findByLabelText("Username"), {
+      target: { value: "ada_byron" },
+    });
+    fireEvent.change(screen.getByLabelText("Email"), {
+      target: { value: "byron@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByText("Profile updated.")).toBeVisible();
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/account",
+        expect.objectContaining({
+          body: JSON.stringify({
+            username: "ada_byron",
+            email: "byron@example.com",
+          }),
+          method: "PATCH",
+        }),
+      ),
+    );
+  });
+
+  it("shows profile validation errors", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      if (input === "/api/account" && init?.method === "PATCH") {
+        return jsonResponse(409, {
+          message: "An account with these details already exists.",
+          fieldErrors: { username: "This username is already taken." },
+        });
+      }
+      return jsonResponse(200, { account });
+    });
+    renderAccount();
+
+    fireEvent.change(await screen.findByLabelText("Username"), {
+      target: { value: "existing_user" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(
+      await screen.findByText("This username is already taken."),
+    ).toBeVisible();
+    expect(screen.getByLabelText("Username")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+  });
+
+  it("requires confirmation before deleting the account", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      if (input === "/api/account" && init?.method === "DELETE") {
+        return jsonResponse(200, { status: "ok" });
+      }
+      return jsonResponse(200, { account });
+    });
+    const router = renderAccount();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Delete account" }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Delete your account?" }),
+    ).toBeVisible();
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          input === "/api/account" && init?.method === "DELETE",
+      ),
+    ).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Permanently delete" }));
+
+    expect(await screen.findByText("Home")).toBeVisible();
+    expect(router.state.location.pathname).toBe("/");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/account",
+      expect.objectContaining({ method: "DELETE" }),
     );
   });
 });

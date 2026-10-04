@@ -24,6 +24,7 @@ async function duplicateFields(
   em: EntityManager,
   username: string,
   email: string,
+  excludedAccountId?: string,
 ) {
   const usernameKey = username.toLowerCase();
   const existing = await em.find(AccountEntity, {
@@ -31,6 +32,7 @@ async function duplicateFields(
   });
   const fields = new Set<DuplicateField>();
   for (const account of existing) {
+    if (account.id === excludedAccountId) continue;
     if (account.usernameKey === usernameKey) fields.add("username");
     if (account.email === email) fields.add("email");
   }
@@ -77,6 +79,44 @@ export function createPostgresAccountStore(orm: MikroORM): AccountStore {
       return entity
         ? { account: toAccount(entity), passwordHash: entity.passwordHash }
         : undefined;
+    },
+
+    async update(accountId, input) {
+      const em = orm.em.fork();
+      const entity = await em.findOne(AccountEntity, { id: accountId });
+      if (!entity) return undefined;
+
+      const duplicates = await duplicateFields(
+        em,
+        input.username,
+        input.email,
+        accountId,
+      );
+      if (duplicates.length > 0) return { duplicates };
+
+      entity.username = input.username;
+      entity.usernameKey = input.username.toLowerCase();
+      entity.email = input.email;
+      try {
+        await em.flush();
+      } catch (error) {
+        if (!(error instanceof UniqueConstraintViolationException)) throw error;
+        return {
+          duplicates: await duplicateFields(
+            orm.em.fork(),
+            input.username,
+            input.email,
+            accountId,
+          ),
+        };
+      }
+      return { account: toAccount(entity) };
+    },
+
+    async delete(accountId) {
+      return (
+        (await orm.em.fork().nativeDelete(AccountEntity, { id: accountId })) > 0
+      );
     },
 
     async createSession(accountId) {

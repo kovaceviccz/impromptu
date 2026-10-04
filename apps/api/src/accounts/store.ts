@@ -21,6 +21,13 @@ export interface AccountStore {
   findCredentials(
     identifier: string,
   ): Promise<{ account: Account; passwordHash: string } | undefined>;
+  update(
+    accountId: string,
+    input: { username: string; email: string },
+  ): Promise<
+    { account: Account } | { duplicates: DuplicateField[] } | undefined
+  >;
+  delete(accountId: string): Promise<boolean>;
   createSession(accountId: string): Promise<{ token: string; expiresAt: Date }>;
   findSessionAccount(token: string): Promise<Account | undefined>;
   deleteSession(token: string): Promise<void>;
@@ -93,6 +100,35 @@ export function createMemoryAccountStore(): AccountStore {
         }
       }
       return undefined;
+    },
+    async update(accountId, input) {
+      const stored = accounts.get(accountId);
+      if (!stored) return undefined;
+
+      const usernameKey = input.username.toLowerCase();
+      const fields = new Set<DuplicateField>();
+      for (const [id, candidate] of accounts) {
+        if (id === accountId) continue;
+        if (candidate.usernameKey === usernameKey) fields.add("username");
+        if (candidate.account.email === input.email) fields.add("email");
+      }
+      if (fields.size > 0) return { duplicates: [...fields] };
+
+      const account = {
+        ...stored.account,
+        username: input.username,
+        email: input.email,
+      };
+      accounts.set(accountId, { ...stored, account, usernameKey });
+      return { account };
+    },
+    async delete(accountId) {
+      const deleted = accounts.delete(accountId);
+      if (!deleted) return false;
+      for (const [tokenHash, session] of sessions) {
+        if (session.accountId === accountId) sessions.delete(tokenHash);
+      }
+      return true;
     },
     async createSession(accountId) {
       const { token, tokenHash, expiresAt } = issueSessionToken();
