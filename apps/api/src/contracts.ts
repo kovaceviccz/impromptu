@@ -7,10 +7,12 @@ export {
   formErrorSchema,
   loginBodySchema,
   registerBodySchema,
+  updateAccountBodySchema,
   type Account,
   type FormError,
   type LoginInput,
   type RegisterInput,
+  type UpdateAccountInput,
 } from "./accounts/contract.js";
 export {
   errorSchema,
