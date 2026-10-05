@@ -122,6 +122,14 @@ function publishes(participant: RoomParticipant, viewer: JoinResult) {
     : participant.permissions?.canPublish === true;
 }
 
+function isHost(participant: RoomParticipant, viewer: JoinResult) {
+  return (
+    participant.identity === viewer.hostIdentity ||
+    (isViewer(participant, viewer) &&
+      viewer.participantIdentity === viewer.hostIdentity)
+  );
+}
+
 function displayNameOf(participant: RoomParticipant, viewer: JoinResult) {
   return (
     participant.name ||
@@ -489,6 +497,9 @@ function ParticipantRoster({
                     </p>
                     <p className="truncate text-xs opacity-80">{side}</p>
                   </div>
+                  {participant && isHost(participant, join) ? (
+                    <Badge variant="secondary">Host</Badge>
+                  ) : null}
                   {!participant && !viewerIsDebater ? (
                     <Button
                       disabled={changing}
@@ -529,8 +540,14 @@ function ParticipantRoster({
           ) : (
             <ul className="mt-2 grid max-h-24 gap-1 overflow-y-auto text-sm">
               {spectators.map((participant) => (
-                <li className="truncate" key={participant.identity}>
-                  {nameOf(participant)}
+                <li
+                  className="flex min-w-0 items-center gap-2"
+                  key={participant.identity}
+                >
+                  <span className="truncate">{nameOf(participant)}</span>
+                  {isHost(participant, join) ? (
+                    <Badge variant="secondary">Host</Badge>
+                  ) : null}
                 </li>
               ))}
             </ul>
