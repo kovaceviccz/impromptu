@@ -354,14 +354,21 @@ function RoomChat({
 
 function AudiencePanel({
   canVote,
+  hostIdentity,
   participantIdentity,
   sides,
 }: {
   canVote: boolean;
+  hostIdentity: string | null;
   participantIdentity: string;
   sides: JoinResult["sides"];
 }) {
   const participants = useParticipants();
+  const orderedParticipants = [...participants].sort(
+    (first, second) =>
+      Number(second.identity === hostIdentity) -
+      Number(first.identity === hostIdentity),
+  );
   const room = useRoomContext();
   const [activeTab, setActiveTab] = useState<"vote" | "participants">("vote");
   const [isVoting, setIsVoting] = useState(false);
@@ -490,7 +497,7 @@ function AudiencePanel({
         {activeTab === "participants" ? (
           <section aria-label="Participants" className="grid gap-2">
             <ul className="grid gap-1 text-sm">
-              {participants.map((participant) => (
+              {orderedParticipants.map((participant) => (
                 <li
                   className="flex min-w-0 items-center justify-between gap-3"
                   key={participant.identity}
@@ -498,10 +505,15 @@ function AudiencePanel({
                   <span className="min-w-0 truncate">
                     {participant.name || "Guest"}
                   </span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {participant.permissions?.canPublish === true
-                      ? "Debater"
-                      : "Spectator"}
+                  <span className="flex shrink-0 items-center gap-2">
+                    {participant.identity === hostIdentity ? (
+                      <Badge variant="secondary">Host</Badge>
+                    ) : null}
+                    <span className="text-xs text-muted-foreground">
+                      {participant.permissions?.canPublish === true
+                        ? "Debater"
+                        : "Spectator"}
+                    </span>
                   </span>
                 </li>
               ))}
@@ -743,6 +755,7 @@ export function DebateExperience({ join }: { join: JoinResult }) {
           <DebateVideos sides={join.sides} />
           <AudiencePanel
             canVote={!isDebater}
+            hostIdentity={join.hostIdentity}
             participantIdentity={join.participantIdentity}
             sides={join.sides}
           />

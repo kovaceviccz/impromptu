@@ -99,6 +99,7 @@ export const joinResultSchema = z.strictObject({
   role: z.enum(["debater", "spectator"]),
   sideIndex: z.union([z.literal(0), z.literal(1)]).nullable(),
   isCreator: z.boolean(),
+  hostIdentity: z.string().min(1).nullable(),
   joinCode: z.string().min(1).optional(),
   livekitUrl: z.string().min(1),
   token: z.string().min(1),

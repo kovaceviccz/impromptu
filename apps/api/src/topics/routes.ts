@@ -34,6 +34,7 @@ function makeJoinResult(input: {
   role: DebateRole;
   sideIndex: DebateSide | null;
   isCreator: boolean;
+  hostIdentity: string | null;
   joinCode?: string;
   livekitUrl: string;
   token: string;
@@ -174,6 +175,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         role,
         sideIndex: allocationResult.sideIndex,
         isCreator: participantIdentity === lobby.creatorIdentity,
+        hostIdentity: lobby.creatorIdentity,
         livekitUrl: options.livekitPublicUrl,
         token: allocationResult.token,
       });
@@ -243,6 +245,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         role,
         sideIndex: allocationResult.sideIndex,
         isCreator: true,
+        hostIdentity: lobby.creatorIdentity,
         joinCode: lobby.code,
         livekitUrl: options.livekitPublicUrl,
         token: allocationResult.token,
@@ -304,6 +307,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         role: request.body.intent,
         sideIndex: allocationResult.sideIndex,
         isCreator: false,
+        hostIdentity: null,
         livekitUrl: options.livekitPublicUrl,
         token: allocationResult.token,
       };

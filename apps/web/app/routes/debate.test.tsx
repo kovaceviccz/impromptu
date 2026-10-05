@@ -141,6 +141,7 @@ describe("DebateExperience", () => {
       role: "spectator",
       sideIndex: null,
       isCreator: false,
+      hostIdentity: null,
       livekitUrl: "ws://localhost:7880",
       token: "spectator-token",
     };
@@ -252,6 +253,7 @@ describe("DebateExperience", () => {
       role: "debater",
       sideIndex: 0,
       isCreator: true,
+      hostIdentity: "debater-id",
       joinCode: "ABCD23",
       livekitUrl: "ws://localhost:7880",
       token: "debater-token",
@@ -313,6 +315,7 @@ describe("DebateExperience", () => {
       role: "debater",
       sideIndex: 0,
       isCreator: true,
+      hostIdentity: "debater-id",
       joinCode: "ABCD23",
       livekitUrl: "ws://localhost:7880",
       token: "debater-token",
@@ -348,6 +351,7 @@ describe("DebateExperience", () => {
       role: "spectator",
       sideIndex: null,
       isCreator: false,
+      hostIdentity: null,
       livekitUrl: "ws://localhost:7880",
       token: "spectator-token",
     };
@@ -382,6 +386,7 @@ describe("DebateExperience", () => {
       role: "spectator",
       sideIndex: null,
       isCreator: false,
+      hostIdentity: null,
       livekitUrl: "ws://localhost:7880",
       token: "spectator-token",
     };
@@ -418,6 +423,7 @@ describe("DebateExperience", () => {
       role: "debater",
       sideIndex: 0,
       isCreator: false,
+      hostIdentity: null,
       livekitUrl: "ws://localhost:7880",
       token: "debater-token",
     };

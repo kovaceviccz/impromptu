@@ -220,6 +220,7 @@ describe("API contracts", () => {
         role: "debater",
         sideIndex: 0,
         isCreator: true,
+        hostIdentity: expect.any(String),
         joinCode: expect.any(String),
       }),
     );
@@ -257,6 +258,7 @@ describe("API contracts", () => {
         role: "debater",
         sideIndex: 1,
         isCreator: false,
+        hostIdentity: creator.participantIdentity,
       }),
     );
     expect(issuedNames).toContain("Private guest");
@@ -310,6 +312,7 @@ describe("API contracts", () => {
         role: "spectator",
         sideIndex: null,
         isCreator: false,
+        hostIdentity: creator.participantIdentity,
       }),
     );
 
@@ -324,6 +327,7 @@ describe("API contracts", () => {
         lobbyId: "dream-cheating",
         sideIndex: 1,
         isCreator: false,
+        hostIdentity: null,
       }),
     );
     expect(issuedRooms).toEqual([
