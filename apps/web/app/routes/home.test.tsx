@@ -238,6 +238,7 @@ describe("TopicList", () => {
       role: "debater",
       sideIndex: 0,
       isCreator: true,
+      hostIdentity: "debater-id",
       joinCode: "ABCD23",
       livekitUrl: "ws://localhost:7880",
       token: "private-creator-token",
@@ -284,6 +285,7 @@ describe("TopicList", () => {
     expect(router.state.location.state.joinResult).toMatchObject({
       lobbyId: "private-lobby-id",
       isCreator: true,
+      hostIdentity: "debater-id",
       joinCode: "ABCD23",
       token: "private-creator-token",
     });
@@ -311,6 +313,7 @@ describe("TopicList", () => {
       role: "debater",
       sideIndex: 1,
       isCreator: false,
+      hostIdentity: null,
       livekitUrl: "ws://localhost:7880",
       token: "private-debater-token",
     });
@@ -381,6 +384,7 @@ describe("TopicList", () => {
       role: "spectator",
       sideIndex: null,
       isCreator: false,
+      hostIdentity: null,
       livekitUrl: "ws://localhost:7880",
       token: "private-spectator-token",
     });

@@ -112,6 +112,7 @@ export const joinResultSchema = z.strictObject({
   role: debateRoleSchema,
   sideIndex: debateSideSchema.nullable(),
   isCreator: z.boolean(),
+  hostIdentity: z.string().min(1).nullable(),
   joinCode: z.string().min(1).optional(),
   livekitUrl: z.string().min(1),
   token: z.string().min(1),
