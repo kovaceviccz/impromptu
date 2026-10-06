@@ -2,6 +2,7 @@ import { EntitySchema } from "@mikro-orm/core";
 
 export class AccountEntity {
   id!: string;
+  displayName!: string;
   username!: string;
   // Lower-cased username, so uniqueness ignores case without an expression index.
   usernameKey!: string;
@@ -15,6 +16,11 @@ export const AccountSchema = new EntitySchema<AccountEntity>({
   tableName: "account",
   properties: {
     id: { type: "uuid", primary: true },
+    displayName: {
+      type: "string",
+      fieldName: "display_name",
+      columnType: "text",
+    },
     username: { type: "string", columnType: "text" },
     usernameKey: {
       type: "string",

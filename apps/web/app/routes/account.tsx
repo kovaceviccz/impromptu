@@ -75,6 +75,7 @@ export async function clientAction({
   }
 
   const input = updateAccountBodySchema.safeParse({
+    displayName: values.displayName,
     username: values.username,
     email: values.email,
   });
@@ -132,7 +133,12 @@ export default function AccountPage() {
           <h2 className="text-lg font-semibold" id="profile-heading">
             Profile
           </h2>
-          <Form className="grid gap-4" method="post" noValidate>
+          <Form
+            className="grid gap-4"
+            key={`${account.displayName}:${account.username}:${account.email}`}
+            method="post"
+            noValidate
+          >
             <input name="intent" type="hidden" value="update" />
             {result?.status === "updated" ? (
               <Alert>
@@ -144,6 +150,16 @@ export default function AccountPage() {
                 <AlertDescription>{result.message}</AlertDescription>
               </Alert>
             ) : null}
+            <FormField
+              autoComplete="name"
+              defaultValue={account.displayName}
+              error={fieldErrors.displayName}
+              hint="The name other participants will see."
+              label="Display name"
+              maxLength={40}
+              name="displayName"
+              required
+            />
             <FormField
               autoCapitalize="none"
               autoComplete="username"

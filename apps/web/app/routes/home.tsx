@@ -657,7 +657,7 @@ export default function Home() {
             {MEDIA_PERMISSION_MESSAGE}
           </p>
         ) : null}
-        <TopicList defaultDisplayName={account?.username} topics={topics} />
+        <TopicList defaultDisplayName={account?.displayName} topics={topics} />
       </section>
     </main>
   );

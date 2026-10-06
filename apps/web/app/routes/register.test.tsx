@@ -17,6 +17,7 @@ import Register, { clientAction } from "./register";
 const fetchMock = vi.fn<typeof fetch>();
 const account = {
   id: "0f7f2c2e-9d1b-4d3c-8f33-5b6f0d8f5a10",
+  displayName: "Ada Lovelace",
   username: "ada_lovelace",
   email: "ada@example.com",
   createdAt: "2026-09-01T12:00:00.000Z",
