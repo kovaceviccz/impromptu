@@ -66,6 +66,7 @@ describe("registration", () => {
     const { account } = apiContract.register.response.parse(response.json());
     expect(account).toEqual({
       id: expect.any(String),
+      displayName: "ada_lovelace",
       username: "ada_lovelace",
       email: "ada@example.com",
       createdAt: expect.any(String),
@@ -322,7 +323,11 @@ describe("account management", () => {
       method: "PATCH",
       url: apiContract.updateAccount.path,
       cookies,
-      payload: { username: "ada_byron", email: "BYRON@example.com" },
+      payload: {
+        displayName: "Ada Byron",
+        username: "ada_byron",
+        email: "BYRON@example.com",
+      },
     });
 
     expect(response.statusCode).toBe(200);
@@ -331,6 +336,7 @@ describe("account management", () => {
     );
     expect(account).toEqual(
       expect.objectContaining({
+        displayName: "Ada Byron",
         username: "ada_byron",
         email: "byron@example.com",
       }),
@@ -360,6 +366,7 @@ describe("account management", () => {
       url: apiContract.updateAccount.path,
       cookies: firstCookies,
       payload: {
+        displayName: "Ada Lovelace",
         username: registration.username,
         email: registration.email,
       },
@@ -369,6 +376,7 @@ describe("account management", () => {
       url: apiContract.updateAccount.path,
       cookies: firstCookies,
       payload: {
+        displayName: "Grace Hopper",
         username: "GRACE_HOPPER",
         email: "GRACE@example.com",
       },
@@ -392,18 +400,23 @@ describe("account management", () => {
       method: "PATCH",
       url: apiContract.updateAccount.path,
       cookies,
-      payload: { username: "x", email: "invalid" },
+      payload: { displayName: "", username: "x", email: "invalid" },
     });
     const guest = await app.inject({
       method: "PATCH",
       url: apiContract.updateAccount.path,
-      payload: { username: "valid_name", email: "valid@example.com" },
+      payload: {
+        displayName: "Valid Name",
+        username: "valid_name",
+        email: "valid@example.com",
+      },
     });
 
     expect(invalid.statusCode).toBe(400);
     expect(
       apiContract.updateAccount.errors[400].parse(invalid.json()).fieldErrors,
     ).toEqual({
+      displayName: "Enter a display name.",
       email: "Enter a valid email address.",
       username: "Username must be at least 3 characters.",
     });

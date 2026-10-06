@@ -75,6 +75,7 @@ export async function clientAction({
   }
 
   const input = updateAccountBodySchema.safeParse({
+    displayName: values.displayName,
     username: values.username,
     email: values.email,
   });
@@ -144,6 +145,16 @@ export default function AccountPage() {
                 <AlertDescription>{result.message}</AlertDescription>
               </Alert>
             ) : null}
+            <FormField
+              autoComplete="name"
+              defaultValue={account.displayName}
+              error={fieldErrors.displayName}
+              hint="The name other participants will see."
+              label="Display name"
+              maxLength={40}
+              name="displayName"
+              required
+            />
             <FormField
               autoCapitalize="none"
               autoComplete="username"
