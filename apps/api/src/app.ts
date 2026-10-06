@@ -12,12 +12,18 @@ import Fastify from "fastify";
 import { accountRoutes } from "./accounts/routes.js";
 import type { AccountStore } from "./accounts/store.js";
 import { healthRoutes } from "./health/routes.js";
+import {
+  createLivePublicLobbyRepository,
+  type PublicLobbyRepository,
+} from "./lobbies/data.js";
+import { lobbyRoutes } from "./lobbies/routes.js";
 import type { PrivateLobbyStore } from "./lobbies/store.js";
 import type { LiveKitGateway } from "./topics/livekit.js";
 import { topicRoutes } from "./topics/routes.js";
 
 type BuildAppOptions = {
   accounts: AccountStore;
+  publicLobbies?: PublicLobbyRepository;
   livekit: LiveKitGateway;
   privateLobbies: PrivateLobbyStore;
   livekitPublicUrl: string;
@@ -47,6 +53,10 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(accountRoutes, {
     accounts: options.accounts,
     secureCookies: options.secureCookies ?? false,
+  });
+  await app.register(lobbyRoutes, {
+    publicLobbies:
+      options.publicLobbies ?? createLivePublicLobbyRepository(options.livekit),
   });
   await app.register(topicRoutes, {
     livekit: options.livekit,

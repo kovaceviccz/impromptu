@@ -7,6 +7,7 @@ import { LockKeyholeIcon } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import {
   Form,
+  Link,
   useLoaderData,
   useLocation,
   useNavigate,
@@ -614,12 +615,20 @@ export default function Home() {
     <main className="min-h-svh bg-background">
       <SiteHeader account={account} />
       <section className="mx-auto w-full max-w-6xl px-4 py-3 sm:px-6 sm:py-5">
+        <div className="mb-4 flex justify-end">
+          <Link
+            className="text-sm font-medium text-primary hover:underline"
+            to="/lobbies"
+          >
+            Browse public lobbies
+          </Link>
+        </div>
         {showMediaPermissionFailure ? (
           <p className="text-sm font-medium text-destructive" role="alert">
             {MEDIA_PERMISSION_MESSAGE}
           </p>
         ) : null}
-        <TopicList defaultDisplayName={account?.username} topics={topics} />
+        <TopicList defaultDisplayName={account?.displayName} topics={topics} />
       </section>
     </main>
   );

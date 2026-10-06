@@ -64,6 +64,13 @@ export async function getTopics() {
   return readResponse(response, apiContract.topics.response);
 }
 
+export async function getPublicLobbies() {
+  const response = await fetch(apiContract.publicLobbies.path, {
+    headers: { accept: "application/json" },
+  });
+  return readResponse(response, apiContract.publicLobbies.response);
+}
+
 export async function createPrivateTopic(
   topicId: string,
   input: PrivateLobbyCreateInput,
