@@ -22,12 +22,19 @@ if [ -s "$origin_csr_file" ]; then
   export TF_VAR_origin_csr
 fi
 
+staging_origin_csr_file="$deploy_root/secrets/staging-origin.csr"
+if [ -s "$staging_origin_csr_file" ]; then
+  TF_VAR_staging_origin_csr=$(sed -n '1,$p' "$staging_origin_csr_file")
+  export TF_VAR_staging_origin_csr
+fi
+
 tofu_image=ghcr.io/opentofu/opentofu:1.12.6@sha256:22cb52f6c5bf5c72a48a8f56d993d8df3e9462b1cdfb5db7e77143c87e8d159f
 exec docker run --rm --user "$(id -u):$(id -g)" \
   --env HOME=/tmp \
   --env HCLOUD_TOKEN \
   --env CLOUDFLARE_API_TOKEN \
   --env TF_VAR_origin_csr \
+  --env TF_VAR_staging_origin_csr \
   --volume "$deploy_root/opentofu:/workspace" \
   --workdir /workspace \
   "$tofu_image" "$@"

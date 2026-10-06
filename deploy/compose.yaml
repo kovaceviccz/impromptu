@@ -37,15 +37,15 @@ services:
     security_opt: [no-new-privileges:true]
     tmpfs: [/tmp]
     environment:
-      DATABASE_PATH: /var/lib/impromptu/impromptu.db
       HOST: 127.0.0.1
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      MIGRATION_DATABASE_URL:
+        ${MIGRATION_DATABASE_URL:?Set MIGRATION_DATABASE_URL}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?Set LIVEKIT_API_KEY}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?Set LIVEKIT_API_SECRET}
       LIVEKIT_API_URL: http://127.0.0.1:7880
       LIVEKIT_PUBLIC_URL: wss://${LIVEKIT_HOSTNAME:?Set LIVEKIT_HOSTNAME}
       PORT: 3000
-    volumes:
-      - app-data:/var/lib/impromptu
     logging: *default-logging
 
   livekit:
@@ -64,6 +64,3 @@ services:
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
     logging: *default-logging
-
-volumes:
-  app-data:

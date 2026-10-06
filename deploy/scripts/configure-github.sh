@@ -41,11 +41,22 @@ for file in \
   fi
 done
 
+for file in \
+  "$deploy_root/secrets/staging-origin.pem" \
+  "$deploy_root/secrets/staging-origin-key.pem"; do
+  if [ ! -s "$file" ]; then
+    echo "Missing $file" >&2
+    exit 1
+  fi
+done
+
 set -a
 . "$deploy_root/.env"
 set +a
 
 : "${APP_HOSTNAME:?Set APP_HOSTNAME in deploy/.env}"
+: "${DATABASE_URL:?Set DATABASE_URL in deploy/.env}"
+: "${MIGRATION_DATABASE_URL:?Set MIGRATION_DATABASE_URL in deploy/.env}"
 : "${LIVEKIT_API_KEY:?Set LIVEKIT_API_KEY in deploy/.env}"
 : "${LIVEKIT_API_SECRET:?Set LIVEKIT_API_SECRET in deploy/.env}"
 : "${LIVEKIT_HOSTNAME:?Set LIVEKIT_HOSTNAME in deploy/.env}"
@@ -61,6 +72,10 @@ gh variable set LIVEKIT_HOSTNAME --repo "$repository" --env production \
 
 printf '%s' "$deploy_host" |
   gh secret set DEPLOY_HOST --repo "$repository" --env production
+printf '%s' "$DATABASE_URL" |
+  gh secret set DATABASE_URL --repo "$repository" --env production
+printf '%s' "$MIGRATION_DATABASE_URL" |
+  gh secret set MIGRATION_DATABASE_URL --repo "$repository" --env production
 gh secret set DEPLOY_SSH_KEY --repo "$repository" --env production \
   < "$deploy_root/secrets/deploy_ed25519"
 gh secret set DEPLOY_KNOWN_HOSTS --repo "$repository" --env production \
@@ -73,6 +88,10 @@ gh secret set ORIGIN_CERTIFICATE --repo "$repository" --env production \
   < "$deploy_root/secrets/origin.pem"
 gh secret set ORIGIN_PRIVATE_KEY --repo "$repository" --env production \
   < "$deploy_root/secrets/origin-key.pem"
+gh secret set STAGING_ORIGIN_CERTIFICATE --repo "$repository" --env production \
+  < "$deploy_root/secrets/staging-origin.pem"
+gh secret set STAGING_ORIGIN_PRIVATE_KEY --repo "$repository" --env production \
+  < "$deploy_root/secrets/staging-origin-key.pem"
 
 echo "Configured the production environment for $repository."
 echo "Automatic main deployment: $auto_deploy"

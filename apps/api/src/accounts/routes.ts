@@ -24,13 +24,13 @@ export const accountRoutes: FastifyPluginAsyncZod<
   // wrong password take similar time.
   const unmatchedPasswordHash = hashPassword("unmatched-account-password");
 
-  function currentAccount(request: FastifyRequest) {
+  async function currentAccount(request: FastifyRequest) {
     const token = request.cookies[SESSION_COOKIE];
     return token ? accounts.findSessionAccount(token) : undefined;
   }
 
-  function startSession(reply: FastifyReply, accountId: string) {
-    const { token, expiresAt } = accounts.createSession(accountId);
+  async function startSession(reply: FastifyReply, accountId: string) {
+    const { token, expiresAt } = await accounts.createSession(accountId);
     reply.setCookie(SESSION_COOKIE, token, {
       expires: expiresAt,
       httpOnly: true,
@@ -69,7 +69,7 @@ export const accountRoutes: FastifyPluginAsyncZod<
     },
     async (request, reply) => {
       const { email, password, username } = request.body;
-      const result = accounts.create({
+      const result = await accounts.create({
         email,
         passwordHash: await hashPassword(password),
         username,
@@ -84,7 +84,7 @@ export const accountRoutes: FastifyPluginAsyncZod<
         });
       }
 
-      startSession(reply, result.account.id);
+      await startSession(reply, result.account.id);
       return reply.code(201).send({ account: result.account });
     },
   );
@@ -102,7 +102,9 @@ export const accountRoutes: FastifyPluginAsyncZod<
       },
     },
     async (request, reply) => {
-      const credentials = accounts.findCredentials(request.body.identifier);
+      const credentials = await accounts.findCredentials(
+        request.body.identifier,
+      );
       const passwordMatches = await verifyPassword(
         request.body.password,
         credentials?.passwordHash ?? (await unmatchedPasswordHash),
@@ -114,7 +116,7 @@ export const accountRoutes: FastifyPluginAsyncZod<
         });
       }
 
-      startSession(reply, credentials.account.id);
+      await startSession(reply, credentials.account.id);
       return { account: credentials.account };
     },
   );
@@ -124,7 +126,7 @@ export const accountRoutes: FastifyPluginAsyncZod<
     { schema: { response: { 200: accountContracts.logout.response } } },
     async (request, reply) => {
       const token = request.cookies[SESSION_COOKIE];
-      if (token) accounts.deleteSession(token);
+      if (token) await accounts.deleteSession(token);
       reply.clearCookie(SESSION_COOKIE, { path: "/" });
       return { status: "ok" as const };
     },
@@ -133,7 +135,7 @@ export const accountRoutes: FastifyPluginAsyncZod<
   app.get(
     accountContracts.session.path,
     { schema: { response: { 200: accountContracts.session.response } } },
-    async (request) => ({ account: currentAccount(request) ?? null }),
+    async (request) => ({ account: (await currentAccount(request)) ?? null }),
   );
 
   app.get(
@@ -147,7 +149,7 @@ export const accountRoutes: FastifyPluginAsyncZod<
       },
     },
     async (request, reply) => {
-      const account = currentAccount(request);
+      const account = await currentAccount(request);
       if (!account) {
         return reply.code(401).send({ message: "Log in to continue." });
       }

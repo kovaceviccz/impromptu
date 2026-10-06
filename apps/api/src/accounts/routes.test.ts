@@ -1,12 +1,11 @@
-import type { DatabaseSync } from "node:sqlite";
-
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "../app.js";
 import { apiContract } from "../contracts.js";
-import { openDatabase } from "../database.js";
+import { createMemoryPrivateLobbyStore } from "../lobbies/store.js";
 import type { LiveKitGateway } from "../topics/livekit.js";
 import { SESSION_COOKIE } from "./routes.js";
+import { type AccountStore, createMemoryAccountStore } from "./store.js";
 
 const apps: Awaited<ReturnType<typeof buildApp>>[] = [];
 const registration = {
@@ -19,6 +18,7 @@ const livekit: LiveKitGateway = {
   async listParticipants() {
     return [];
   },
+  async removeParticipant() {},
   async issueToken() {
     return "token";
   },
@@ -28,10 +28,11 @@ afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
 });
 
-async function testApp(database: DatabaseSync = openDatabase(":memory:")) {
+async function testApp(accounts: AccountStore = createMemoryAccountStore()) {
   const app = await buildApp({
-    database,
+    accounts,
     livekit,
+    privateLobbies: createMemoryPrivateLobbyStore(),
     livekitPublicUrl: "ws://localhost:7880",
     tokenTtlSeconds: 60,
   });
@@ -56,8 +57,8 @@ function register(
 
 describe("registration", () => {
   it("creates an account, starts a session, and never stores the plain password", async () => {
-    const database = openDatabase(":memory:");
-    const app = await testApp(database);
+    const accounts = createMemoryAccountStore();
+    const app = await testApp(accounts);
 
     const response = await register(app);
 
@@ -74,11 +75,9 @@ describe("registration", () => {
       expect.objectContaining({ httpOnly: true, path: "/", sameSite: "Lax" }),
     );
 
-    const stored = database
-      .prepare("SELECT password_hash FROM accounts WHERE id = ?")
-      .get(account.id);
-    expect(stored?.password_hash).toMatch(/^scrypt\$/);
-    expect(stored?.password_hash).not.toContain(registration.password);
+    const stored = await accounts.findCredentials(account.username);
+    expect(stored?.passwordHash).toMatch(/^scrypt\$/);
+    expect(stored?.passwordHash).not.toContain(registration.password);
 
     const session = await app.inject({
       method: "GET",
@@ -114,8 +113,8 @@ describe("registration", () => {
   ])(
     "rejects %s without creating an account",
     async (_case, payload, fieldErrors) => {
-      const database = openDatabase(":memory:");
-      const app = await testApp(database);
+      const accounts = createMemoryAccountStore();
+      const app = await testApp(accounts);
 
       const response = await register(app, payload);
 
@@ -124,9 +123,9 @@ describe("registration", () => {
         message: "Check the highlighted fields.",
         fieldErrors,
       });
-      expect(
-        database.prepare("SELECT COUNT(*) AS count FROM accounts").get(),
-      ).toEqual({ count: 0 });
+      for (const identifier of ["ada_lovelace", "ada@example.com"]) {
+        expect(await accounts.findCredentials(identifier)).toBeUndefined();
+      }
       expect(response.cookies).toEqual([]);
     },
   );
@@ -276,12 +275,12 @@ describe("sessions", () => {
   });
 
   it("persists sessions across application restarts", async () => {
-    const database = openDatabase(":memory:");
-    const firstApp = await testApp(database);
+    const accounts = createMemoryAccountStore();
+    const firstApp = await testApp(accounts);
     const cookies = sessionCookie(await register(firstApp));
     await firstApp.close();
 
-    const secondApp = await testApp(database);
+    const secondApp = await testApp(accounts);
     const response = await secondApp.inject({
       method: "GET",
       url: "/api/account",

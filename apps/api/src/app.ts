@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 import cookie from "@fastify/cookie";
@@ -11,14 +10,16 @@ import {
 import Fastify from "fastify";
 
 import { accountRoutes } from "./accounts/routes.js";
-import { createAccountStore } from "./accounts/store.js";
+import type { AccountStore } from "./accounts/store.js";
 import { healthRoutes } from "./health/routes.js";
+import type { PrivateLobbyStore } from "./lobbies/store.js";
 import type { LiveKitGateway } from "./topics/livekit.js";
 import { topicRoutes } from "./topics/routes.js";
 
 type BuildAppOptions = {
-  database: DatabaseSync;
+  accounts: AccountStore;
   livekit: LiveKitGateway;
+  privateLobbies: PrivateLobbyStore;
   livekitPublicUrl: string;
   tokenTtlSeconds: number;
   logger?: boolean;
@@ -44,14 +45,16 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(cookie);
   await app.register(healthRoutes);
   await app.register(accountRoutes, {
-    accounts: createAccountStore(options.database),
+    accounts: options.accounts,
     secureCookies: options.secureCookies ?? false,
   });
   await app.register(topicRoutes, {
     livekit: options.livekit,
+    privateLobbies: options.privateLobbies,
     livekitPublicUrl: options.livekitPublicUrl,
     tokenTtlSeconds: options.tokenTtlSeconds,
   });
+  app.addHook("onClose", async () => options.privateLobbies.close());
 
   if (options.serveWeb) {
     const root = fileURLToPath(

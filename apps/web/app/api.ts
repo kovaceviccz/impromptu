@@ -2,8 +2,10 @@ import {
   apiContract,
   errorSchema,
   formErrorSchema,
+  type JoinByCodeInput,
   type JoinInput,
   type LoginInput,
+  type PrivateLobbyCreateInput,
   type RegisterInput,
 } from "@impromptu/api/contracts";
 
@@ -61,6 +63,38 @@ export async function getTopics() {
   return readResponse(response, apiContract.topics.response);
 }
 
+export async function createPrivateTopic(
+  topicId: string,
+  input: PrivateLobbyCreateInput,
+) {
+  const path = apiContract.privateTopic.path.replace(
+    ":topicId",
+    encodeURIComponent(topicId),
+  );
+  const response = await postJson(path, input);
+  if (response.status === 409) {
+    const payload: unknown = await response.json().catch(() => null);
+    return apiContract.privateTopic.errors[409].parse(payload);
+  }
+  return readResponse(response, apiContract.privateTopic.response);
+}
+
+export async function lookupPrivateLobby(code: string) {
+  const response = await postJson(apiContract.privateLobbyLookup.path, {
+    code,
+  });
+  return readResponse(response, apiContract.privateLobbyLookup.response);
+}
+
+export async function joinTopicByCode(input: JoinByCodeInput) {
+  const response = await postJson(apiContract.joinByCode.path, input);
+  if (response.status === 409) {
+    const payload: unknown = await response.json().catch(() => null);
+    return apiContract.joinByCode.errors[409].parse(payload);
+  }
+  return readResponse(response, apiContract.joinByCode.response);
+}
+
 export async function joinTopic(topicId: string, input: JoinInput) {
   const path = apiContract.join.path.replace(
     ":topicId",
@@ -74,12 +108,16 @@ export async function joinTopic(topicId: string, input: JoinInput) {
   return readResponse(response, apiContract.join.response);
 }
 
-export async function leaveTopic(topicId: string, participantIdentity: string) {
+export async function leaveTopic(
+  topicId: string,
+  lobbyId: string,
+  participantIdentity: string,
+) {
   const path = apiContract.leave.path.replace(
     ":topicId",
     encodeURIComponent(topicId),
   );
-  const response = await postJson(path, { participantIdentity });
+  const response = await postJson(path, { lobbyId, participantIdentity });
   return readResponse(response, apiContract.leave.response);
 }
 

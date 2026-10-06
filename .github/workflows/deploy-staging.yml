@@ -1,4 +1,4 @@
-name: Deploy production
+name: Deploy staging
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: production
+  group: staging
   cancel-in-progress: false
 
 jobs:
@@ -19,20 +19,34 @@ jobs:
     if: >-
       (github.event_name == 'workflow_dispatch' && github.ref ==
       'refs/heads/main') || (github.event_name == 'workflow_run' &&
-       vars.AUTO_DEPLOY_ENABLED == 'true' &&
+       vars.STAGING_AUTO_DEPLOY_ENABLED == 'true' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main' &&
-       github.event.workflow_run.head_sha == github.sha)
+       github.event.workflow_run.head_branch == 'staging')
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: production
-    env:
-      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    environment: staging
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.DEPLOY_SHA }}
+          ref: main
+
+      - name: Select the current staging commit
+        id: revision
+        env:
+          CI_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          current_sha=$(git ls-remote origin refs/heads/staging | cut -f1)
+          test -n "$current_sha"
+          if [ -n "$CI_SHA" ]; then
+            test "$current_sha" = "$CI_SHA"
+          fi
+          echo "sha=$current_sha" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.revision.outputs.sha }}
+          path: application
 
       - name: Normalize image name
         id: image
@@ -49,10 +63,11 @@ jobs:
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: .
-          file: deploy/Dockerfile
+          context: application
+          file: application/deploy/Dockerfile
           push: true
-          tags: ${{ steps.image.outputs.name }}:${{ env.DEPLOY_SHA }}
+          tags:
+            ${{ steps.image.outputs.name }}:${{ steps.revision.outputs.sha }}
 
       - name: Configure SSH
         env:
@@ -64,18 +79,18 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
 
-      - name: Copy deployment configuration
+      - name: Copy staging configuration
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           ssh "impromptu@$DEPLOY_HOST" \
             'mkdir -p /opt/impromptu/deploy/secrets /opt/impromptu/deploy/scripts'
-          scp deploy/compose.yaml deploy/envoy.yaml deploy/livekit.yaml \
-            "impromptu@$DEPLOY_HOST:/opt/impromptu/deploy/"
-          scp deploy/scripts/up.sh deploy/scripts/validate-envoy.sh \
+          scp deploy/compose.staging.yaml deploy/livekit.staging.yaml \
+            deploy/envoy.yaml "impromptu@$DEPLOY_HOST:/opt/impromptu/deploy/"
+          scp deploy/scripts/up-staging.sh deploy/scripts/validate-envoy.sh \
             "impromptu@$DEPLOY_HOST:/opt/impromptu/deploy/scripts/"
 
-      - name: Install deployment secrets
+      - name: Install staging secrets
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -85,30 +100,24 @@ jobs:
           LIVEKIT_HOSTNAME: ${{ vars.LIVEKIT_HOSTNAME }}
           ORIGIN_CERTIFICATE: ${{ secrets.ORIGIN_CERTIFICATE }}
           ORIGIN_PRIVATE_KEY: ${{ secrets.ORIGIN_PRIVATE_KEY }}
-          STAGING_ORIGIN_CERTIFICATE: ${{ secrets.STAGING_ORIGIN_CERTIFICATE }}
-          STAGING_ORIGIN_PRIVATE_KEY: ${{ secrets.STAGING_ORIGIN_PRIVATE_KEY }}
           APP_IMAGE:
             ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
         run: |
           umask 077
-          : "${DATABASE_URL:?Set DATABASE_URL in the production environment}"
-          : "${MIGRATION_DATABASE_URL:?Set MIGRATION_DATABASE_URL in the production environment}"
+          : "${DATABASE_URL:?Set DATABASE_URL in the staging environment}"
+          : "${MIGRATION_DATABASE_URL:?Set MIGRATION_DATABASE_URL in the staging environment}"
           printf 'APP_IMAGE=%s\nDATABASE_URL=%s\nMIGRATION_DATABASE_URL=%s\nLIVEKIT_API_KEY=%s\nLIVEKIT_API_SECRET=%s\nLIVEKIT_HOSTNAME=%s\n' \
             "$APP_IMAGE" "$DATABASE_URL" "$MIGRATION_DATABASE_URL" "$LIVEKIT_API_KEY" "$LIVEKIT_API_SECRET" "$LIVEKIT_HOSTNAME" \
-            > "$RUNNER_TEMP/impromptu.env"
-          printf '%s\n' "$ORIGIN_CERTIFICATE" > "$RUNNER_TEMP/origin.pem"
-          printf '%s\n' "$ORIGIN_PRIVATE_KEY" > "$RUNNER_TEMP/origin-key.pem"
-          printf '%s\n' "$STAGING_ORIGIN_CERTIFICATE" > "$RUNNER_TEMP/staging-origin.pem"
-          printf '%s\n' "$STAGING_ORIGIN_PRIVATE_KEY" > "$RUNNER_TEMP/staging-origin-key.pem"
-          scp "$RUNNER_TEMP/impromptu.env" \
-            "impromptu@$DEPLOY_HOST:/opt/impromptu/deploy/.env"
-          scp "$RUNNER_TEMP/origin.pem" "$RUNNER_TEMP/origin-key.pem" \
-            "$RUNNER_TEMP/staging-origin.pem" "$RUNNER_TEMP/staging-origin-key.pem" \
+            > "$RUNNER_TEMP/impromptu-staging.env"
+          printf '%s\n' "$ORIGIN_CERTIFICATE" > "$RUNNER_TEMP/staging-origin.pem"
+          printf '%s\n' "$ORIGIN_PRIVATE_KEY" > "$RUNNER_TEMP/staging-origin-key.pem"
+          scp "$RUNNER_TEMP/impromptu-staging.env" \
+            "impromptu@$DEPLOY_HOST:/opt/impromptu/deploy/.env.staging"
+          scp "$RUNNER_TEMP/staging-origin.pem" \
+            "$RUNNER_TEMP/staging-origin-key.pem" \
             "impromptu@$DEPLOY_HOST:/opt/impromptu/deploy/secrets/"
           ssh "impromptu@$DEPLOY_HOST" \
-            'chmod 600 /opt/impromptu/deploy/.env && \
-             chmod 640 /opt/impromptu/deploy/secrets/origin-key.pem && \
-             chmod 644 /opt/impromptu/deploy/secrets/origin.pem && \
+            'chmod 600 /opt/impromptu/deploy/.env.staging && \
              chmod 640 /opt/impromptu/deploy/secrets/staging-origin-key.pem && \
              chmod 644 /opt/impromptu/deploy/secrets/staging-origin.pem'
 
@@ -120,14 +129,17 @@ jobs:
           printf '%s' "$GHCR_TOKEN" | ssh "impromptu@$DEPLOY_HOST" \
             "docker login ghcr.io --username '${{ github.actor }}' --password-stdin"
 
-      - name: Deploy
+      - name: Deploy staging
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           ssh "impromptu@$DEPLOY_HOST" \
-            'sh /opt/impromptu/deploy/scripts/up.sh'
+            'sh /opt/impromptu/deploy/scripts/up-staging.sh'
+          ssh "impromptu@$DEPLOY_HOST" \
+            'docker compose --project-directory /opt/impromptu/deploy \
+             --file /opt/impromptu/deploy/compose.yaml restart envoy'
 
-      - name: Verify public routes
+      - name: Verify public staging routes
         env:
           APP_HOSTNAME: ${{ vars.APP_HOSTNAME }}
           LIVEKIT_HOSTNAME: ${{ vars.LIVEKIT_HOSTNAME }}

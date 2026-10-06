@@ -15,9 +15,14 @@ export {
 export {
   errorSchema,
   joinBodySchema,
+  joinResultSchema,
+  sideUnavailableErrorSchema,
   type JoinInput,
+  type JoinByCodeInput,
   type JoinResult,
   type LobbyParticipant,
+  type PrivateLobbyCreateInput,
+  type PrivateLobbyPreview,
   type SideUnavailableError,
   type TopicStatus,
 } from "./topics/contract.js";

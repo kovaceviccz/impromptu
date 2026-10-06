@@ -42,7 +42,8 @@ docker run --rm \
   --volume "$project_root:/repo" \
   --workdir /repo \
   rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
-  .github/workflows/ci.yml .github/workflows/deploy.yml .github/workflows/docs.yml
+  .github/workflows/ci.yml .github/workflows/deploy.yml \
+  .github/workflows/deploy-staging.yml .github/workflows/docs.yml
 
 docker compose config --quiet
 docker build --file deploy/Dockerfile --tag impromptu:ci .
@@ -70,6 +71,33 @@ until docker compose exec -T web wget -q -O /dev/null http://127.0.0.1:5173/api/
   fi
   sleep 1
 done
+
+docker compose exec -T postgres psql -U impromptu -d postgres \
+  -c 'create database migration_check'
+postgres_container=$(docker compose ps -q postgres)
+for attempt in 1 2; do
+  docker run --rm --network "container:$postgres_container" \
+    --env MIGRATION_DATABASE_URL=postgresql://impromptu:impromptu@127.0.0.1:5432/migration_check \
+    impromptu:ci node apps/api/dist/migrate.js
+done
+test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
+  -Atc 'select count(*) from mikro_orm_migrations')" = 2
+for table in account account_session private_lobby; do
+  test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
+    -Atc "select to_regclass('public.$table')")" = "$table"
+done
+docker run --rm --network "container:$postgres_container" \
+  --env DATABASE_URL=postgresql://impromptu:impromptu@127.0.0.1:5432/migration_check \
+  impromptu:ci node --input-type=module -e '
+    import { openDatabase } from "./apps/api/dist/database.js";
+    const orm = await openDatabase(process.env.DATABASE_URL);
+    try {
+      const changes = await orm.schema.getUpdateSchemaSQL();
+      if (changes.trim()) throw new Error(`Migration schema drift:\n${changes}`);
+    } finally {
+      await orm.close(true);
+    }
+  '
 
 if command -v cygpath >/dev/null 2>&1; then
   # A Linux container cannot follow npm's Windows workspace links or share the

@@ -27,9 +27,6 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /workspace/apps/api/dist apps/api/dist
 COPY --from=build /workspace/apps/web/build/client apps/web/build/client
 
-# Named volumes inherit this ownership, so the non-root user can write the database.
-RUN mkdir -p /var/lib/impromptu && chown node:node /var/lib/impromptu
-
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \

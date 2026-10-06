@@ -18,6 +18,13 @@ static_resources:
                 route_config:
                   name: routes
                   virtual_hosts:
+                    - name: staging_livekit
+                      domains: ["livekit-staging.impromptu.social"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route:
+                            cluster: staging_livekit
+                            timeout: 0s
                     - name: livekit
                       domains: ["livekit.*"]
                       routes:
@@ -25,6 +32,11 @@ static_resources:
                           route:
                             cluster: livekit
                             timeout: 0s
+                    - name: staging_application
+                      domains: ["staging.impromptu.social"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route: { cluster: staging_application }
                     - name: application
                       domains: ["*"]
                       routes:
@@ -45,6 +57,10 @@ static_resources:
                       filename: /etc/envoy/tls/origin.pem
                     private_key:
                       filename: /etc/envoy/tls/origin-key.pem
+                  - certificate_chain:
+                      filename: /etc/envoy/tls/staging-origin.pem
+                    private_key:
+                      filename: /etc/envoy/tls/staging-origin-key.pem
                 tls_params:
                   tls_minimum_protocol_version: TLSv1_2
 
@@ -73,3 +89,27 @@ static_resources:
                     socket_address:
                       address: 127.0.0.1
                       port_value: 7880
+    - name: staging_application
+      connect_timeout: 2s
+      type: STATIC
+      load_assignment:
+        cluster_name: staging_application
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: 127.0.0.1
+                      port_value: 3001
+    - name: staging_livekit
+      connect_timeout: 2s
+      type: STATIC
+      load_assignment:
+        cluster_name: staging_livekit
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: 127.0.0.1
+                      port_value: 7890
