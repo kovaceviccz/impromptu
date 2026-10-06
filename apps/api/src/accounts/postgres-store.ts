@@ -14,6 +14,7 @@ import {
 function toAccount(entity: AccountEntity): Account {
   return {
     id: entity.id,
+    displayName: entity.displayName,
     username: entity.username,
     email: entity.email,
     createdAt: entity.createdAt.toISOString(),
@@ -49,6 +50,7 @@ export function createPostgresAccountStore(orm: MikroORM): AccountStore {
       const { account, usernameKey } = newAccount(input);
       em.create(AccountEntity, {
         id: account.id,
+        displayName: account.displayName,
         username: account.username,
         usernameKey,
         email: account.email,
@@ -95,6 +97,7 @@ export function createPostgresAccountStore(orm: MikroORM): AccountStore {
       if (duplicates.length > 0) return { duplicates };
 
       entity.username = input.username;
+      entity.displayName = input.displayName;
       entity.usernameKey = input.username.toLowerCase();
       entity.email = input.email;
       try {

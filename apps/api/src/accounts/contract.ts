@@ -19,6 +19,12 @@ export const emailSchema = z
   .max(254, "Email address must be at most 254 characters.")
   .pipe(z.email("Enter a valid email address."));
 
+export const displayNameSchema = z
+  .string({ error: "Enter a display name." })
+  .trim()
+  .min(1, "Enter a display name.")
+  .max(40, "Display name must be at most 40 characters.");
+
 export const newPasswordSchema = z
   .string({ error: "Enter a password." })
   .min(1, "Enter a password.")
@@ -44,12 +50,14 @@ export const loginBodySchema = z.strictObject({
 });
 
 export const updateAccountBodySchema = z.strictObject({
+  displayName: displayNameSchema,
   username: usernameSchema,
   email: emailSchema,
 });
 
 export const accountSchema = z.strictObject({
   id: z.uuid(),
+  displayName: displayNameSchema,
   username: z.string().min(1),
   email: z.string().min(1),
   createdAt: z.iso.datetime(),

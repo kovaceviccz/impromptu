@@ -17,6 +17,7 @@ import AccountPage, { clientAction, clientLoader } from "./account";
 const fetchMock = vi.fn<typeof fetch>();
 const account = {
   id: "0f7f2c2e-9d1b-4d3c-8f33-5b6f0d8f5a10",
+  displayName: "Ada Lovelace",
   username: "ada_lovelace",
   email: "ada@example.com",
   createdAt: "2026-09-01T12:00:00.000Z",
@@ -111,9 +112,10 @@ describe("Account page", () => {
     );
   });
 
-  it("edits the username and email", async () => {
+  it("edits the display name, username, and email", async () => {
     const updatedAccount = {
       ...account,
+      displayName: "Ada Byron",
       username: "ada_byron",
       email: "byron@example.com",
     };
@@ -127,7 +129,10 @@ describe("Account page", () => {
     });
     renderAccount();
 
-    fireEvent.change(await screen.findByLabelText("Username"), {
+    fireEvent.change(await screen.findByLabelText("Display name"), {
+      target: { value: "Ada Byron" },
+    });
+    fireEvent.change(screen.getByLabelText("Username"), {
       target: { value: "ada_byron" },
     });
     fireEvent.change(screen.getByLabelText("Email"), {
@@ -141,6 +146,7 @@ describe("Account page", () => {
         "/api/account",
         expect.objectContaining({
           body: JSON.stringify({
+            displayName: "Ada Byron",
             username: "ada_byron",
             email: "byron@example.com",
           }),

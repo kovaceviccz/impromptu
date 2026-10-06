@@ -23,7 +23,7 @@ export interface AccountStore {
   ): Promise<{ account: Account; passwordHash: string } | undefined>;
   update(
     accountId: string,
-    input: { username: string; email: string },
+    input: { displayName: string; username: string; email: string },
   ): Promise<
     { account: Account } | { duplicates: DuplicateField[] } | undefined
   >;
@@ -51,6 +51,7 @@ export function newAccount(input: NewAccount) {
   return {
     account: {
       id: randomUUID(),
+      displayName: input.username,
       username: input.username,
       email: input.email,
       createdAt: new Date().toISOString(),
@@ -116,6 +117,7 @@ export function createMemoryAccountStore(): AccountStore {
 
       const account = {
         ...stored.account,
+        displayName: input.displayName,
         username: input.username,
         email: input.email,
       };
