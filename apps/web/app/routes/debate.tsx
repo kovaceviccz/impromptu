@@ -1,6 +1,7 @@
 import {
   PRODUCT,
   joinBodySchema,
+  joinResultSchema,
   type JoinResult,
 } from "@impromptu/api/contracts";
 import {
@@ -12,7 +13,7 @@ import {
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
-import { LogOutIcon, SendIcon, SmileIcon } from "lucide-react";
+import { CopyIcon, LogOutIcon, SendIcon, SmileIcon } from "lucide-react";
 import { Track, VideoPresets } from "livekit-client";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
@@ -21,6 +22,7 @@ import {
   Link,
   Navigate,
   useActionData,
+  useLocation,
   useNavigate,
 } from "react-router";
 
@@ -352,15 +354,23 @@ function RoomChat({
 
 function AudiencePanel({
   canVote,
+  hostIdentity,
   participantIdentity,
   sides,
 }: {
   canVote: boolean;
+  hostIdentity: string | null;
   participantIdentity: string;
   sides: JoinResult["sides"];
 }) {
   const participants = useParticipants();
+  const orderedParticipants = [...participants].sort(
+    (first, second) =>
+      Number(second.identity === hostIdentity) -
+      Number(first.identity === hostIdentity),
+  );
   const room = useRoomContext();
+  const [activeTab, setActiveTab] = useState<"vote" | "participants">("vote");
   const [isVoting, setIsVoting] = useState(false);
   const [error, setError] = useState<string>();
   const debaterCount = participants.filter(
@@ -418,69 +428,163 @@ function AudiencePanel({
         </dl>
       </section>
 
-      <section className="grid gap-3 px-4 pt-5 pb-4">
-        <div>
-          <h2 className="font-editorial text-lg font-semibold">
-            Audience vote
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            {canVote
-              ? "Vote for the debater who presented the stronger argument. Tap again to undo."
-              : "Audience votes appear here as spectators choose the stronger argument."}
-          </p>
-        </div>
-        {canVote ? (
-          <ToggleGroup
-            className="flex w-full gap-2"
-            disabled={isVoting}
-            value={selectedVote ? [selectedVote] : []}
-            onValueChange={(value) => void vote(value)}
-          >
-            {sides.map((side, index) => (
-              <ToggleGroupItem
-                className={voteSurface + " " + voteSurfaceColors[index]}
-                key={side}
-                style={{ flexGrow: (voteCounts[index] ?? 0) + 1 }}
-                value={String(index)}
-              >
-                <span className="min-w-0 leading-tight">{side}</span>
-                <span className="shrink-0 tabular-nums">
-                  {voteCounts[index]}{" "}
-                  {voteCounts[index] === 1 ? "vote" : "votes"}
-                </span>
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
+      <div
+        aria-label="Audience views"
+        className="grid shrink-0 grid-cols-2 border-b px-4"
+        role="tablist"
+      >
+        <button
+          aria-controls="audience-tab-panel"
+          aria-selected={activeTab === "vote"}
+          className={
+            "border-b-2 px-3 py-2 text-sm font-medium " +
+            (activeTab === "vote"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground")
+          }
+          id="audience-vote-tab"
+          role="tab"
+          tabIndex={activeTab === "vote" ? 0 : -1}
+          type="button"
+          onClick={() => setActiveTab("vote")}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+              event.preventDefault();
+              setActiveTab("participants");
+              event.currentTarget.parentElement
+                ?.querySelector<HTMLButtonElement>("#audience-participants-tab")
+                ?.focus();
+            }
+          }}
+        >
+          Vote
+        </button>
+        <button
+          aria-controls="audience-tab-panel"
+          aria-selected={activeTab === "participants"}
+          className={
+            "border-b-2 px-3 py-2 text-sm font-medium " +
+            (activeTab === "participants"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground")
+          }
+          id="audience-participants-tab"
+          role="tab"
+          tabIndex={activeTab === "participants" ? 0 : -1}
+          type="button"
+          onClick={() => setActiveTab("participants")}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+              event.preventDefault();
+              setActiveTab("vote");
+              event.currentTarget.parentElement
+                ?.querySelector<HTMLButtonElement>("#audience-vote-tab")
+                ?.focus();
+            }
+          }}
+        >
+          Participants{" "}
+          <span className="tabular-nums">{participants.length}</span>
+        </button>
+      </div>
+      <div
+        aria-labelledby={`audience-${activeTab}-tab`}
+        className="min-h-0 flex-1 overflow-y-auto px-4 py-3"
+        id="audience-tab-panel"
+        role="tabpanel"
+        tabIndex={0}
+      >
+        {activeTab === "participants" ? (
+          <section aria-label="Participants" className="grid gap-2">
+            <ul className="grid gap-1 text-sm">
+              {orderedParticipants.map((participant) => (
+                <li
+                  className="flex min-w-0 items-center justify-between gap-3"
+                  key={participant.identity}
+                >
+                  <span className="min-w-0 truncate">
+                    {participant.name || "Guest"}
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    {participant.identity === hostIdentity ? (
+                      <Badge variant="secondary">Host</Badge>
+                    ) : null}
+                    <span className="text-xs text-muted-foreground">
+                      {participant.permissions?.canPublish === true
+                        ? "Debater"
+                        : "Spectator"}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
         ) : (
-          <dl
-            className="flex w-full gap-2 text-sm"
-            title="Only spectators can vote."
-          >
-            {sides.map((side, index) => (
-              <div
-                className={voteSurface + " " + voteSurfaceColors[index]}
-                key={side}
-                style={{ flexGrow: (voteCounts[index] ?? 0) + 1 }}
+          <section className="grid gap-3">
+            <div>
+              <h2 className="font-editorial text-lg font-semibold">
+                Audience vote
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                {canVote
+                  ? "Vote for the debater who presented the stronger argument. Tap again to undo."
+                  : "Audience votes appear here as spectators choose the stronger argument."}
+              </p>
+            </div>
+            {canVote ? (
+              <ToggleGroup
+                className="flex w-full gap-2"
+                disabled={isVoting}
+                value={selectedVote ? [selectedVote] : []}
+                onValueChange={(value) => void vote(value)}
               >
-                <dt className="min-w-0 leading-tight">{side}</dt>
-                <dd className="shrink-0 font-medium tabular-nums">
-                  {voteCounts[index]}{" "}
-                  {voteCounts[index] === 1 ? "vote" : "votes"}
-                </dd>
-              </div>
-            ))}
-          </dl>
+                {sides.map((side, index) => (
+                  <ToggleGroupItem
+                    className={voteSurface + " " + voteSurfaceColors[index]}
+                    key={side}
+                    style={{ flexGrow: (voteCounts[index] ?? 0) + 1 }}
+                    value={String(index)}
+                  >
+                    <span className="min-w-0 leading-tight">{side}</span>
+                    <span className="shrink-0 tabular-nums">
+                      {voteCounts[index]}{" "}
+                      {voteCounts[index] === 1 ? "vote" : "votes"}
+                    </span>
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            ) : (
+              <dl
+                className="flex w-full gap-2 text-sm"
+                title="Only spectators can vote."
+              >
+                {sides.map((side, index) => (
+                  <div
+                    className={voteSurface + " " + voteSurfaceColors[index]}
+                    key={side}
+                    style={{ flexGrow: (voteCounts[index] ?? 0) + 1 }}
+                  >
+                    <dt className="min-w-0 leading-tight">{side}</dt>
+                    <dd className="shrink-0 font-medium tabular-nums">
+                      {voteCounts[index]}{" "}
+                      {voteCounts[index] === 1 ? "vote" : "votes"}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+            <p className="text-xs text-muted-foreground">
+              {voteTotal}
+              {voteTotal === 1 ? " spectator vote" : " spectator votes"}
+            </p>
+            {error ? (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
+          </section>
         )}
-        <p className="text-xs text-muted-foreground">
-          {voteTotal}
-          {voteTotal === 1 ? " spectator vote" : " spectator votes"}
-        </p>
-        {error ? (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : null}
-      </section>
+      </div>
       <RoomChat canSend={canVote} participantIdentity={participantIdentity} />
     </aside>
   );
@@ -490,26 +594,37 @@ function LeaveButton({
   join,
   leaving,
   onLeaving,
+  onError,
 }: {
   join: JoinResult;
   leaving: boolean;
-  onLeaving: () => void;
+  onLeaving: (leaving: boolean) => void;
+  onError: (message: string) => void;
 }) {
   const room = useRoomContext();
   const navigate = useNavigate();
+  const [submitting, setSubmitting] = useState(false);
 
   async function leave() {
-    onLeaving();
-    await room.disconnect();
-    await leaveTopic(join.topicId, join.participantIdentity);
-    await navigate("/");
+    setSubmitting(true);
+    try {
+      await leaveTopic(join.topicId, join.lobbyId, join.participantIdentity);
+      onLeaving(true);
+      await room.disconnect();
+      await navigate("/");
+    } catch (cause) {
+      setSubmitting(false);
+      onError(
+        cause instanceof Error ? cause.message : "The lobby could not be left.",
+      );
+    }
   }
 
   return (
     <Button
-      aria-label={leaving ? "Leaving debate" : "Leave debate"}
+      aria-label={leaving || submitting ? "Leaving lobby" : "Leave lobby"}
       className="size-12"
-      disabled={leaving}
+      disabled={leaving || submitting}
       size="icon-lg"
       type="button"
       variant="destructive"
@@ -537,13 +652,24 @@ function MediaPermissionGuard({
 
     void (async () => {
       await room.disconnect();
-      await leaveTopic(join.topicId, join.participantIdentity).catch(() => {});
+      await leaveTopic(
+        join.topicId,
+        join.lobbyId,
+        join.participantIdentity,
+      ).catch(() => {});
       await navigate("/", {
         replace: true,
         state: { mediaPermissionFailure: true },
       });
     })();
-  }, [failed, join.participantIdentity, join.topicId, navigate, room]);
+  }, [
+    failed,
+    join.lobbyId,
+    join.participantIdentity,
+    join.topicId,
+    navigate,
+    room,
+  ]);
 
   return null;
 }
@@ -552,7 +678,18 @@ export function DebateExperience({ join }: { join: JoinResult }) {
   const [roomError, setRoomError] = useState<string>();
   const [leaving, setLeaving] = useState(false);
   const [mediaPermissionFailed, setMediaPermissionFailed] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
   const isDebater = join.role === "debater";
+
+  async function copyJoinCode() {
+    if (!join.joinCode) return;
+    try {
+      await navigator.clipboard.writeText(join.joinCode);
+      setCodeCopied(true);
+    } catch {
+      setRoomError("Private lobby code could not be copied.");
+    }
+  }
 
   return (
     <main className="grid h-svh grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-muted/30">
@@ -579,11 +716,33 @@ export function DebateExperience({ join }: { join: JoinResult }) {
             <h1 className="font-editorial truncate text-xl font-semibold tracking-tight sm:text-2xl">
               {join.topicTitle}
             </h1>
+            {join.isCreator && join.joinCode ? (
+              <Button
+                aria-label={`Copy lobby code ${join.joinCode}`}
+                className="mt-2 h-11 max-w-full justify-start px-3 text-base"
+                type="button"
+                variant="outline"
+                onClick={() => void copyJoinCode()}
+              >
+                <CopyIcon aria-hidden="true" />
+                <span>Lobby code</span>
+                <code className="font-mono text-lg font-semibold">
+                  {join.joinCode}
+                </code>
+                <span
+                  aria-live="polite"
+                  className="text-xs text-muted-foreground"
+                >
+                  {codeCopied ? "Copied" : "Copy"}
+                </span>
+              </Button>
+            ) : null}
           </div>
           <LeaveButton
             join={join}
             leaving={leaving}
-            onLeaving={() => setLeaving(true)}
+            onLeaving={setLeaving}
+            onError={setRoomError}
           />
           {roomError ? (
             <Alert className="col-span-full" variant="destructive">
@@ -596,6 +755,7 @@ export function DebateExperience({ join }: { join: JoinResult }) {
           <DebateVideos sides={join.sides} />
           <AudiencePanel
             canVote={!isDebater}
+            hostIdentity={join.hostIdentity}
             participantIdentity={join.participantIdentity}
             sides={join.sides}
           />
@@ -607,7 +767,15 @@ export function DebateExperience({ join }: { join: JoinResult }) {
 }
 
 export default function Debate() {
-  const result = useActionData<typeof clientAction>();
+  const actionResult = useActionData<typeof clientAction>();
+  const location = useLocation();
+  const handoff =
+    typeof location.state === "object" &&
+    location.state !== null &&
+    "joinResult" in location.state
+      ? joinResultSchema.safeParse(location.state.joinResult)
+      : undefined;
+  const result = handoff?.success ? handoff.data : actionResult;
   if (!result) return <Navigate to="/" replace />;
 
   if ("code" in result) {

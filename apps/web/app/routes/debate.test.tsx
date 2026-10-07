@@ -12,7 +12,7 @@ import {
   within,
 } from "@testing-library/react";
 import type { CSSProperties, ReactNode } from "react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 afterEach(() => {
@@ -25,7 +25,11 @@ const { disconnectRoom, leaveRoom, sendChat, setAttributes, setName } =
     disconnectRoom: vi.fn<() => Promise<void>>(),
     leaveRoom:
       vi.fn<
-        (topicId: string, participantIdentity: string) => Promise<unknown>
+        (
+          topicId: string,
+          lobbyId: string,
+          participantIdentity: string,
+        ) => Promise<unknown>
       >(),
     sendChat: vi.fn<(message: string) => Promise<unknown>>(),
     setAttributes:
@@ -117,12 +121,18 @@ vi.mock("@livekit/components-react", () => ({
 
 import { DebateExperience } from "./debate";
 
+function LocationProbe() {
+  const location = useLocation();
+  return <output>{location.pathname}</output>;
+}
+
 describe("DebateExperience", () => {
   it("connects spectators without publishing media and lets them vote and chat", async () => {
     sendChat.mockResolvedValue({});
     setAttributes.mockResolvedValue();
     setName.mockResolvedValue();
     const join: JoinResult = {
+      lobbyId: "dream-cheating",
       topicId: "dream-cheating",
       topicTitle: "Can you cheat in a dream?",
       sides: ["Yes: intention still matters", "No: dreams are involuntary"],
@@ -130,6 +140,8 @@ describe("DebateExperience", () => {
       displayName: "Test spectator",
       role: "spectator",
       sideIndex: null,
+      isCreator: false,
+      hostIdentity: null,
       livekitUrl: "ws://localhost:7880",
       token: "spectator-token",
     };
@@ -141,11 +153,23 @@ describe("DebateExperience", () => {
     );
 
     const room = screen.getByTestId("livekit-room");
-    expect(screen.queryByText("Spectator", { exact: true })).toBeNull();
+    const voteTab = screen.getByRole("tab", { name: "Vote" });
+    const participantsTab = screen.getByRole("tab", {
+      name: /Participants/,
+    });
+    expect(voteTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("region", { name: "Participants" })).toBeNull();
+    fireEvent.keyDown(voteTab, { key: "ArrowRight" });
+    expect(participantsTab).toHaveAttribute("aria-selected", "true");
+    expect(participantsTab).toHaveFocus();
+    const participantRoster = screen.getByRole("region", {
+      name: "Participants",
+    });
+    expect(within(participantRoster).getByText("Test spectator")).toBeVisible();
+    expect(participantRoster).toHaveTextContent("Debater guest");
     expect(room).toHaveAttribute("data-audio", "false");
     expect(room).toHaveAttribute("data-video", "false");
     expect(screen.queryByText("Open position")).not.toBeInTheDocument();
-    expect(screen.getByText("Debater guest")).toHaveClass("bg-emerald-50/80");
     expect(screen.getByTestId("video-track")).toHaveStyle({
       transform: "scaleX(-1)",
     });
@@ -153,7 +177,11 @@ describe("DebateExperience", () => {
       .getByRole("heading", { name: "Yes: intention still matters" })
       .closest("article");
     expect(firstSide).not.toBeNull();
+    expect(within(firstSide!).getByText("Debater guest")).toHaveClass(
+      "bg-emerald-50/80",
+    );
     expect(within(firstSide!).getByTestId("video-track")).toBeVisible();
+    fireEvent.click(voteTab);
     expect(screen.getByText(/Hello room/)).toBeVisible();
     const messageTime = document.querySelector("time");
     expect(messageTime).toHaveAttribute("datetime", new Date(1).toISOString());
@@ -216,6 +244,7 @@ describe("DebateExperience", () => {
 
   it("does not let a debater vote or send chat messages", () => {
     const join: JoinResult = {
+      lobbyId: "dream-cheating",
       topicId: "dream-cheating",
       topicTitle: "Can you cheat in a dream?",
       sides: ["Yes: intention still matters", "No: dreams are involuntary"],
@@ -223,6 +252,9 @@ describe("DebateExperience", () => {
       displayName: "Test debater",
       role: "debater",
       sideIndex: 0,
+      isCreator: true,
+      hostIdentity: "debater-id",
+      joinCode: "ABCD23",
       livekitUrl: "ws://localhost:7880",
       token: "debater-token",
     };
@@ -237,7 +269,13 @@ describe("DebateExperience", () => {
     expect(room).toHaveAttribute("data-video", "true");
     expect(room).toHaveAttribute("data-video-width", "1280");
     expect(room).toHaveAttribute("data-video-height", "720");
-    expect(screen.queryByText("Debater", { exact: true })).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: /Participants/ }));
+    expect(
+      within(screen.getByRole("region", { name: "Participants" })).getByText(
+        "Debater guest",
+      ),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "Vote" }));
     const readOnlyVote = screen.getByTitle("Only spectators can vote.");
     expect(readOnlyVote).toBeVisible();
     expect(
@@ -261,10 +299,14 @@ describe("DebateExperience", () => {
     expect(sendChat).not.toHaveBeenCalled();
   });
 
-  it("disconnects a debater whose camera or microphone cannot start", async () => {
-    disconnectRoom.mockResolvedValue();
-    leaveRoom.mockResolvedValue({ left: true });
+  it("keeps the private lobby code visible after copying it", async () => {
+    const writeText = vi.fn<() => Promise<void>>().mockResolvedValue();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
     const join: JoinResult = {
+      lobbyId: "dream-cheating",
       topicId: "dream-cheating",
       topicTitle: "Can you cheat in a dream?",
       sides: ["Yes: intention still matters", "No: dreams are involuntary"],
@@ -272,6 +314,116 @@ describe("DebateExperience", () => {
       displayName: "Test debater",
       role: "debater",
       sideIndex: 0,
+      isCreator: true,
+      hostIdentity: "debater-id",
+      joinCode: "ABCD23",
+      livekitUrl: "ws://localhost:7880",
+      token: "debater-token",
+    };
+
+    render(
+      <MemoryRouter>
+        <DebateExperience join={join} />
+      </MemoryRouter>,
+    );
+
+    const copyButton = screen.getByRole("button", {
+      name: "Copy lobby code ABCD23",
+    });
+    expect(copyButton).toHaveTextContent("ABCD23");
+    fireEvent.click(copyButton);
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("ABCD23"));
+    expect(copyButton).toHaveTextContent("Copied");
+    expect(copyButton).toHaveTextContent("ABCD23");
+  });
+
+  it("returns to selection after leaving the lobby successfully", async () => {
+    disconnectRoom.mockResolvedValue();
+    leaveRoom.mockResolvedValue({ status: "ok" });
+    const join: JoinResult = {
+      lobbyId: "dream-cheating",
+      topicId: "dream-cheating",
+      topicTitle: "Can you cheat in a dream?",
+      sides: ["Yes: intention still matters", "No: dreams are involuntary"],
+      participantIdentity: "7ffcd8af-4d5a-45d9-97cc-6db63b930b09",
+      displayName: "Test spectator",
+      role: "spectator",
+      sideIndex: null,
+      isCreator: false,
+      hostIdentity: null,
+      livekitUrl: "ws://localhost:7880",
+      token: "spectator-token",
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/debates/dream-cheating"]}>
+        <DebateExperience join={join} />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Leave lobby" }));
+
+    await waitFor(() => expect(screen.getByText("/")).toBeVisible());
+    expect(leaveRoom).toHaveBeenCalledWith(
+      join.topicId,
+      join.lobbyId,
+      join.participantIdentity,
+    );
+    expect(disconnectRoom).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the participant connected and displays an error when leaving fails", async () => {
+    leaveRoom.mockRejectedValue(new Error("Leave request failed"));
+    const join: JoinResult = {
+      lobbyId: "dream-cheating",
+      topicId: "dream-cheating",
+      topicTitle: "Can you cheat in a dream?",
+      sides: ["Yes: intention still matters", "No: dreams are involuntary"],
+      participantIdentity: "7ffcd8af-4d5a-45d9-97cc-6db63b930b09",
+      displayName: "Test spectator",
+      role: "spectator",
+      sideIndex: null,
+      isCreator: false,
+      hostIdentity: null,
+      livekitUrl: "ws://localhost:7880",
+      token: "spectator-token",
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/debates/dream-cheating"]}>
+        <DebateExperience join={join} />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Leave lobby" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Leave request failed",
+    );
+    expect(screen.getByTestId("livekit-room")).toHaveAttribute(
+      "data-connect",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Leave lobby" })).toBeEnabled();
+    expect(disconnectRoom).not.toHaveBeenCalled();
+  });
+
+  it("disconnects a debater whose camera or microphone cannot start", async () => {
+    disconnectRoom.mockResolvedValue();
+    leaveRoom.mockResolvedValue({ left: true });
+    const join: JoinResult = {
+      lobbyId: "dream-cheating",
+      topicId: "dream-cheating",
+      topicTitle: "Can you cheat in a dream?",
+      sides: ["Yes: intention still matters", "No: dreams are involuntary"],
+      participantIdentity: "7ffcd8af-4d5a-45d9-97cc-6db63b930b09",
+      displayName: "Test debater",
+      role: "debater",
+      sideIndex: 0,
+      isCreator: false,
+      hostIdentity: null,
       livekitUrl: "ws://localhost:7880",
       token: "debater-token",
     };
@@ -289,6 +441,7 @@ describe("DebateExperience", () => {
     await waitFor(() => expect(disconnectRoom).toHaveBeenCalledOnce());
     expect(leaveRoom).toHaveBeenCalledWith(
       join.topicId,
+      join.lobbyId,
       join.participantIdentity,
     );
     expect(screen.getByTestId("livekit-room")).toHaveAttribute(

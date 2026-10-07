@@ -29,8 +29,9 @@ from the shared `PRODUCT` constant.
 [source,text]
 ----
 apps/api             Fastify API and browser-safe contract export
+apps/api/src/lobbies  Private lobby persistence and lifecycle
 apps/web             React Router application and browser tests
-deploy               production containers, configuration, and OpenTofu
+deploy               production and staging containers, configuration, and OpenTofu
 Dockerfile           local development image
 compose.yaml         local development stack
 livekit.yaml         local LiveKit configuration
@@ -42,7 +43,7 @@ application composition stay at the API source root.
 
 The `deploy/` directory is an extractable deployment boundary. It consumes a
 prebuilt application image and contains the files needed to provision and run
-the production stack. Application source is not a runtime dependency of that
+both server stacks. Application source is not a runtime dependency of that
 directory.
 
 == API contracts
@@ -100,6 +101,28 @@ The API remains the source for application decisions, while LiveKit remains the
 source for connected-room state. The frontend does not copy either source into
 a global application store.
 
+Private lobby records, creator participant identity, code hashes, and optional
+expiry timestamps are stored in PostgreSQL through MikroORM. Join codes are
+hashed at rest. Public topic definitions remain static application data. LiveKit
+is authoritative for connected participant presence and display names; leaving
+a lobby removes the participant from its LiveKit room and releases any pending
+side reservation. Database schema changes are applied through versioned
+migrations before deployment, not through automatic schema synchronization.
+
+Private join codes expire after 24 hours. Invalid and expired codes are rejected
+before a participant token is issued. A valid code does not guarantee that a
+requested debater side is still available; in that case the API rejects the
+join with a reason and leaves the participant out of the room. Spectating remains
+available when both sides are occupied.
+
+Guests join public and private lobbies without creating an account. Their chosen
+display name is included in the LiveKit token and appears in the room participant
+list. Account-backed identity is not currently configured, so authenticated
+account entry and account ownership are not implemented yet. Leave requests
+release pending side reservations and remove the participant from LiveKit;
+repeating a leave request is safe. After a successful leave, the browser returns
+to lobby selection.
+
 Fastify serves the compiled SPA in production. Vite provides the development
 server and proxies API requests during local development.
 
@@ -110,19 +133,20 @@ gateway and routes application traffic separately from LiveKit signaling.
 LiveKit media reaches the host directly because a standard Cloudflare HTTP proxy
 does not carry the required media transports.
 
+Production and staging share the Hetzner host and Envoy. They use separate
+Compose projects, LiveKit instances, media ports, and Neon database branches.
+Staging stays online at `staging.impromptu.social`. Its database branch persists
+across deployments; each deployment applies versioned migrations before starting
+the new application image.
+
 OpenTofu owns the Hetzner host, firewall, SSH access, Cloudflare DNS records,
 origin certificates, and the zone settings required at the edge. Private keys
-and API credentials remain outside OpenTofu inputs and state. Production and
-staging share the Hetzner host and Envoy but use separate application and
-LiveKit containers and media ports. Staging uses a persistent Neon branch and
-serves `staging.impromptu.social`.
-
-After CI succeeds for the current `main` or `staging` commit, the corresponding
-workflow builds an immutable application image, installs its runtime
-configuration, starts its Compose stack, and verifies the public application
-and signaling routes. Staging applies versioned migrations to its persistent
-database branch before starting the new image. Manual deployment remains
-available for initial provisioning and recovery.
+and API credentials remain outside OpenTofu inputs and state. Successful CI for
+the current `main` or `staging` commit gates deployment to its corresponding
+environment. Each workflow builds an immutable application image, installs its
+runtime configuration, starts its Compose stack, and verifies the public
+application and signaling routes. Manual deployment remains available for
+initial provisioning and recovery.
 
 The root Compose files are for source development. Server configuration
 belongs under `deploy/`, including its Dockerfile, Compose stacks, service
