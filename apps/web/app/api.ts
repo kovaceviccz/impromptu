@@ -112,13 +112,13 @@ export async function joinTopic(topicId: string, input: JoinInput) {
 export async function leaveTopic(
   topicId: string,
   lobbyId: string,
-  participantIdentity: string,
+  token: string,
 ) {
   const path = apiContract.leave.path.replace(
     ":topicId",
     encodeURIComponent(topicId),
   );
-  const response = await postJson(path, { lobbyId, participantIdentity });
+  const response = await postJson(path, { lobbyId, token });
   return readResponse(response, apiContract.leave.response);
 }
 
@@ -169,4 +169,20 @@ export async function deleteAccount() {
     headers: { accept: "application/json" },
   });
   return readResponse(response, apiContract.deleteAccount.response);
+}
+
+export async function getRoomParticipants(join: {
+  topicId: string;
+  lobbyId: string;
+  token: string;
+}) {
+  const path = apiContract.roomParticipants.path.replace(
+    ":topicId",
+    encodeURIComponent(join.topicId),
+  );
+  const response = await postJson(path, {
+    lobbyId: join.lobbyId,
+    token: join.token,
+  });
+  return readResponse(response, apiContract.roomParticipants.response);
 }

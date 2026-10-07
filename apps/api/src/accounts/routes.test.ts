@@ -15,6 +15,9 @@ const registration = {
 } as const;
 
 const livekit: LiveKitGateway = {
+  async verifyParticipantToken() {
+    return undefined;
+  },
   async listParticipants() {
     return [];
   },

@@ -130,7 +130,7 @@ test("loads backend topics and enters a debate", async ({ page }) => {
         {
           data: {
             lobbyId: reservation.lobbyId,
-            participantIdentity: reservation.participantIdentity,
+            token: reservation.token,
           },
         },
       );
@@ -139,7 +139,9 @@ test("loads backend topics and enters a debate", async ({ page }) => {
   );
 
   await page.getByRole("button", { name: "Spectate debate" }).click();
-  await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Display name" }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Leave lobby" }).click();
   await expect(dreamTopic.getByText("Both sides open")).toBeVisible();
   expect(joinRequests).toBe(3);
@@ -190,7 +192,7 @@ test("spectators can chat while debaters have a read-only view", async ({
     .getByRole("button", { name: "Watch live" })
     .click();
   await expect(
-    spectator.getByRole("textbox", { name: "Message" }),
+    spectator.getByRole("textbox", { name: "Display name" }),
   ).toBeVisible();
   await expect(
     spectator
@@ -215,6 +217,14 @@ test("spectators can chat while debaters have a read-only view", async ({
   await noVote.click();
   await expect(noVote).toHaveAttribute("aria-pressed", "false");
   await expect(spectator.getByText("0 spectator votes")).toBeVisible();
+
+  await spectator
+    .getByRole("textbox", { name: "Display name" })
+    .fill("Audience Guest");
+  await spectator.getByRole("button", { name: "Continue" }).click();
+  await expect(
+    spectator.getByRole("textbox", { name: "Message" }),
+  ).toBeVisible();
 
   await spectator
     .getByRole("textbox", { name: "Message" })

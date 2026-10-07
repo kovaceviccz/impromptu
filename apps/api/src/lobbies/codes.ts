@@ -2,7 +2,11 @@ import { createHash, randomInt, randomUUID } from "node:crypto";
 
 import { UniqueConstraintViolationException } from "@mikro-orm/core";
 
-import type { PrivateLobbyRecord, PrivateLobbyStore } from "./store.js";
+import {
+  DuplicateLobbyCodeError,
+  type PrivateLobbyRecord,
+  type PrivateLobbyStore,
+} from "./store.js";
 
 const codeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const codeLength = 8;
@@ -12,16 +16,21 @@ export function hashLobbyCode(code: string) {
   return createHash("sha256").update(code).digest("hex");
 }
 
+function generateCode() {
+  return Array.from(
+    { length: codeLength },
+    () => codeAlphabet[randomInt(codeAlphabet.length)],
+  ).join("");
+}
+
 export async function createPrivateLobby(
   store: PrivateLobbyStore,
   topicId: string,
   creatorIdentity: string,
+  nextCode: () => string = generateCode,
 ) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const code = Array.from(
-      { length: codeLength },
-      () => codeAlphabet[randomInt(codeAlphabet.length)],
-    ).join("");
+    const code = nextCode();
     const codeHash = hashLobbyCode(code);
     if (await store.findByCodeHash(codeHash)) continue;
 
@@ -38,7 +47,11 @@ export async function createPrivateLobby(
       await store.create(lobby);
       return { ...lobby, code };
     } catch (error) {
-      if (error instanceof UniqueConstraintViolationException) continue;
+      if (
+        error instanceof UniqueConstraintViolationException ||
+        error instanceof DuplicateLobbyCodeError
+      )
+        continue;
       throw error;
     }
   }
