@@ -80,13 +80,19 @@ function parseSideIndex(value: LobbyChoice): 0 | 1 | undefined {
   return undefined;
 }
 
-function PrivateLobby({ topics }: { topics: TopicStatus[] }) {
+function PrivateLobby({
+  defaultDisplayName = "",
+  topics,
+}: {
+  defaultDisplayName?: string;
+  topics: TopicStatus[];
+}) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [topicId, setTopicId] = useState(topics[0]?.id ?? "");
   const [joinCode, setJoinCode] = useState("");
-  const [creatorName, setCreatorName] = useState("");
-  const [joinerName, setJoinerName] = useState("");
+  const [creatorName, setCreatorName] = useState(defaultDisplayName);
+  const [joinerName, setJoinerName] = useState(defaultDisplayName);
   const [creatorChoice, setCreatorChoice] = useState<LobbyChoice>("0");
   const [joinChoice, setJoinChoice] = useState<LobbyChoice>("spectator");
   const [preview, setPreview] = useState<PrivateLobbyPreview>();
@@ -387,7 +393,7 @@ export function TopicList({
         <p className="m-auto text-center text-muted-foreground">
           No debates are available right now.
         </p>
-        <PrivateLobby topics={topics} />
+        <PrivateLobby defaultDisplayName={defaultDisplayName} topics={topics} />
       </>
     );
   }
@@ -477,14 +483,7 @@ export function TopicList({
                       {side}
                     </h3>
                     {debater ? (
-                      <p
-                        className={
-                          "text-sm " +
-                          (sideIndex === 0
-                            ? "text-emerald-900"
-                            : "text-red-900")
-                        }
-                      >
+                      <p className="text-sm">
                         {debater.displayName} is debating
                       </p>
                     ) : null}
@@ -617,7 +616,7 @@ export function TopicList({
           ) : null}
         </DialogContent>
       </Dialog>
-      <PrivateLobby topics={topics} />
+      <PrivateLobby defaultDisplayName={defaultDisplayName} topics={topics} />
     </>
   );
 }

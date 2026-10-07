@@ -8,6 +8,7 @@ import {
   findPrivateLobbyByCode,
 } from "../lobbies/codes.js";
 import type { PrivateLobbyStore } from "../lobbies/store.js";
+import type { PublicLobbyStateStore } from "../lobbies/public-state.js";
 import { findTopic, topics } from "./data.js";
 import {
   createRoleAllocator,
@@ -20,6 +21,7 @@ import type { JoinResult } from "./contract.js";
 export type TopicRoutesOptions = {
   livekit: LiveKitGateway;
   privateLobbies: PrivateLobbyStore;
+  publicLobbyState: PublicLobbyStateStore;
   livekitPublicUrl: string;
   tokenTtlSeconds: number;
 };
@@ -31,6 +33,7 @@ const unavailableMessages = {
 
 function makeJoinResult(input: {
   lobbyId: string;
+  state: JoinResult["state"];
   topicId: string;
   topicTitle: string;
   sides: [string, string];
@@ -56,6 +59,172 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
     options.tokenTtlSeconds,
   );
 
+  async function publishDebateStarted(lobbyId: string) {
+    try {
+      await options.livekit.updateRoomMetadata(
+        `debate-${lobbyId}`,
+        "DEBATE_IN_PROGRESS",
+      );
+      return true;
+    } catch (cause) {
+      app.log.error(
+        { err: cause, lobbyId },
+        "Could not broadcast the debate start to lobby participants",
+      );
+      return false;
+    }
+  }
+
+  app.post(
+    topicContracts.startDebate.path,
+    {
+      schema: {
+        params: topicContracts.startDebate.params,
+        body: topicContracts.startDebate.body,
+        response: {
+          200: topicContracts.startDebate.response,
+          401: topicContracts.startDebate.errors[401],
+          403: topicContracts.startDebate.errors[403],
+          404: topicContracts.startDebate.errors[404],
+          409: topicContracts.startDebate.errors[409],
+          503: topicContracts.startDebate.errors[503],
+        },
+      },
+    },
+    async (request, reply) => {
+      const topic = findTopic(request.params.topicId);
+      if (!topic) {
+        return reply.code(404).send({ message: "Topic not found" });
+      }
+
+      const { lobbyId, token } = request.body;
+      const identity = await options.livekit.verifyParticipantToken(
+        token,
+        `debate-${lobbyId}`,
+      );
+      if (!identity) {
+        return reply.code(401).send({
+          message: "Your room session expired. Rejoin the lobby.",
+        });
+      }
+
+      const isPublicLobby = lobbyId === topic.id;
+      let hostIdentity: string | null;
+      let state: JoinResult["state"];
+      if (isPublicLobby) {
+        const lobby = await options.publicLobbyState.find(topic.id);
+        if (!lobby) {
+          return reply.code(403).send({
+            message: "Only the public lobby host can start the debate.",
+          });
+        }
+        hostIdentity = lobby.hostIdentity;
+        state = lobby.state;
+      } else {
+        const lobby = await options.privateLobbies.findById(lobbyId);
+        if (
+          !lobby ||
+          lobby.topicId !== topic.id ||
+          (lobby.expiresAt && lobby.expiresAt <= new Date())
+        ) {
+          return reply.code(404).send({ message: "Private lobby not found" });
+        }
+        hostIdentity = lobby.creatorIdentity;
+        state = lobby.state;
+      }
+
+      if (identity !== hostIdentity) {
+        return reply.code(403).send({
+          message: isPublicLobby
+            ? "Only the public lobby host can start the debate."
+            : "Only the private lobby creator can start the debate.",
+        });
+      }
+
+      if (state === "DEBATE_IN_PROGRESS") {
+        if (!(await publishDebateStarted(lobbyId))) {
+          return reply.code(503).send({
+            message:
+              "The debate started, but its status could not be shared with everyone. Please retry.",
+          });
+        }
+        return { state };
+      }
+      if (state !== "WAITING") {
+        return reply.code(409).send({
+          message: "This lobby can no longer be started.",
+        });
+      }
+
+      const participants = await options.livekit.listParticipants(
+        `debate-${lobbyId}`,
+      );
+      const debaterSides = new Set(
+        participants
+          .filter(
+            (participant) =>
+              participant.role === "debater" && participant.sideIndex !== null,
+          )
+          .map((participant) => participant.sideIndex),
+      );
+      const hasSpectator = participants.some(
+        (participant) => participant.role === "spectator",
+      );
+      if (
+        !participants.some(
+          (participant) => participant.identity === identity,
+        ) ||
+        debaterSides.size !== 2 ||
+        !debaterSides.has(0) ||
+        !debaterSides.has(1) ||
+        !hasSpectator
+      ) {
+        return reply.code(409).send({
+          message:
+            "Both debater positions and at least one spectator must be in the lobby to start.",
+        });
+      }
+
+      const updated = isPublicLobby
+        ? await options.publicLobbyState.updateState(
+            topic.id,
+            "WAITING",
+            "DEBATE_IN_PROGRESS",
+          )
+        : await options.privateLobbies.updateState(
+            lobbyId,
+            "WAITING",
+            "DEBATE_IN_PROGRESS",
+          );
+      if (!updated) {
+        const latestState = isPublicLobby
+          ? (await options.publicLobbyState.find(topic.id))?.state
+          : (await options.privateLobbies.findById(lobbyId))?.state;
+        if (latestState === "DEBATE_IN_PROGRESS") {
+          if (!(await publishDebateStarted(lobbyId))) {
+            return reply.code(503).send({
+              message:
+                "The debate started, but its status could not be shared with everyone. Please retry.",
+            });
+          }
+          return { state: latestState };
+        }
+        return reply.code(409).send({
+          message: "This lobby can no longer be started.",
+        });
+      }
+
+      if (!(await publishDebateStarted(lobbyId))) {
+        return reply.code(503).send({
+          message:
+            "The debate started, but its status could not be shared with everyone. Please retry.",
+        });
+      }
+
+      return { state: "DEBATE_IN_PROGRESS" as const };
+    },
+  );
+
   app.get(
     topicContracts.topics.path,
     { schema: { response: { 200: topicContracts.topics.response } } },
@@ -68,12 +237,14 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
             sideAvailability,
             spectatorCount,
           } = await allocation.status(topic.id);
+          const state = await options.publicLobbyState.find(topic.id);
+          const canDebate = !state || state.state === "WAITING";
           return {
             ...topic,
             sides: [topic.sides[0], topic.sides[1]] satisfies [string, string],
             sideAvailability: [
-              sideAvailability[0],
-              sideAvailability[1],
+              canDebate && sideAvailability[0],
+              canDebate && sideAvailability[1],
             ] satisfies [boolean, boolean],
             debaterCount,
             spectatorCount,
@@ -110,15 +281,17 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
 
       const { debaterCount, participants, sideAvailability, spectatorCount } =
         await allocation.status(lobby.id);
+      const canDebate = lobby.state === "WAITING";
       return {
         id: topic.id,
         lobbyId: lobby.id,
+        state: lobby.state,
         title: topic.title,
         sides: [topic.sides[0], topic.sides[1]] satisfies [string, string],
-        sideAvailability: [sideAvailability[0], sideAvailability[1]] satisfies [
-          boolean,
-          boolean,
-        ],
+        sideAvailability: [
+          canDebate && sideAvailability[0],
+          canDebate && sideAvailability[1],
+        ] satisfies [boolean, boolean],
         debaterCount,
         spectatorCount,
         participants,
@@ -152,6 +325,13 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         return reply.code(404).send({ message: "Topic not found" });
       }
 
+      if (lobby.state !== "WAITING" && request.body.intent === "debater") {
+        return reply.code(409).send({
+          code: "ROUND_ALREADY_STARTED",
+          message: "Positions cannot change after the debate starts.",
+        });
+      }
+
       const participantIdentity = randomUUID();
       const role = request.body.intent satisfies DebateRole;
       const sideIndex =
@@ -176,6 +356,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
 
       return makeJoinResult({
         lobbyId: lobby.id,
+        state: lobby.state,
         topicId: topic.id,
         topicTitle: topic.title,
         sides: [topic.sides[0], topic.sides[1]] satisfies [string, string],
@@ -246,6 +427,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
 
       return makeJoinResult({
         lobbyId: lobby.id,
+        state: lobby.state,
         topicId: topic.id,
         topicTitle: topic.title,
         sides: [topic.sides[0], topic.sides[1]] satisfies [string, string],
@@ -283,6 +465,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       }
 
       let lobbyId: string = topic.id;
+      let state: JoinResult["state"] = "WAITING";
       let hostIdentity: string | null = null;
       if (
         request.body.lobbyId !== undefined &&
@@ -298,7 +481,11 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
           return reply.code(404).send({ message: "Lobby not found" });
         }
         lobbyId = privateLobby.id;
+        state = privateLobby.state;
         hostIdentity = privateLobby.creatorIdentity;
+      } else {
+        state =
+          (await options.publicLobbyState.find(topic.id))?.state ?? "WAITING";
       }
 
       let participantIdentity: string = randomUUID();
@@ -314,6 +501,15 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
           });
         }
         participantIdentity = verifiedIdentity;
+      }
+      if (
+        state !== "WAITING" &&
+        (request.body.previousToken || request.body.intent === "debater")
+      ) {
+        return reply.code(409).send({
+          code: "ROUND_ALREADY_STARTED",
+          message: "Positions cannot change after the debate starts.",
+        });
       }
       const displayName =
         request.body.intent === "debater"
@@ -339,8 +535,23 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         });
       }
 
+      if (lobbyId === topic.id) {
+        try {
+          const publicLobby = await options.publicLobbyState.claimHost(
+            topic.id,
+            participantIdentity,
+          );
+          state = publicLobby.state;
+          hostIdentity = publicLobby.hostIdentity;
+        } catch (cause) {
+          await allocation.leave(lobbyId, participantIdentity);
+          throw cause;
+        }
+      }
+
       return {
         lobbyId,
+        state,
         topicId: topic.id,
         topicTitle: topic.title,
         sides: [topic.sides[0], topic.sides[1]] satisfies [string, string],
@@ -374,7 +585,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       const topic = findTopic(request.params.topicId);
       if (!topic) return reply.code(404).send({ message: "Topic not found" });
       const { lobbyId, token } = request.body;
-      const identity = await options.livekit.verifyParticipantToken?.(
+      const identity = await options.livekit.verifyParticipantToken(
         token,
         `debate-${lobbyId}`,
       );
@@ -383,6 +594,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
           .code(401)
           .send({ message: "Your room session expired. Rejoin the lobby." });
       let hostIdentity: string | null = null;
+      let state: JoinResult["state"] = "WAITING";
       if (lobbyId !== topic.id) {
         const lobby = await options.privateLobbies.findById(lobbyId);
         if (
@@ -392,6 +604,11 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
           return reply.code(404).send({ message: "Private lobby not found" });
         }
         hostIdentity = lobby.creatorIdentity;
+        state = lobby.state;
+      } else {
+        const lobby = await options.publicLobbyState.find(topic.id);
+        hostIdentity = lobby?.hostIdentity ?? null;
+        state = lobby?.state ?? "WAITING";
       }
       try {
         const participants = await options.livekit.listParticipants(
@@ -399,6 +616,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         );
         return {
           hostIdentity,
+          state,
           participants: [
             ...new Map(
               participants.map((participant) => [
@@ -414,6 +632,63 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
             "Participants could not be loaded. Your room connection is still available. Try again.",
         });
       }
+    },
+  );
+
+  app.post(
+    topicContracts.closeLobby.path,
+    {
+      schema: {
+        params: topicContracts.closeLobby.params,
+        body: topicContracts.closeLobby.body,
+        response: {
+          200: topicContracts.closeLobby.response,
+          401: topicContracts.closeLobby.errors[401],
+          403: topicContracts.closeLobby.errors[403],
+          404: topicContracts.closeLobby.errors[404],
+        },
+      },
+    },
+    async (request, reply) => {
+      const topic = findTopic(request.params.topicId);
+      if (!topic) {
+        return reply.code(404).send({ message: "Topic not found" });
+      }
+
+      const identity = await options.livekit.verifyParticipantToken(
+        request.body.token,
+        `debate-${request.body.lobbyId}`,
+      );
+      if (!identity) {
+        return reply.code(401).send({ message: "Your room session expired." });
+      }
+
+      const privateLobby = await options.privateLobbies.findById(
+        request.body.lobbyId,
+      );
+      if (!privateLobby || privateLobby.topicId !== topic.id) {
+        return reply.code(404).send({ message: "Private lobby not found" });
+      }
+      if (privateLobby.creatorIdentity !== identity) {
+        return reply.code(403).send({
+          message: "Only the lobby creator can close it.",
+        });
+      }
+
+      const participants = await options.livekit.listParticipants(
+        `debate-${request.body.lobbyId}`,
+      );
+      await Promise.all(
+        participants.map(async (participant) => {
+          await allocation.leave(request.body.lobbyId, participant.identity);
+          await options.livekit.removeParticipant(
+            `debate-${request.body.lobbyId}`,
+            participant.identity,
+          );
+        }),
+      );
+      await options.privateLobbies.delete(request.body.lobbyId);
+      return { status: "ok" as const };
     },
   );
 
@@ -436,6 +711,14 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         return reply.code(404).send({ message: "Topic not found" });
       }
 
+      const identity = await options.livekit.verifyParticipantToken(
+        request.body.token,
+        `debate-${request.body.lobbyId}`,
+      );
+      if (!identity) {
+        return reply.code(401).send({ message: "Your room session expired." });
+      }
+
       if (request.body.lobbyId !== topic.id) {
         const privateLobby = await options.privateLobbies.findById(
           request.body.lobbyId,
@@ -445,19 +728,24 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         }
       }
 
-      const identity = await options.livekit.verifyParticipantToken(
-        request.body.token,
-        `debate-${request.body.lobbyId}`,
-      );
-      if (!identity) {
-        return reply.code(401).send({ message: "Your room session expired." });
-      }
-
       await allocation.leave(request.body.lobbyId, identity);
       await options.livekit.removeParticipant(
         `debate-${request.body.lobbyId}`,
         identity,
       );
+      if (request.body.lobbyId === topic.id) {
+        const publicLobby = await options.publicLobbyState.find(topic.id);
+        if (publicLobby?.hostIdentity === identity) {
+          const remaining = await options.livekit.listParticipants(
+            `debate-${topic.id}`,
+          );
+          await options.publicLobbyState.updateHost(
+            topic.id,
+            identity,
+            remaining[0]?.identity ?? null,
+          );
+        }
+      }
       return { status: "ok" as const };
     },
   );

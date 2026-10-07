@@ -1,6 +1,16 @@
 #!/bin/sh
 set -eu
 
+ci_stage='install dependencies'
+report_failure() {
+  result=$1
+  if [ "$result" -ne 0 ]; then
+    printf '::error file=scripts/ci.sh,title=CI gate failed::%s exited with status %s\n' \
+      "$ci_stage" "$result" >&2
+  fi
+}
+trap 'report_failure "$?"' EXIT
+
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$project_root"
 
@@ -20,12 +30,18 @@ fi
 project_root=$(host_path "$project_root")
 
 npm ci
+ci_stage='check formatting'
 npm run format:check
+ci_stage='lint'
 npm run lint
+ci_stage='typecheck'
 npm run typecheck
+ci_stage='unit tests'
 npm test
+ci_stage='build'
 npm run build
 
+ci_stage='render documentation'
 docs_output=$(host_path "$(mktemp -d)")
 docker run --rm --user "$(id -u):$(id -g)" \
   --volume "$project_root/docs:/documents:ro" \
@@ -38,6 +54,7 @@ test -f "$docs_output/architecture.html"
 test -f "$docs_output/interface.html"
 rm -r "$docs_output"
 
+ci_stage='validate workflows'
 docker run --rm \
   --volume "$project_root:/repo" \
   --workdir /repo \
@@ -45,6 +62,7 @@ docker run --rm \
   .github/workflows/ci.yml .github/workflows/deploy.yml \
   .github/workflows/deploy-staging.yml .github/workflows/docs.yml
 
+ci_stage='validate containers and infrastructure'
 docker compose config --quiet
 docker build --file deploy/Dockerfile --tag impromptu:ci .
 sh deploy/scripts/check.sh
@@ -53,6 +71,7 @@ cleanup() {
   result=$?
   trap - EXIT INT TERM
   if [ "$result" -ne 0 ]; then
+    report_failure "$result"
     docker compose logs --no-color
   fi
   docker compose down --volumes --remove-orphans
@@ -60,6 +79,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+ci_stage='start development stack'
 docker compose down --volumes --remove-orphans
 docker compose up --build --detach
 attempt=0
@@ -72,6 +92,7 @@ until docker compose exec -T web wget -q -O /dev/null http://127.0.0.1:5173/api/
   sleep 1
 done
 
+ci_stage='check migrations'
 docker compose exec -T postgres psql -U impromptu -d postgres \
   -c 'create database migration_check'
 postgres_container=$(docker compose ps -q postgres)
@@ -81,8 +102,8 @@ for attempt in 1 2; do
     impromptu:ci node apps/api/dist/migrate.js
 done
 test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
-  -Atc 'select count(*) from mikro_orm_migrations')" = 3
-for table in account account_session private_lobby; do
+  -Atc 'select count(*) from mikro_orm_migrations')" = 5
+for table in account account_session private_lobby public_lobby_state; do
   test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
     -Atc "select to_regclass('public.$table')")" = "$table"
 done
@@ -99,6 +120,7 @@ docker run --rm --network "container:$postgres_container" \
     }
   '
 
+ci_stage='browser tests'
 if command -v cygpath >/dev/null 2>&1; then
   # A Linux container cannot follow npm's Windows workspace links or share the
   # host network under Docker Desktop, so run Playwright on the host instead.

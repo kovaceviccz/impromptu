@@ -240,7 +240,7 @@ test("private codes, guests, registered users, reloads, membership recovery and 
         sessionStorage.getItem("impromptu.room.dream-cheating"),
       ),
     ).toBeNull();
-    await page.getByRole("button", { name: "Leave lobby" }).click();
+    await page.getByRole("button", { name: "Close lobby" }).click();
     await expect(page).toHaveURL("http://127.0.0.1:5173/");
   } finally {
     await guestContext.close();

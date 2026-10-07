@@ -14,10 +14,13 @@ export {
   type RegisterInput,
   type UpdateAccountInput,
 } from "./accounts/contract.js";
+export { type LobbyState } from "./lobbies/contract.js";
 export {
   errorSchema,
   joinBodySchema,
   joinResultSchema,
+  startDebateBodySchema,
+  startDebateResultSchema,
   sideUnavailableErrorSchema,
   type JoinInput,
   type JoinByCodeInput,
@@ -26,6 +29,8 @@ export {
   type PrivateLobbyCreateInput,
   type PrivateLobbyPreview,
   type SideUnavailableError,
+  type StartDebateInput,
+  type StartDebateResult,
   type TopicStatus,
 } from "./topics/contract.js";
 

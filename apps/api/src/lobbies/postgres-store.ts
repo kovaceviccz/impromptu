@@ -22,6 +22,16 @@ export function createPostgresPrivateLobbyStore(
       const entity = await orm.em.fork().findOne(PrivateLobbyEntity, { id });
       return entity ? toRecord(entity) : undefined;
     },
+    async updateState(id, expectedState, state) {
+      const updated = await orm.em
+        .fork()
+        .nativeUpdate(
+          PrivateLobbyEntity,
+          { id, state: expectedState },
+          { state },
+        );
+      return updated > 0;
+    },
     async delete(id) {
       const em = orm.em.fork();
       await em.nativeDelete(PrivateLobbyEntity, { id });
@@ -35,6 +45,7 @@ function toRecord(entity: PrivateLobbyEntity): PrivateLobbyRecord {
   return {
     id: entity.id,
     topicId: entity.topicId,
+    state: entity.state,
     codeHash: entity.codeHash,
     creatorIdentity: entity.creatorIdentity,
     createdAt: entity.createdAt,

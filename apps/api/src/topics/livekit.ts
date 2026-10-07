@@ -30,6 +30,7 @@ export type LiveKitGateway = {
   ): Promise<string | undefined>;
   listParticipants(roomName: string): Promise<RoomParticipant[]>;
   removeParticipant(roomName: string, identity: string): Promise<void>;
+  updateRoomMetadata(roomName: string, metadata: string): Promise<void>;
   issueToken(input: {
     displayName: string;
     identity: string;
@@ -116,6 +117,10 @@ export function createLiveKitGateway(
         if (isMissingRoom(error)) return;
         throw error;
       }
+    },
+
+    async updateRoomMetadata(roomName, metadata) {
+      await rooms.updateRoomMetadata(roomName, metadata);
     },
 
     async issueToken({ displayName, identity, role, roomName, sideIndex }) {

@@ -1,8 +1,11 @@
+import type { LobbyState } from "./contract.js";
+
 export class DuplicateLobbyCodeError extends Error {}
 
 export type PrivateLobbyRecord = {
   id: string;
   topicId: string;
+  state: LobbyState;
   codeHash: string;
   creatorIdentity: string;
   createdAt: Date;
@@ -13,6 +16,11 @@ export interface PrivateLobbyStore {
   create(lobby: PrivateLobbyRecord): Promise<void>;
   findByCodeHash(codeHash: string): Promise<PrivateLobbyRecord | undefined>;
   findById(id: string): Promise<PrivateLobbyRecord | undefined>;
+  updateState(
+    id: string,
+    expectedState: LobbyState,
+    state: LobbyState,
+  ): Promise<boolean>;
   delete(id: string): Promise<void>;
   close(): Promise<void>;
 }
@@ -38,6 +46,12 @@ export function createMemoryPrivateLobbyStore(
     },
     async findById(id) {
       return lobbies.get(id);
+    },
+    async updateState(id, expectedState, state) {
+      const lobby = lobbies.get(id);
+      if (!lobby || lobby.state !== expectedState) return false;
+      lobbies.set(id, { ...lobby, state });
+      return true;
     },
     async delete(id) {
       lobbies.delete(id);

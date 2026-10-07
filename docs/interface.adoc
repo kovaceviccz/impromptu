@@ -92,11 +92,15 @@ participant media. Camera video is mirrored. Audience information is distinct
 from the debate media, and occupancy, voting, and chat have separate visual
 hierarchies.
 
+The home lobby shows one topic at a time. Arrows and touch swipes browse the
+topics.
+
 The participant list sits above the audience vote. Debaters appear by side in
 the position colors with the position text; spectators appear in a separate
 list. The current participant is marked `(you)`. A spectator can take an open
 side from its row, and a debater can give up their side with Spectate on their
-own row. Lists update from room presence as roles change.
+own row. Lists update from room presence as roles change. These controls disappear once
+the host starts the debate.
 
 Interactive controls follow the permissions issued by the backend. Spectators
 can use audience actions made available to them; debaters see read-only results

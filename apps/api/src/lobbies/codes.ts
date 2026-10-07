@@ -37,6 +37,7 @@ export async function createPrivateLobby(
     const lobby: PrivateLobbyRecord = {
       id: randomUUID(),
       topicId,
+      state: "WAITING",
       codeHash,
       creatorIdentity,
       createdAt: new Date(),

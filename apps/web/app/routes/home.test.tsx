@@ -231,6 +231,7 @@ describe("TopicList", () => {
   it("creates a private lobby and automatically joins the creator", async () => {
     createPrivateTopicMock.mockResolvedValue({
       lobbyId: "private-lobby-id",
+      state: "WAITING",
       topicId: "dream-cheating",
       topicTitle: "Can you cheat in a dream?",
       sides: ["Yes", "No"],
@@ -297,6 +298,7 @@ describe("TopicList", () => {
     lookupPrivateLobbyMock.mockResolvedValue({
       id: "dream-cheating",
       lobbyId: "private-lobby-id",
+      state: "WAITING",
       title: "Can you cheat in a dream?",
       sides: ["Yes: dreams are vivid", "No: dreams are involuntary"],
       sideAvailability: [false, true],
@@ -306,6 +308,7 @@ describe("TopicList", () => {
     });
     joinTopicByCodeMock.mockResolvedValue({
       lobbyId: "private-lobby-id",
+      state: "WAITING",
       topicId: "dream-cheating",
       topicTitle: "Can you cheat in a dream?",
       sides: ["Yes: dreams are vivid", "No: dreams are involuntary"],
@@ -368,6 +371,7 @@ describe("TopicList", () => {
     lookupPrivateLobbyMock.mockResolvedValue({
       id: "dream-cheating",
       lobbyId: "private-lobby-id",
+      state: "WAITING",
       title: "Can you cheat in a dream?",
       sides: ["Yes", "No"],
       sideAvailability: [false, false],
@@ -377,6 +381,7 @@ describe("TopicList", () => {
     });
     joinTopicByCodeMock.mockResolvedValue({
       lobbyId: "private-lobby-id",
+      state: "WAITING",
       topicId: "dream-cheating",
       topicTitle: "Can you cheat in a dream?",
       sides: ["Yes", "No"],
