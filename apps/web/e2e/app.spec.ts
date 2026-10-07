@@ -139,9 +139,7 @@ test("loads backend topics and enters a debate", async ({ page }) => {
   );
 
   await page.getByRole("button", { name: "Spectate debate" }).click();
-  await expect(
-    page.getByRole("textbox", { name: "Display name" }),
-  ).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
   await page.getByRole("button", { name: "Leave lobby" }).click();
   await expect(dreamTopic.getByText("Both sides open")).toBeVisible();
   expect(joinRequests).toBe(3);
@@ -192,7 +190,7 @@ test("spectators can chat while debaters have a read-only view", async ({
     .getByRole("button", { name: "Watch live" })
     .click();
   await expect(
-    spectator.getByRole("textbox", { name: "Display name" }),
+    spectator.getByRole("textbox", { name: "Message" }),
   ).toBeVisible();
   await expect(
     spectator
@@ -218,10 +216,6 @@ test("spectators can chat while debaters have a read-only view", async ({
   await expect(noVote).toHaveAttribute("aria-pressed", "false");
   await expect(spectator.getByText("0 spectator votes")).toBeVisible();
 
-  await spectator
-    .getByRole("textbox", { name: "Display name" })
-    .fill("Spectator Guest");
-  await spectator.getByRole("button", { name: "Continue" }).click();
   await spectator
     .getByRole("textbox", { name: "Message" })
     .fill("Hello from spectator");
@@ -327,12 +321,13 @@ test("manages an account across registration, login, editing, and deletion", asy
   await expect(page.getByRole("link", { name: username })).toBeVisible();
 
   await page.getByRole("link", { name: username }).click();
+  await page.getByLabel("Display name").fill(`${username}_display`);
   await page.getByLabel("Username").fill(`${username}_edited`);
   await page.getByLabel("Email").fill(`${username}_edited@example.com`);
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByText("Profile updated.")).toBeVisible();
   await expect(
-    page.getByRole("link", { name: `${username}_edited` }),
+    page.getByRole("link", { name: `${username}_display` }),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Delete account" }).click();

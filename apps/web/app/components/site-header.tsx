@@ -21,7 +21,7 @@ export function SiteHeader({ account }: { account: Account | null }) {
               to="/account"
             >
               <CircleUserIcon />
-              {account.username}
+              {account.displayName}
             </Link>
           ) : (
             <>

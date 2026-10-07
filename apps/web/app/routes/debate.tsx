@@ -252,12 +252,9 @@ function RoomChat({
   participantIdentity: string;
 }) {
   const { chatMessages, isSending, send } = useChat();
-  const room = useRoomContext();
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string>();
   const [emojiOpen, setEmojiOpen] = useState(false);
-  const [hasDisplayName, setHasDisplayName] = useState(false);
-  const [isNaming, setIsNaming] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -267,23 +264,11 @@ function RoomChat({
 
     setError(undefined);
     try {
-      if (!hasDisplayName) {
-        setIsNaming(true);
-        await room.localParticipant.setName(value);
-        setHasDisplayName(true);
-      } else {
-        await send(value);
-      }
+      await send(value);
       setDraft("");
       requestAnimationFrame(() => input.current?.focus());
     } catch {
-      setError(
-        hasDisplayName
-          ? "Message could not be sent."
-          : "Display name could not be saved.",
-      );
-    } finally {
-      setIsNaming(false);
+      setError("Message could not be sent.");
     }
   }
 
@@ -350,59 +335,55 @@ function RoomChat({
             </Alert>
           ) : null}
           <label className="sr-only" htmlFor="room-chat-input">
-            {hasDisplayName ? "Message" : "Display name"}
+            Message
           </label>
           <div className="flex items-center gap-2">
-            {hasDisplayName ? (
-              <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
-                <PopoverTrigger
-                  render={
-                    <Button
-                      aria-label="Add emoji"
-                      size="icon"
-                      type="button"
-                      variant="outline"
-                    />
-                  }
+            <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
+              <PopoverTrigger
+                render={
+                  <Button
+                    aria-label="Add emoji"
+                    size="icon"
+                    type="button"
+                    variant="outline"
+                  />
+                }
+              >
+                <SmileIcon />
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-fit p-0" side="top">
+                <EmojiPicker
+                  className="h-80"
+                  onEmojiSelect={({ emoji }) => {
+                    setDraft((current) => current + emoji);
+                    setEmojiOpen(false);
+                    requestAnimationFrame(() => input.current?.focus());
+                  }}
                 >
-                  <SmileIcon />
-                </PopoverTrigger>
-                <PopoverContent align="start" className="w-fit p-0" side="top">
-                  <EmojiPicker
-                    className="h-80"
-                    onEmojiSelect={({ emoji }) => {
-                      setDraft((current) => current + emoji);
-                      setEmojiOpen(false);
-                      requestAnimationFrame(() => input.current?.focus());
-                    }}
-                  >
-                    <EmojiPickerSearch />
-                    <EmojiPickerContent />
-                    <EmojiPickerFooter />
-                  </EmojiPicker>
-                </PopoverContent>
-              </Popover>
-            ) : null}
+                  <EmojiPickerSearch />
+                  <EmojiPickerContent />
+                  <EmojiPickerFooter />
+                </EmojiPicker>
+              </PopoverContent>
+            </Popover>
             <Input
-              autoComplete={hasDisplayName ? "off" : "nickname"}
+              autoComplete="off"
               id="room-chat-input"
-              maxLength={hasDisplayName ? 500 : 40}
-              name={hasDisplayName ? "message" : "displayName"}
-              placeholder={
-                hasDisplayName ? "Message the room" : "Choose a display name"
-              }
+              maxLength={500}
+              name="message"
+              placeholder="Message the room"
               ref={input}
               required
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
             />
             <Button
-              aria-label={hasDisplayName ? "Send message" : undefined}
-              disabled={isSending || isNaming || draft.trim().length === 0}
-              size={hasDisplayName ? "icon" : "default"}
+              aria-label="Send message"
+              disabled={isSending || draft.trim().length === 0}
+              size="icon"
               type="submit"
             >
-              {hasDisplayName ? <SendIcon /> : "Continue"}
+              <SendIcon />
             </Button>
           </div>
         </form>
