@@ -1,3 +1,5 @@
+export class DuplicateLobbyCodeError extends Error {}
+
 export type PrivateLobbyRecord = {
   id: string;
   topicId: string;
@@ -27,7 +29,7 @@ export function createMemoryPrivateLobbyStore(
           (existing) => existing.codeHash === lobby.codeHash,
         )
       ) {
-        throw new Error("Private lobby code already exists");
+        throw new DuplicateLobbyCodeError("Private lobby code already exists");
       }
       lobbies.set(lobby.id, lobby);
     },

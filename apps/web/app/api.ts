@@ -177,3 +177,19 @@ export async function deleteAccount() {
   });
   return readResponse(response, apiContract.deleteAccount.response);
 }
+
+export async function getRoomParticipants(join: {
+  topicId: string;
+  lobbyId: string;
+  token: string;
+}) {
+  const path = apiContract.roomParticipants.path.replace(
+    ":topicId",
+    encodeURIComponent(join.topicId),
+  );
+  const response = await postJson(path, {
+    lobbyId: join.lobbyId,
+    token: join.token,
+  });
+  return readResponse(response, apiContract.roomParticipants.response);
+}

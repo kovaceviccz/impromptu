@@ -10,13 +10,20 @@ import {
   RoomAudioRenderer,
   VideoTrack,
   useChat,
+  useConnectionState,
   useParticipants,
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
 import { CopyIcon, LogOutIcon, SendIcon, SmileIcon } from "lucide-react";
-import { Track, VideoPresets } from "livekit-client";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { ConnectionState, Track, VideoPresets } from "livekit-client";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   type ClientActionFunctionArgs,
   Form,
@@ -25,6 +32,7 @@ import {
   useActionData,
   useLocation,
   useNavigate,
+  useParams,
 } from "react-router";
 
 import { Alert, AlertDescription } from "~/components/ui/alert";
@@ -65,7 +73,8 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 
-import { joinTopic, leaveTopic } from "../api";
+import { ApiError, getRoomParticipants, joinTopic, leaveTopic } from "../api";
+import { forgetRoom, recalledRoom, rememberRoom } from "../room-session";
 
 const VOTE_ATTRIBUTE = "debate.vote";
 const SIDE_ATTRIBUTE = "debate.side";
@@ -106,6 +115,26 @@ export async function clientAction({
 
 type RoomParticipant = ReturnType<typeof useParticipants>[number];
 type ChangeRole = (input: JoinInput) => Promise<string | undefined>;
+
+function useRoomParticipants(join: JoinResult) {
+  const participants = useParticipants();
+  return [
+    ...new Map(
+      participants.map((participant) => [
+        participant.isLocal ? join.participantIdentity : participant.identity,
+        participant,
+      ]),
+    ).values(),
+  ];
+}
+
+function isHost(participant: RoomParticipant, join: JoinResult) {
+  return (
+    participant.identity === join.hostIdentity ||
+    (isViewer(participant, join) &&
+      join.participantIdentity === join.hostIdentity)
+  );
+}
 
 // LiveKit fills in the local participant's identity, name, and grants after
 // the first render without re-rendering, so the viewer's own details come from
@@ -162,7 +191,7 @@ function assignDebaters(participants: RoomParticipant[], viewer: JoinResult) {
 
 function DebateVideos({ join }: { join: JoinResult }) {
   const { sides } = join;
-  const participants = useParticipants();
+  const participants = useRoomParticipants(join);
   const cameraTracks = useTracks([Track.Source.Camera]);
   const debatersBySide = assignDebaters(participants, join);
 
@@ -384,6 +413,44 @@ function RoomChat({
   );
 }
 
+function ParticipantStatus({ join }: { join: JoinResult }) {
+  const { topicId, lobbyId, token } = join;
+  const connection = useConnectionState();
+  const [error, setError] = useState<string>();
+  const requestId = useRef(0);
+  const refresh = useCallback(() => {
+    const currentRequest = ++requestId.current;
+    void getRoomParticipants({ topicId, lobbyId, token }).then(
+      () => {
+        if (currentRequest === requestId.current) setError(undefined);
+      },
+      (cause: unknown) => {
+        if (currentRequest === requestId.current)
+          setError(
+            cause instanceof ApiError
+              ? cause.message
+              : "Participants could not be loaded. Try again.",
+          );
+      },
+    );
+  }, [topicId, lobbyId, token]);
+  useEffect(() => {
+    if (connection === ConnectionState.Connected) refresh();
+    return () => {
+      requestId.current += 1;
+    };
+  }, [connection, refresh]);
+  if (!error) return null;
+  return (
+    <Alert className="col-span-full" variant="destructive">
+      <AlertDescription>{error}</AlertDescription>
+      <Button type="button" variant="outline" size="sm" onClick={refresh}>
+        Retry participant list
+      </Button>
+    </Alert>
+  );
+}
+
 function ParticipantRoster({
   join,
   onChangeRole,
@@ -391,10 +458,14 @@ function ParticipantRoster({
   join: JoinResult;
   onChangeRole: ChangeRole;
 }) {
-  const participants = useParticipants();
+  const participants = useRoomParticipants(join);
   const debatersBySide = assignDebaters(participants, join);
   const spectators = participants.filter(
     (participant) => !publishes(participant, join),
+  );
+  spectators.sort(
+    (first, second) =>
+      Number(isHost(second, join)) - Number(isHost(first, join)),
   );
   const viewerIsDebater = join.role === "debater";
   const viewer = participants.find((participant) =>
@@ -418,8 +489,12 @@ function ParticipantRoster({
     try {
       const message = await onChangeRole(input);
       if (message) setError(message);
-    } catch {
-      setError("Your role could not be changed. Try again.");
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError
+          ? cause.message
+          : "Your role could not be changed. Try again.",
+      );
     } finally {
       setChanging(false);
       setClaimedSide(undefined);
@@ -470,6 +545,9 @@ function ParticipantRoster({
                     </p>
                     <p className="truncate text-xs opacity-80">{side}</p>
                   </div>
+                  {participant && isHost(participant, join) ? (
+                    <Badge variant="secondary">Host</Badge>
+                  ) : null}
                   {!participant && !viewerIsDebater ? (
                     <Button
                       disabled={changing}
@@ -510,8 +588,14 @@ function ParticipantRoster({
           ) : (
             <ul className="mt-2 grid max-h-24 gap-1 overflow-y-auto text-sm">
               {spectators.map((participant) => (
-                <li className="truncate" key={participant.identity}>
-                  {nameOf(participant)}
+                <li
+                  className="flex min-w-0 items-center gap-2"
+                  key={participant.identity}
+                >
+                  <span className="truncate">{nameOf(participant)}</span>
+                  {isHost(participant, join) ? (
+                    <Badge variant="secondary">Host</Badge>
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -601,7 +685,7 @@ function AudiencePanel({
   onTabChange: (tab: AudienceTab) => void;
 }) {
   const { participantIdentity, sides } = join;
-  const participants = useParticipants();
+  const participants = useRoomParticipants(join);
   const room = useRoomContext();
   const [isVoting, setIsVoting] = useState(false);
   const [error, setError] = useState<string>();
@@ -815,6 +899,7 @@ function LeaveButton({
     setSubmitting(true);
     try {
       await leaveTopic(join.topicId, join.lobbyId, join.participantIdentity);
+      forgetRoom(join.topicId);
       onLeaving(true);
       await room.disconnect();
       await navigate("/");
@@ -855,6 +940,7 @@ function MediaPermissionGuard({
   useEffect(() => {
     if (!failed || handled.current) return;
     handled.current = true;
+    forgetRoom(join.topicId);
 
     void (async () => {
       await room.disconnect();
@@ -882,6 +968,7 @@ function MediaPermissionGuard({
 
 export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
   const [join, setJoin] = useState(initialJoin);
+  useEffect(() => rememberRoom(join), [join]);
   const [roomError, setRoomError] = useState<string>();
   const [leaving, setLeaving] = useState(false);
   const [mediaPermissionFailed, setMediaPermissionFailed] = useState(false);
@@ -891,12 +978,13 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
   const isDebater = join.role === "debater";
 
   // A role change is a fresh join in the same lobby: the backend re-checks
-  // availability and issues a token with the new grants, then the previous
-  // identity leaves. The lobby code stays with the person who created it.
+  // availability and verifies the old token to preserve the participant identity.
+  // Reconnecting with new grants keeps the host recognizable to every viewer.
   async function changeRole(input: JoinInput) {
     const result = await joinTopic(join.topicId, {
       ...input,
       lobbyId: join.lobbyId,
+      previousToken: join.token,
     });
     if ("code" in result) return result.message;
 
@@ -907,11 +995,12 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
       isCreator: previous.isCreator,
       joinCode: previous.joinCode,
     });
-    void leaveTopic(
-      previous.topicId,
-      previous.lobbyId,
-      previous.participantIdentity,
-    ).catch(() => {});
+    if (previous.participantIdentity !== result.participantIdentity)
+      void leaveTopic(
+        previous.topicId,
+        previous.lobbyId,
+        previous.participantIdentity,
+      ).catch(() => {});
     return undefined;
   }
 
@@ -928,7 +1017,7 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
   return (
     <main className="grid h-svh grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-muted/30">
       <LiveKitRoom
-        key={join.participantIdentity}
+        key={join.token}
         audio={isDebater}
         connect={!leaving}
         serverUrl={join.livekitUrl}
@@ -979,6 +1068,7 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
             onLeaving={setLeaving}
             onError={setRoomError}
           />
+          <ParticipantStatus join={join} />
           {roomError ? (
             <Alert className="col-span-full" variant="destructive">
               <AlertDescription>{roomError}</AlertDescription>
@@ -1004,6 +1094,8 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
 
 export default function Debate() {
   const actionResult = useActionData<typeof clientAction>();
+  const { topicId } = useParams();
+  const saved = topicId ? recalledRoom(topicId) : undefined;
   const location = useLocation();
   const handoff =
     typeof location.state === "object" &&
@@ -1011,7 +1103,15 @@ export default function Debate() {
     "joinResult" in location.state
       ? joinResultSchema.safeParse(location.state.joinResult)
       : undefined;
-  const result = handoff?.success ? handoff.data : actionResult;
+  const incoming = handoff?.success ? handoff.data : actionResult;
+  const result =
+    saved &&
+    (!incoming ||
+      (!("code" in incoming) &&
+        incoming.participantIdentity === saved.participantIdentity &&
+        incoming.lobbyId === saved.lobbyId))
+      ? saved
+      : incoming;
   if (!result) return <Navigate to="/" replace />;
 
   if ("code" in result) {

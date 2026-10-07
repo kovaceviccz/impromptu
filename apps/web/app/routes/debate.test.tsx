@@ -15,7 +15,12 @@ import {
   within,
 } from "@testing-library/react";
 import type { CSSProperties, ReactNode } from "react";
-import { MemoryRouter, useLocation } from "react-router";
+import {
+  MemoryRouter,
+  createMemoryRouter,
+  RouterProvider,
+  useLocation,
+} from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 afterEach(() => {
@@ -51,6 +56,7 @@ const {
   joinRoom,
   leaveRoom,
   roomState,
+  getParticipants,
   sendChat,
   setAttributes,
   setName,
@@ -63,7 +69,8 @@ const {
         input: unknown,
       ) => Promise<JoinResult | SideUnavailableError>
     >(),
-  roomState: { participants: [] as MockParticipant[] },
+  roomState: { participants: [] as MockParticipant[], connection: "connected" },
+  getParticipants: vi.fn<typeof import("../api").getRoomParticipants>(),
   leaveRoom:
     vi.fn<
       (
@@ -79,11 +86,16 @@ const {
 
 beforeEach(() => {
   roomState.participants = defaultParticipants;
+  roomState.connection = "connected";
+  getParticipants.mockResolvedValue({ hostIdentity: null, participants: [] });
+  sessionStorage.clear();
 });
 
-vi.mock("../api", () => ({
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
   joinTopic: joinRoom,
   leaveTopic: leaveRoom,
+  getRoomParticipants: getParticipants,
 }));
 
 vi.mock("@livekit/components-react", () => ({
@@ -138,6 +150,7 @@ vi.mock("@livekit/components-react", () => ({
     send: sendChat,
   }),
   useParticipants: () => roomState.participants,
+  useConnectionState: () => roomState.connection,
   useRoomContext: () => ({
     disconnect: disconnectRoom,
     localParticipant: {
@@ -153,7 +166,8 @@ vi.mock("@livekit/components-react", () => ({
   ],
 }));
 
-import { DebateExperience } from "./debate";
+import Debate, { DebateExperience } from "./debate";
+import { recalledRoom, rememberRoom } from "../room-session";
 
 function LocationProbe() {
   const location = useLocation();
@@ -175,6 +189,7 @@ describe("DebateExperience", () => {
       role: "spectator",
       sideIndex: null,
       isCreator: false,
+      hostIdentity: null,
       livekitUrl: "ws://localhost:7880",
       token: "spectator-token",
     };
@@ -282,6 +297,7 @@ describe("DebateExperience", () => {
       role: "debater",
       sideIndex: 0,
       isCreator: true,
+      hostIdentity: "debater-id",
       joinCode: "ABCD23",
       livekitUrl: "ws://localhost:7880",
       token: "debater-token",
@@ -343,6 +359,7 @@ describe("DebateExperience", () => {
       role: "debater",
       sideIndex: 0,
       isCreator: true,
+      hostIdentity: "debater-id",
       joinCode: "ABCD23",
       livekitUrl: "ws://localhost:7880",
       token: "debater-token",
@@ -378,6 +395,7 @@ describe("DebateExperience", () => {
       role: "spectator",
       sideIndex: null,
       isCreator: false,
+      hostIdentity: null,
       livekitUrl: "ws://localhost:7880",
       token: "spectator-token",
     };
@@ -392,6 +410,7 @@ describe("DebateExperience", () => {
     fireEvent.click(screen.getByRole("button", { name: "Leave lobby" }));
 
     await waitFor(() => expect(screen.getByText("/")).toBeVisible());
+    expect(recalledRoom("dream-cheating")).toBeUndefined();
     expect(leaveRoom).toHaveBeenCalledWith(
       join.topicId,
       join.lobbyId,
@@ -412,6 +431,7 @@ describe("DebateExperience", () => {
       role: "spectator",
       sideIndex: null,
       isCreator: false,
+      hostIdentity: null,
       livekitUrl: "ws://localhost:7880",
       token: "spectator-token",
     };
@@ -448,6 +468,7 @@ describe("DebateExperience", () => {
       role: "debater",
       sideIndex: 0,
       isCreator: false,
+      hostIdentity: null,
       livekitUrl: "ws://localhost:7880",
       token: "debater-token",
     };
@@ -486,6 +507,7 @@ describe("Participant roster", () => {
     role: "spectator",
     sideIndex: null,
     isCreator: false,
+    hostIdentity: null,
     livekitUrl: "ws://localhost:7880",
     token: "spectator-token",
   };
@@ -512,6 +534,117 @@ describe("Participant roster", () => {
       }),
     };
   }
+
+  it("restores the creator's code and current host role after a page reload", () => {
+    const restored: JoinResult = {
+      ...debaterJoin,
+      participantIdentity: "1f0c6b57-bfed-4768-9b30-419d326f90fa",
+      isCreator: true,
+      hostIdentity: "1f0c6b57-bfed-4768-9b30-419d326f90fa",
+      joinCode: "ABCD2345",
+    };
+    roomState.participants = [
+      {
+        ...defaultParticipants[0]!,
+        identity: restored.participantIdentity,
+        isLocal: true,
+      },
+    ];
+    rememberRoom(restored);
+    const router = createMemoryRouter(
+      [{ path: "/debates/:topicId", element: <Debate /> }],
+      { initialEntries: ["/debates/dream-cheating"] },
+    );
+    render(<RouterProvider router={router} />);
+    expect(
+      screen.getByRole("button", { name: "Copy lobby code ABCD2345" }),
+    ).toBeVisible();
+    expect(within(roster().debaters).getByText("Host")).toBeVisible();
+    expect(screen.getByTestId("livekit-room")).toHaveAttribute(
+      "data-token",
+      "debater-token",
+    );
+  });
+
+  it("shows a recoverable participant retrieval error without disabling the room", async () => {
+    getParticipants.mockRejectedValueOnce(new Error("Unavailable"));
+    render(
+      <MemoryRouter>
+        <DebateExperience join={spectatorJoin} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Participants could not be loaded",
+    );
+    expect(screen.getByRole("button", { name: "Leave lobby" })).toBeEnabled();
+    expect(screen.getByRole("textbox", { name: "Message" })).toBeEnabled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Retry participant list" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+
+  it("deduplicates joins and rebuilds membership after leaves and reconnects", async () => {
+    roomState.participants = [...defaultParticipants, defaultParticipants[1]!];
+    const view = render(
+      <MemoryRouter>
+        <DebateExperience join={spectatorJoin} />
+      </MemoryRouter>,
+    );
+    expect(
+      within(roster().debaters).getAllByRole("listitem")[0],
+    ).toHaveTextContent("Debater guest");
+    expect(
+      screen.getByRole("heading", { name: "Debaters 1 of 2" }),
+    ).toBeVisible();
+    await waitFor(() => expect(getParticipants).toHaveBeenCalledTimes(1));
+    roomState.connection = "reconnecting";
+    roomState.participants = [defaultParticipants[0]!];
+    view.rerender(
+      <MemoryRouter>
+        <DebateExperience join={spectatorJoin} />
+      </MemoryRouter>,
+    );
+    expect(within(roster().debaters).queryByText("Debater guest")).toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Debaters 0 of 2" }),
+    ).toBeVisible();
+    roomState.connection = "connected";
+    roomState.participants = [...defaultParticipants];
+    view.rerender(
+      <MemoryRouter>
+        <DebateExperience join={spectatorJoin} />
+      </MemoryRouter>,
+    );
+    expect(within(roster().debaters).getByText("Debater guest")).toBeVisible();
+    await waitFor(() => expect(getParticipants).toHaveBeenCalledTimes(2));
+  });
+
+  it("displays a sole participant and marks the host before LiveKit fills their identity", () => {
+    roomState.participants = [
+      {
+        attributes: {},
+        identity: "",
+        isLocal: true,
+        name: "",
+        permissions: { canPublish: false },
+      },
+    ];
+    render(
+      <MemoryRouter>
+        <DebateExperience
+          join={{
+            ...spectatorJoin,
+            hostIdentity: spectatorJoin.participantIdentity,
+            isCreator: true,
+          }}
+        />
+      </MemoryRouter>,
+    );
+    const rows = within(roster().spectators).getAllByRole("listitem");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveTextContent("Spectator (you)Host");
+  });
 
   it("groups debaters by position and spectators separately", () => {
     roomState.participants = [
@@ -546,6 +679,43 @@ describe("Participant roster", () => {
     ).toEqual(["Test spectator (you)", "Spectator"]);
     expect(within(spectators).queryByText("Debater guest")).toBeNull();
     expect(screen.getByRole("heading", { name: "Spectators 2" })).toBeVisible();
+  });
+
+  it("labels the host in either group and puts a spectator host first", () => {
+    roomState.participants = [
+      ...defaultParticipants,
+      {
+        attributes: {},
+        identity: "host-id",
+        name: "Host guest",
+        permissions: { canPublish: false },
+      },
+    ];
+    const view = render(
+      <MemoryRouter>
+        <DebateExperience
+          join={{ ...spectatorJoin, hostIdentity: "host-id" }}
+        />
+      </MemoryRouter>,
+    );
+    const rows = within(roster().spectators).getAllByRole("listitem");
+    expect(rows[0]).toHaveTextContent("Host guestHost");
+    expect(within(rows[0]!).getByText("Host")).toBeVisible();
+    view.unmount();
+    render(
+      <MemoryRouter>
+        <DebateExperience
+          join={{
+            ...spectatorJoin,
+            hostIdentity:
+              defaultParticipants.find(
+                (participant) => participant.permissions?.canPublish,
+              )?.identity ?? null,
+          }}
+        />
+      </MemoryRouter>,
+    );
+    expect(within(roster().debaters).getByText("Host")).toBeVisible();
   });
 
   it("moves another participant between groups when their role changes", () => {
@@ -656,6 +826,7 @@ describe("Participant roster", () => {
       displayName: "Test spectator",
       intent: "debater",
       lobbyId: "dream-cheating",
+      previousToken: "spectator-token",
       sideIndex: 1,
     });
     expect(leaveRoom).toHaveBeenCalledWith(
@@ -738,6 +909,7 @@ describe("Participant roster", () => {
     expect(joinRoom).toHaveBeenCalledWith("dream-cheating", {
       intent: "spectator",
       lobbyId: "dream-cheating",
+      previousToken: "debater-token",
     });
     expect(leaveRoom).toHaveBeenCalledWith(
       "dream-cheating",
@@ -748,6 +920,47 @@ describe("Participant roster", () => {
       "data-video",
       "false",
     );
+  });
+
+  it("keeps the host badge and avoids removing the preserved identity after switching", async () => {
+    const privateJoin = {
+      ...spectatorJoin,
+      hostIdentity: spectatorJoin.participantIdentity,
+      isCreator: true,
+      joinCode: "ABCD2345",
+    };
+    joinRoom.mockResolvedValue({
+      ...privateJoin,
+      role: "debater",
+      sideIndex: 1,
+      token: "changed-token",
+    });
+    render(
+      <MemoryRouter>
+        <DebateExperience join={privateJoin} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(
+      within(roster().debaters).getByRole("button", {
+        name: /Debate.*No: dreams are involuntary/,
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Debate",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("livekit-room")).toHaveAttribute(
+        "data-token",
+        "changed-token",
+      ),
+    );
+    expect(within(roster().debaters).getByText("Host")).toBeVisible();
+    expect(leaveRoom).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Copy lobby code ABCD2345" }),
+    ).toBeVisible();
   });
 
   it("changes role inside a private lobby and keeps the creator's code", async () => {

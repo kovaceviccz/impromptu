@@ -39,6 +39,7 @@ function makeJoinResult(input: {
   role: DebateRole;
   sideIndex: DebateSide | null;
   isCreator: boolean;
+  hostIdentity: string | null;
   joinCode?: string;
   livekitUrl: string;
   token: string;
@@ -183,6 +184,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         role,
         sideIndex: allocationResult.sideIndex,
         isCreator: participantIdentity === lobby.creatorIdentity,
+        hostIdentity: lobby.creatorIdentity,
         livekitUrl: options.livekitPublicUrl,
         token: allocationResult.token,
       });
@@ -252,6 +254,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         role,
         sideIndex: allocationResult.sideIndex,
         isCreator: true,
+        hostIdentity: lobby.creatorIdentity,
         joinCode: lobby.code,
         livekitUrl: options.livekitPublicUrl,
         token: allocationResult.token,
@@ -267,6 +270,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         body: topicContracts.join.body,
         response: {
           200: topicContracts.join.response,
+          401: topicContracts.join.errors[401],
           404: topicContracts.join.errors[404],
           409: topicContracts.join.errors[409],
         },
@@ -279,6 +283,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       }
 
       let lobbyId: string = topic.id;
+      let hostIdentity: string | null = null;
       if (
         request.body.lobbyId !== undefined &&
         request.body.lobbyId !== topic.id
@@ -293,9 +298,23 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
           return reply.code(404).send({ message: "Lobby not found" });
         }
         lobbyId = privateLobby.id;
+        hostIdentity = privateLobby.creatorIdentity;
       }
 
-      const participantIdentity = randomUUID();
+      let participantIdentity: string = randomUUID();
+      if (request.body.previousToken) {
+        const verifiedIdentity = await options.livekit.verifyParticipantToken?.(
+          request.body.previousToken,
+          `debate-${lobbyId}`,
+        );
+        if (!verifiedIdentity) {
+          return reply.code(401).send({
+            message:
+              "Your room session expired. Rejoin the lobby to change roles.",
+          });
+        }
+        participantIdentity = verifiedIdentity;
+      }
       const displayName =
         request.body.intent === "debater"
           ? request.body.displayName
@@ -306,6 +325,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         request.body.intent,
         displayName,
         request.body.intent === "debater" ? request.body.sideIndex : null,
+        request.body.previousToken ? participantIdentity : undefined,
       );
       if ("unavailable" in allocationResult) {
         if (request.body.intent === "spectator") {
@@ -328,10 +348,72 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         displayName,
         role: request.body.intent,
         sideIndex: allocationResult.sideIndex,
-        isCreator: false,
+        isCreator: participantIdentity === hostIdentity,
+        hostIdentity,
         livekitUrl: options.livekitPublicUrl,
         token: allocationResult.token,
       };
+    },
+  );
+
+  app.post(
+    topicContracts.roomParticipants.path,
+    {
+      schema: {
+        params: topicContracts.roomParticipants.params,
+        body: topicContracts.roomParticipants.body,
+        response: {
+          200: topicContracts.roomParticipants.response,
+          401: topicContracts.roomParticipants.errors[401],
+          404: topicContracts.roomParticipants.errors[404],
+          503: topicContracts.roomParticipants.errors[503],
+        },
+      },
+    },
+    async (request, reply) => {
+      const topic = findTopic(request.params.topicId);
+      if (!topic) return reply.code(404).send({ message: "Topic not found" });
+      const { lobbyId, token } = request.body;
+      const identity = await options.livekit.verifyParticipantToken?.(
+        token,
+        `debate-${lobbyId}`,
+      );
+      if (!identity)
+        return reply
+          .code(401)
+          .send({ message: "Your room session expired. Rejoin the lobby." });
+      let hostIdentity: string | null = null;
+      if (lobbyId !== topic.id) {
+        const lobby = await options.privateLobbies.findById(lobbyId);
+        if (
+          lobby?.topicId !== topic.id ||
+          (lobby.expiresAt && lobby.expiresAt <= new Date())
+        ) {
+          return reply.code(404).send({ message: "Private lobby not found" });
+        }
+        hostIdentity = lobby.creatorIdentity;
+      }
+      try {
+        const participants = await options.livekit.listParticipants(
+          `debate-${lobbyId}`,
+        );
+        return {
+          hostIdentity,
+          participants: [
+            ...new Map(
+              participants.map((participant) => [
+                participant.identity,
+                participant,
+              ]),
+            ).values(),
+          ],
+        };
+      } catch {
+        return reply.code(503).send({
+          message:
+            "Participants could not be loaded. Your room connection is still available. Try again.",
+        });
+      }
     },
   );
 

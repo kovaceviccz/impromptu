@@ -128,6 +128,12 @@ function PrivateLobby({
   }
 
   async function findLobby() {
+    const code = joinCode.trim().toUpperCase();
+    if (!/^[A-Z0-9]{6,8}$/.test(code)) {
+      setPreview(undefined);
+      setError("Enter a 6–8 character lobby code using letters and numbers.");
+      return;
+    }
     setBusy(true);
     setError(undefined);
     try {
@@ -206,7 +212,7 @@ function PrivateLobby({
           if (!nextOpen) setError(undefined);
         }}
       >
-        <DialogContent className="gap-5 sm:max-w-lg">
+        <DialogContent className="max-h-[calc(100svh-2rem)] gap-5 overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="font-editorial text-xl">
               Private lobby
@@ -295,7 +301,7 @@ function PrivateLobby({
                 />
               </label>
               <Button
-                disabled={busy || joinCode.trim().length < 6}
+                disabled={busy || !joinCode.trim()}
                 type="button"
                 variant="outline"
                 onClick={() => void findLobby()}
