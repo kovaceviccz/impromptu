@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+export const lobbyStateSchema = z.enum([
+  "WAITING",
+  "DEBATE_IN_PROGRESS",
+  "VOTING",
+  "ENDED",
+]);
 export const lobbyStatusSchema = z.enum(["waiting", "active"]);
 export const lobbySideSchema = z.union([z.literal(0), z.literal(1)]);
 
@@ -73,6 +79,7 @@ export const lobbyContracts = {
 } as const;
 
 export type PublicLobbySummary = z.output<typeof publicLobbySummarySchema>;
+export type LobbyState = z.output<typeof lobbyStateSchema>;
 export type LobbyParticipant = z.output<typeof lobbyParticipantSchema>;
 export type PositionChangeInput = z.output<typeof positionChangeBodySchema>;
 export type PositionChangeRequest = z.output<

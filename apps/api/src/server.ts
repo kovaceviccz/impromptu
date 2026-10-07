@@ -3,6 +3,7 @@ import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { openDatabase } from "./database.js";
 import { createPostgresPrivateLobbyStore } from "./lobbies/postgres-store.js";
+import { createPostgresPublicLobbyStateStore } from "./lobbies/public-state-postgres-store.js";
 import { createLiveKitGateway } from "./topics/livekit.js";
 
 const config = loadConfig();
@@ -23,6 +24,7 @@ if (config.DEV_DATABASE_RESET === "true") {
 const app = await buildApp({
   accounts: createPostgresAccountStore(orm),
   privateLobbies: createPostgresPrivateLobbyStore(orm),
+  publicLobbyState: createPostgresPublicLobbyStateStore(orm),
   livekit: createLiveKitGateway({
     apiKey: config.LIVEKIT_API_KEY,
     apiSecret: config.LIVEKIT_API_SECRET,

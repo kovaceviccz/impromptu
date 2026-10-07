@@ -18,6 +18,10 @@ import {
 } from "./lobbies/data.js";
 import { lobbyRoutes } from "./lobbies/routes.js";
 import type { PrivateLobbyStore } from "./lobbies/store.js";
+import {
+  createMemoryPublicLobbyStateStore,
+  type PublicLobbyStateStore,
+} from "./lobbies/public-state.js";
 import type { LiveKitGateway } from "./topics/livekit.js";
 import { topicRoutes } from "./topics/routes.js";
 
@@ -26,6 +30,7 @@ type BuildAppOptions = {
   publicLobbies?: PublicLobbyRepository;
   livekit: LiveKitGateway;
   privateLobbies: PrivateLobbyStore;
+  publicLobbyState?: PublicLobbyStateStore;
   livekitPublicUrl: string;
   tokenTtlSeconds: number;
   logger?: boolean;
@@ -37,6 +42,8 @@ export async function buildApp(options: BuildAppOptions) {
   const app = Fastify({
     logger: options.logger ?? false,
   }).withTypeProvider<ZodTypeProvider>();
+  const publicLobbyState =
+    options.publicLobbyState ?? createMemoryPublicLobbyStateStore();
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -61,10 +68,12 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(topicRoutes, {
     livekit: options.livekit,
     privateLobbies: options.privateLobbies,
+    publicLobbyState,
     livekitPublicUrl: options.livekitPublicUrl,
     tokenTtlSeconds: options.tokenTtlSeconds,
   });
   app.addHook("onClose", async () => options.privateLobbies.close());
+  app.addHook("onClose", async () => publicLobbyState.close());
 
   if (options.serveWeb) {
     const root = fileURLToPath(

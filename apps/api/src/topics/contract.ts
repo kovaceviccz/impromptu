@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { healthSchema } from "../health/contract.js";
+import { lobbyStateSchema } from "../lobbies/contract.js";
 
 export const debateSideSchema = z.union([z.literal(0), z.literal(1)]);
 export const debateRoleSchema = z.enum(["debater", "spectator"]);
@@ -24,6 +25,7 @@ export const topicStatusSchema = z.strictObject({
 
 export const privateLobbyPreviewSchema = topicStatusSchema.extend({
   lobbyId: z.string().min(1),
+  state: lobbyStateSchema,
 });
 
 export const privateTopicStatusSchema = topicStatusSchema.extend({
@@ -74,6 +76,8 @@ export const leaveBodySchema = z.strictObject({
   participantIdentity: z.string().uuid(),
 });
 
+export const closeLobbyBodySchema = leaveBodySchema;
+
 export const privateLobbyLookupBodySchema = z.strictObject({
   code: z
     .string()
@@ -109,6 +113,7 @@ export const joinCodeBodySchema = z.discriminatedUnion("intent", [
 
 export const joinResultSchema = z.strictObject({
   lobbyId: z.string().min(1),
+  state: lobbyStateSchema,
   topicId: z.string().min(1),
   topicTitle: z.string().min(1),
   sides: z.tuple([z.string().min(1), z.string().min(1)]),
@@ -139,8 +144,18 @@ export const roomParticipantsRequestSchema = z.strictObject({
   token: z.string().min(1),
 });
 
+export const startDebateBodySchema = z.strictObject({
+  lobbyId: z.string().min(1),
+  token: z.string().min(1),
+});
+
+export const startDebateResultSchema = z.strictObject({
+  state: lobbyStateSchema,
+});
+
 export const roomParticipantsResultSchema = z.strictObject({
   hostIdentity: z.string().nullable(),
+  state: lobbyStateSchema,
   participants: z.array(
     z.strictObject({
       identity: z.string().min(1),
@@ -152,6 +167,20 @@ export const roomParticipantsResultSchema = z.strictObject({
 });
 
 export const topicContracts = {
+  startDebate: {
+    method: "POST",
+    path: "/api/topics/:topicId/start",
+    params: topicParamsSchema,
+    body: startDebateBodySchema,
+    response: startDebateResultSchema,
+    errors: {
+      401: errorSchema,
+      403: errorSchema,
+      404: errorSchema,
+      409: errorSchema,
+      503: errorSchema,
+    },
+  },
   roomParticipants: {
     method: "POST",
     path: "/api/topics/:topicId/participants",
@@ -199,6 +228,14 @@ export const topicContracts = {
       409: sideUnavailableErrorSchema,
     },
   },
+  closeLobby: {
+    method: "POST",
+    path: "/api/topics/:topicId/close",
+    params: topicParamsSchema,
+    body: closeLobbyBodySchema,
+    response: healthSchema,
+    errors: { 403: errorSchema, 404: errorSchema },
+  },
   leave: {
     method: "POST",
     path: "/api/topics/:topicId/leave",
@@ -212,6 +249,8 @@ export const topicContracts = {
 export type TopicStatus = z.output<typeof topicStatusSchema>;
 export type LobbyParticipant = z.output<typeof lobbyParticipantSchema>;
 export type JoinInput = z.output<typeof joinBodySchema>;
+export type StartDebateInput = z.output<typeof startDebateBodySchema>;
+export type StartDebateResult = z.output<typeof startDebateResultSchema>;
 export type PrivateLobbyCreateInput = z.output<
   typeof privateLobbyCreateBodySchema
 >;

@@ -7,6 +7,7 @@ import type {
   SideUnavailableError,
 } from "@impromptu/api/contracts";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -22,6 +23,7 @@ import {
   useLocation,
 } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../api";
 
 afterEach(() => {
   cleanup();
@@ -58,6 +60,7 @@ const {
   roomState,
   getParticipants,
   sendChat,
+  startDebateRequest,
   setAttributes,
   setName,
 } = vi.hoisted(() => ({
@@ -69,7 +72,11 @@ const {
         input: unknown,
       ) => Promise<JoinResult | SideUnavailableError>
     >(),
-  roomState: { participants: [] as MockParticipant[], connection: "connected" },
+  roomState: {
+    participants: [] as MockParticipant[],
+    connection: "connected",
+    metadataListeners: new Set<(metadata: string) => void>(),
+  },
   getParticipants: vi.fn<typeof import("../api").getRoomParticipants>(),
   leaveRoom:
     vi.fn<
@@ -80,6 +87,13 @@ const {
       ) => Promise<unknown>
     >(),
   sendChat: vi.fn<(message: string) => Promise<unknown>>(),
+  startDebateRequest:
+    vi.fn<
+      (
+        topicId: string,
+        input: { lobbyId: string; token: string },
+      ) => Promise<{ state: JoinResult["state"] }>
+    >(),
   setAttributes: vi.fn<(attributes: Record<string, string>) => Promise<void>>(),
   setName: vi.fn<(name: string) => Promise<void>>(),
 }));
@@ -87,7 +101,12 @@ const {
 beforeEach(() => {
   roomState.participants = defaultParticipants;
   roomState.connection = "connected";
-  getParticipants.mockResolvedValue({ hostIdentity: null, participants: [] });
+  roomState.metadataListeners.clear();
+  getParticipants.mockResolvedValue({
+    hostIdentity: null,
+    state: "WAITING",
+    participants: [],
+  });
   sessionStorage.clear();
 });
 
@@ -95,6 +114,7 @@ vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   joinTopic: joinRoom,
   leaveTopic: leaveRoom,
+  startDebate: startDebateRequest,
   getRoomParticipants: getParticipants,
 }));
 
@@ -158,6 +178,16 @@ vi.mock("@livekit/components-react", () => ({
       setAttributes,
       setName,
     },
+    on: (event: string, listener: (metadata: string) => void) => {
+      if (event === "roomMetadataChanged") {
+        roomState.metadataListeners.add(listener);
+      }
+    },
+    off: (event: string, listener: (metadata: string) => void) => {
+      if (event === "roomMetadataChanged") {
+        roomState.metadataListeners.delete(listener);
+      }
+    },
   }),
   useTracks: () => [
     {
@@ -166,7 +196,7 @@ vi.mock("@livekit/components-react", () => ({
   ],
 }));
 
-import Debate, { DebateExperience } from "./debate";
+import Debate, { clientAction, DebateExperience } from "./debate";
 import { recalledRoom, rememberRoom } from "../room-session";
 
 function LocationProbe() {
@@ -175,12 +205,45 @@ function LocationProbe() {
 }
 
 describe("DebateExperience", () => {
+  it("redirects to the home page when joining a missing private lobby", async () => {
+    joinRoom.mockRejectedValueOnce(
+      new ApiError("Private lobby not found", 404),
+    );
+    const formData = new FormData();
+    formData.set("intent", "spectator");
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/debates/:topicId",
+          action: (args) =>
+            clientAction({
+              ...args,
+              serverAction: async () => {
+                throw new Error("The server action should not be called.");
+              },
+            }),
+          element: <LocationProbe />,
+        },
+        { path: "/", element: <LocationProbe /> },
+      ],
+      { initialEntries: ["/debates/dream-cheating"] },
+    );
+    render(<RouterProvider router={router} />);
+
+    await router.navigate("/debates/dream-cheating", {
+      formData,
+      formMethod: "post",
+    });
+    expect(await screen.findByText("/")).toBeVisible();
+  });
+
   it("connects spectators without publishing media and lets them vote and chat", async () => {
     sendChat.mockResolvedValue({});
     setAttributes.mockResolvedValue();
     setName.mockResolvedValue();
     const join: JoinResult = {
       lobbyId: "dream-cheating",
+      state: "WAITING",
       topicId: "dream-cheating",
       topicTitle: "Can you cheat in a dream?",
       sides: ["Yes: intention still matters", "No: dreams are involuntary"],
@@ -289,6 +352,7 @@ describe("DebateExperience", () => {
   it("does not let a debater vote or send chat messages", () => {
     const join: JoinResult = {
       lobbyId: "dream-cheating",
+      state: "WAITING",
       topicId: "dream-cheating",
       topicTitle: "Can you cheat in a dream?",
       sides: ["Yes: intention still matters", "No: dreams are involuntary"],
@@ -351,6 +415,7 @@ describe("DebateExperience", () => {
     });
     const join: JoinResult = {
       lobbyId: "dream-cheating",
+      state: "WAITING",
       topicId: "dream-cheating",
       topicTitle: "Can you cheat in a dream?",
       sides: ["Yes: intention still matters", "No: dreams are involuntary"],
@@ -387,6 +452,7 @@ describe("DebateExperience", () => {
     leaveRoom.mockResolvedValue({ status: "ok" });
     const join: JoinResult = {
       lobbyId: "dream-cheating",
+      state: "WAITING",
       topicId: "dream-cheating",
       topicTitle: "Can you cheat in a dream?",
       sides: ["Yes: intention still matters", "No: dreams are involuntary"],
@@ -423,6 +489,7 @@ describe("DebateExperience", () => {
     leaveRoom.mockRejectedValue(new Error("Leave request failed"));
     const join: JoinResult = {
       lobbyId: "dream-cheating",
+      state: "WAITING",
       topicId: "dream-cheating",
       topicTitle: "Can you cheat in a dream?",
       sides: ["Yes: intention still matters", "No: dreams are involuntary"],
@@ -460,6 +527,7 @@ describe("DebateExperience", () => {
     leaveRoom.mockResolvedValue({ left: true });
     const join: JoinResult = {
       lobbyId: "dream-cheating",
+      state: "WAITING",
       topicId: "dream-cheating",
       topicTitle: "Can you cheat in a dream?",
       sides: ["Yes: intention still matters", "No: dreams are involuntary"],
@@ -499,6 +567,7 @@ describe("DebateExperience", () => {
 describe("Participant roster", () => {
   const spectatorJoin: JoinResult = {
     lobbyId: "dream-cheating",
+    state: "WAITING",
     topicId: "dream-cheating",
     topicTitle: "Can you cheat in a dream?",
     sides: ["Yes: intention still matters", "No: dreams are involuntary"],
@@ -519,6 +588,140 @@ describe("Participant roster", () => {
     sideIndex: 1,
     token: "debater-token",
   };
+
+  it("shows the waiting message beside the topic only while the lobby is waiting", () => {
+    const { unmount } = render(
+      <MemoryRouter>
+        <DebateExperience join={spectatorJoin} />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Waiting for others to join...")).toBeVisible();
+
+    unmount();
+    render(
+      <MemoryRouter>
+        <DebateExperience
+          join={{ ...spectatorJoin, state: "DEBATE_IN_PROGRESS" }}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.queryByText("Waiting for others to join..."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the creator's start button immediately and enables it only when ready", async () => {
+    const creator: JoinResult = {
+      ...spectatorJoin,
+      lobbyId: "private-lobby",
+      participantIdentity: "creator-id",
+      displayName: "Creator",
+      role: "debater",
+      sideIndex: 0,
+      isCreator: true,
+      hostIdentity: "creator-id",
+    };
+    roomState.participants = [
+      {
+        attributes: { "debate.side": "0" },
+        identity: creator.participantIdentity,
+        isLocal: true,
+        name: creator.displayName,
+        permissions: { canPublish: true },
+      },
+      {
+        attributes: { "debate.side": "1" },
+        identity: "other-debater",
+        name: "Other debater",
+        permissions: { canPublish: true },
+      },
+    ];
+    startDebateRequest.mockResolvedValue({ state: "DEBATE_IN_PROGRESS" });
+    const view = render(
+      <MemoryRouter>
+        <DebateExperience join={creator} />
+      </MemoryRouter>,
+    );
+
+    const start = screen.getByRole("button", { name: "Start Debate" });
+    expect(start).toBeDisabled();
+    expect(
+      screen.queryByText("Waiting for others to join..."),
+    ).not.toBeInTheDocument();
+
+    roomState.participants = [
+      ...roomState.participants,
+      {
+        attributes: {},
+        identity: "spectator-guest",
+        name: "Spectator guest",
+        permissions: { canPublish: false },
+      },
+    ];
+    view.rerender(
+      <MemoryRouter>
+        <DebateExperience join={creator} />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("button", { name: "Start Debate" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Start Debate" }));
+    expect(await screen.findByText("Debate in progress ...")).toBeVisible();
+    expect(startDebateRequest).toHaveBeenCalledWith(creator.topicId, {
+      lobbyId: creator.lobbyId,
+      token: creator.token,
+    });
+  });
+
+  it("updates every participant's lobby status from room metadata", () => {
+    render(
+      <MemoryRouter>
+        <DebateExperience join={spectatorJoin} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("Waiting for others to join...")).toBeVisible();
+
+    act(() => {
+      for (const listener of roomState.metadataListeners) {
+        listener("DEBATE_IN_PROGRESS");
+      }
+    });
+
+    expect(screen.getByText("Debate in progress ...")).toBeVisible();
+    expect(
+      screen.queryByText("Waiting for others to join..."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the public start button to the current host and waiting text to other participants", () => {
+    const publicHost: JoinResult = {
+      ...spectatorJoin,
+      participantIdentity: "public-host",
+      hostIdentity: "public-host",
+      isCreator: true,
+    };
+    const { unmount } = render(
+      <MemoryRouter>
+        <DebateExperience join={publicHost} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("button", { name: "Start Debate" })).toBeDisabled();
+
+    unmount();
+    const guest: JoinResult = {
+      ...spectatorJoin,
+      hostIdentity: "public-host",
+    };
+    render(
+      <MemoryRouter>
+        <DebateExperience join={guest} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("button", { name: "Start Debate" })).toBeNull();
+    expect(screen.getByText("Waiting for others to join...")).toBeVisible();
+  });
 
   function roster() {
     if (!screen.queryByRole("region", { name: "Participants" })) {
@@ -582,6 +785,32 @@ describe("Participant roster", () => {
       screen.getByRole("button", { name: "Retry participant list" }),
     );
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+
+  it("shows a closed-lobby popup and returns home when its button is clicked", async () => {
+    getParticipants.mockRejectedValueOnce(
+      new ApiError("Private lobby not found", 404),
+    );
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/debates/:topicId",
+          element: <DebateExperience join={spectatorJoin} />,
+        },
+        { path: "/", element: <LocationProbe /> },
+      ],
+      { initialEntries: ["/debates/dream-cheating"] },
+    );
+    render(<RouterProvider router={router} />);
+
+    expect(
+      await screen.findByRole("heading", { name: "The lobby was closed" }),
+    ).toBeVisible();
+    expect(router.state.location.pathname).toBe("/debates/dream-cheating");
+    expect(recalledRoom("dream-cheating")).toBeUndefined();
+    fireEvent.click(screen.getByRole("button", { name: "Go to home" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+    expect(await screen.findByText("/")).toBeVisible();
   });
 
   it("deduplicates joins and rebuilds membership after leaves and reconnects", async () => {
@@ -934,6 +1163,11 @@ describe("Participant roster", () => {
       role: "debater",
       sideIndex: 1,
       token: "changed-token",
+    });
+    getParticipants.mockResolvedValue({
+      hostIdentity: privateJoin.participantIdentity,
+      state: "WAITING",
+      participants: [],
     });
     render(
       <MemoryRouter>

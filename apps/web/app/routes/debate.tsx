@@ -2,6 +2,7 @@ import {
   PRODUCT,
   joinBodySchema,
   joinResultSchema,
+  type LobbyState,
   type JoinInput,
   type JoinResult,
 } from "@impromptu/api/contracts";
@@ -16,7 +17,12 @@ import {
   useTracks,
 } from "@livekit/components-react";
 import { CopyIcon, LogOutIcon, SendIcon, SmileIcon } from "lucide-react";
-import { ConnectionState, Track, VideoPresets } from "livekit-client";
+import {
+  ConnectionState,
+  RoomEvent,
+  Track,
+  VideoPresets,
+} from "livekit-client";
 import {
   type FormEvent,
   useCallback,
@@ -33,6 +39,7 @@ import {
   useLocation,
   useNavigate,
   useParams,
+  redirect,
 } from "react-router";
 
 import { Alert, AlertDescription } from "~/components/ui/alert";
@@ -73,7 +80,14 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 
-import { ApiError, getRoomParticipants, joinTopic, leaveTopic } from "../api";
+import {
+  ApiError,
+  closeLobby,
+  getRoomParticipants,
+  joinTopic,
+  leaveTopic,
+  startDebate as startDebateRequest,
+} from "../api";
 import { forgetRoom, recalledRoom, rememberRoom } from "../room-session";
 
 const VOTE_ATTRIBUTE = "debate.vote";
@@ -110,7 +124,20 @@ export async function clientAction({
       ? { ...values, sideIndex: Number(values.sideIndex) }
       : values,
   );
-  return joinTopic(params.topicId, input);
+  try {
+    return await joinTopic(params.topicId, input);
+  } catch (cause) {
+    if (isPrivateLobbyNotFound(cause)) return redirect("/");
+    throw cause;
+  }
+}
+
+function isPrivateLobbyNotFound(cause: unknown) {
+  return (
+    cause instanceof ApiError &&
+    cause.status === 404 &&
+    cause.message === "Private lobby not found"
+  );
 }
 
 type RoomParticipant = ReturnType<typeof useParticipants>[number];
@@ -413,7 +440,18 @@ function RoomChat({
   );
 }
 
-function ParticipantStatus({ join }: { join: JoinResult }) {
+function ParticipantStatus({
+  join,
+  onPrivateLobbyNotFound,
+  onStatus,
+}: {
+  join: JoinResult;
+  onPrivateLobbyNotFound: (cause: unknown) => boolean;
+  onStatus: (status: {
+    hostIdentity: string | null;
+    state: LobbyState;
+  }) => void;
+}) {
   const { topicId, lobbyId, token } = join;
   const connection = useConnectionState();
   const [error, setError] = useState<string>();
@@ -421,19 +459,23 @@ function ParticipantStatus({ join }: { join: JoinResult }) {
   const refresh = useCallback(() => {
     const currentRequest = ++requestId.current;
     void getRoomParticipants({ topicId, lobbyId, token }).then(
-      () => {
-        if (currentRequest === requestId.current) setError(undefined);
+      (status) => {
+        if (currentRequest === requestId.current) {
+          onStatus(status);
+          setError(undefined);
+        }
       },
       (cause: unknown) => {
-        if (currentRequest === requestId.current)
-          setError(
-            cause instanceof ApiError
-              ? cause.message
-              : "Participants could not be loaded. Try again.",
-          );
+        if (currentRequest !== requestId.current) return;
+        if (onPrivateLobbyNotFound(cause)) return;
+        setError(
+          cause instanceof ApiError
+            ? cause.message
+            : "Participants could not be loaded. Try again.",
+        );
       },
     );
-  }, [topicId, lobbyId, token]);
+  }, [lobbyId, onPrivateLobbyNotFound, onStatus, token, topicId]);
   useEffect(() => {
     if (connection === ConnectionState.Connected) refresh();
     return () => {
@@ -451,12 +493,76 @@ function ParticipantStatus({ join }: { join: JoinResult }) {
   );
 }
 
+function LobbyStatus({
+  join,
+  onStart,
+  onStateChange,
+  starting,
+}: {
+  join: JoinResult;
+  onStart: () => void;
+  onStateChange: (state: LobbyState) => void;
+  starting: boolean;
+}) {
+  const participants = useRoomParticipants(join);
+  const room = useRoomContext();
+  const debaterCount = assignDebaters(participants, join).size;
+  const hasSpectator = participants.some(
+    (participant) => !publishes(participant, join),
+  );
+  const isLobbyHost =
+    join.hostIdentity === join.participantIdentity ||
+    (join.isCreator && join.lobbyId !== join.topicId);
+
+  useEffect(() => {
+    function updateState(metadata: string) {
+      if (metadata === "DEBATE_IN_PROGRESS") {
+        onStateChange("DEBATE_IN_PROGRESS");
+      }
+    }
+    room.on(RoomEvent.RoomMetadataChanged, updateState);
+    return () => {
+      room.off(RoomEvent.RoomMetadataChanged, updateState);
+    };
+  }, [onStateChange, room]);
+
+  if (join.state === "DEBATE_IN_PROGRESS") {
+    return (
+      <p className="shrink-0 text-sm text-muted-foreground">
+        Debate in progress ...
+      </p>
+    );
+  }
+
+  if (join.state !== "WAITING") return null;
+  if (!isLobbyHost) {
+    return (
+      <p className="shrink-0 text-sm text-muted-foreground">
+        Waiting for others to join...
+      </p>
+    );
+  }
+
+  return (
+    <Button
+      className="shrink-0"
+      disabled={starting || debaterCount !== 2 || !hasSpectator}
+      type="button"
+      onClick={onStart}
+    >
+      Start Debate
+    </Button>
+  );
+}
+
 function ParticipantRoster({
   join,
   onChangeRole,
+  onPrivateLobbyNotFound,
 }: {
   join: JoinResult;
   onChangeRole: ChangeRole;
+  onPrivateLobbyNotFound: (cause: unknown) => boolean;
 }) {
   const participants = useRoomParticipants(join);
   const debatersBySide = assignDebaters(participants, join);
@@ -490,6 +596,7 @@ function ParticipantRoster({
       const message = await onChangeRole(input);
       if (message) setError(message);
     } catch (cause) {
+      if (onPrivateLobbyNotFound(cause)) return;
       setError(
         cause instanceof ApiError
           ? cause.message
@@ -676,12 +783,14 @@ function AudiencePanel({
   canVote,
   join,
   onChangeRole,
+  onPrivateLobbyNotFound,
   onTabChange: setActiveTab,
 }: {
   activeTab: AudienceTab;
   canVote: boolean;
   join: JoinResult;
   onChangeRole: ChangeRole;
+  onPrivateLobbyNotFound: (cause: unknown) => boolean;
   onTabChange: (tab: AudienceTab) => void;
 }) {
   const { participantIdentity, sides } = join;
@@ -808,7 +917,11 @@ function AudiencePanel({
         tabIndex={0}
       >
         {activeTab === "participants" ? (
-          <ParticipantRoster join={join} onChangeRole={onChangeRole} />
+          <ParticipantRoster
+            join={join}
+            onChangeRole={onChangeRole}
+            onPrivateLobbyNotFound={onPrivateLobbyNotFound}
+          />
         ) : (
           <section className="grid gap-3">
             <div>
@@ -885,43 +998,63 @@ function LeaveButton({
   leaving,
   onLeaving,
   onError,
+  onPrivateLobbyNotFound,
 }: {
   join: JoinResult;
   leaving: boolean;
   onLeaving: (leaving: boolean) => void;
   onError: (message: string) => void;
+  onPrivateLobbyNotFound: (cause: unknown) => boolean;
 }) {
   const room = useRoomContext();
   const navigate = useNavigate();
   const [submitting, setSubmitting] = useState(false);
+  const isCreator = join.isCreator && join.lobbyId !== join.topicId;
 
   async function leave() {
     setSubmitting(true);
     try {
-      await leaveTopic(join.topicId, join.lobbyId, join.participantIdentity);
+      if (isCreator) {
+        await closeLobby(join.topicId, join.lobbyId, join.participantIdentity);
+      } else {
+        await leaveTopic(join.topicId, join.lobbyId, join.participantIdentity);
+      }
       forgetRoom(join.topicId);
       onLeaving(true);
       await room.disconnect();
       await navigate("/");
     } catch (cause) {
+      if (onPrivateLobbyNotFound(cause)) return;
       setSubmitting(false);
       onError(
-        cause instanceof Error ? cause.message : "The lobby could not be left.",
+        cause instanceof Error
+          ? cause.message
+          : isCreator
+            ? "The lobby could not be closed."
+            : "The lobby could not be left.",
       );
     }
   }
 
   return (
     <Button
-      aria-label={leaving || submitting ? "Leaving lobby" : "Leave lobby"}
-      className="size-12"
+      aria-label={
+        leaving || submitting
+          ? isCreator
+            ? "Closing lobby"
+            : "Leaving lobby"
+          : isCreator
+            ? "Close lobby"
+            : "Leave lobby"
+      }
+      className={isCreator ? "whitespace-nowrap px-3" : "size-12"}
       disabled={leaving || submitting}
-      size="icon-lg"
+      size={isCreator ? undefined : "icon-lg"}
       type="button"
-      variant="destructive"
+      variant={isCreator ? "secondary" : "destructive"}
       onClick={() => void leave()}
     >
-      <LogOutIcon className="size-5" />
+      {isCreator ? "Close Lobby" : <LogOutIcon className="size-5" />}
     </Button>
   );
 }
@@ -968,14 +1101,69 @@ function MediaPermissionGuard({
 
 export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
   const [join, setJoin] = useState(initialJoin);
-  useEffect(() => rememberRoom(join), [join]);
+  const navigate = useNavigate();
   const [roomError, setRoomError] = useState<string>();
   const [leaving, setLeaving] = useState(false);
+  useEffect(() => {
+    if (!leaving) rememberRoom(join);
+  }, [join, leaving]);
+  const [privateLobbyClosed, setPrivateLobbyClosed] = useState(false);
   const [mediaPermissionFailed, setMediaPermissionFailed] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
+  const [startingDebate, setStartingDebate] = useState(false);
   // Kept outside the room, which remounts when a role change issues a new token.
   const [audienceTab, setAudienceTab] = useState<AudienceTab>("vote");
   const isDebater = join.role === "debater";
+  const onPrivateLobbyNotFound = useCallback(
+    (cause: unknown) => {
+      if (!isPrivateLobbyNotFound(cause)) return false;
+      forgetRoom(join.topicId);
+      setLeaving(true);
+      if (join.isCreator) {
+        void navigate("/", { replace: true });
+      } else {
+        setPrivateLobbyClosed(true);
+      }
+      return true;
+    },
+    [join.isCreator, join.topicId, navigate],
+  );
+  const updateLobbyState = useCallback((state: LobbyState) => {
+    setJoin((current) =>
+      current.state === state ? current : { ...current, state },
+    );
+  }, []);
+  const updateLobbyStatus = useCallback(
+    (status: { hostIdentity: string | null; state: LobbyState }) => {
+      setJoin((current) => ({
+        ...current,
+        hostIdentity: status.hostIdentity,
+        state: status.state,
+      }));
+    },
+    [],
+  );
+
+  async function startDebate() {
+    setStartingDebate(true);
+    setRoomError(undefined);
+    try {
+      const result = await startDebateRequest(join.topicId, {
+        lobbyId: join.lobbyId,
+        token: join.token,
+      });
+      updateLobbyState(result.state);
+    } catch (cause) {
+      if (onPrivateLobbyNotFound(cause)) return;
+      setRoomError(
+        cause instanceof ApiError
+          ? cause.message
+          : "The debate could not be started. Try again.",
+      );
+    } finally {
+      setStartingDebate(false);
+    }
+  }
 
   // A role change is a fresh join in the same lobby: the backend re-checks
   // availability and verifies the old token to preserve the participant identity.
@@ -1032,14 +1220,38 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
         }}
       >
         <MediaPermissionGuard failed={mediaPermissionFailed} join={join} />
+        <Dialog open={privateLobbyClosed}>
+          <DialogContent showCloseButton={false}>
+            <DialogHeader>
+              <DialogTitle>The lobby was closed</DialogTitle>
+              <DialogDescription>
+                This private lobby is no longer available.
+              </DialogDescription>
+            </DialogHeader>
+            <Button
+              type="button"
+              onClick={() => void navigate("/", { replace: true })}
+            >
+              Go to home
+            </Button>
+          </DialogContent>
+        </Dialog>
         <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 bg-[#fbfcfe] px-4 py-2">
           <div className="min-w-0">
             <p className="font-editorial text-base font-semibold text-primary">
               {PRODUCT.name}
             </p>
-            <h1 className="font-editorial truncate text-xl font-semibold tracking-tight sm:text-2xl">
-              {join.topicTitle}
-            </h1>
+            <div className="flex min-w-0 items-baseline gap-3">
+              <h1 className="font-editorial min-w-0 truncate text-xl font-semibold tracking-tight sm:text-2xl">
+                {join.topicTitle}
+              </h1>
+              <LobbyStatus
+                join={join}
+                onStart={() => void startDebate()}
+                onStateChange={updateLobbyState}
+                starting={startingDebate}
+              />
+            </div>
             {join.isCreator && join.joinCode ? (
               <Button
                 aria-label={`Copy lobby code ${join.joinCode}`}
@@ -1067,8 +1279,13 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
             leaving={leaving}
             onLeaving={setLeaving}
             onError={setRoomError}
+            onPrivateLobbyNotFound={onPrivateLobbyNotFound}
           />
-          <ParticipantStatus join={join} />
+          <ParticipantStatus
+            join={join}
+            onPrivateLobbyNotFound={onPrivateLobbyNotFound}
+            onStatus={updateLobbyStatus}
+          />
           {roomError ? (
             <Alert className="col-span-full" variant="destructive">
               <AlertDescription>{roomError}</AlertDescription>
@@ -1084,6 +1301,7 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
             onTabChange={setAudienceTab}
             join={join}
             onChangeRole={changeRole}
+            onPrivateLobbyNotFound={onPrivateLobbyNotFound}
           />
           <RoomAudioRenderer />
         </div>

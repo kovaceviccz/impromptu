@@ -19,6 +19,7 @@ const livekit: LiveKitGateway = {
     return [];
   },
   async removeParticipant() {},
+  async updateRoomMetadata() {},
 };
 
 afterEach(async () => {

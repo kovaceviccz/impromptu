@@ -1,8 +1,11 @@
 import { EntitySchema } from "@mikro-orm/core";
 
+import type { LobbyState } from "./contract.js";
+
 export class PrivateLobbyEntity {
   id!: string;
   topicId!: string;
+  state!: LobbyState;
   codeHash!: string;
   creatorIdentity!: string;
   createdAt!: Date;
@@ -22,6 +25,11 @@ export const PrivateLobbySchema = new EntitySchema<PrivateLobbyEntity>({
   properties: {
     id: { type: "uuid", primary: true },
     topicId: { type: "string", fieldName: "topic_id", columnType: "text" },
+    state: {
+      type: "string",
+      columnType: "text",
+      defaultRaw: "'WAITING'",
+    },
     codeHash: {
       type: "string",
       fieldName: "code_hash",

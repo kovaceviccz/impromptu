@@ -16,6 +16,7 @@ describe("private lobby codes", () => {
       expect(lobby.code).toMatch(/^[A-HJ-NP-Z2-9]{8}$/);
       const persisted = await store.findById(lobby.id);
       expect(persisted?.codeHash).toBe(hashLobbyCode(lobby.code));
+      expect(persisted?.state).toBe("WAITING");
       expect(persisted).not.toHaveProperty("code");
     }
   });

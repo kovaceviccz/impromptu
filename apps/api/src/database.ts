@@ -5,6 +5,7 @@ import { MikroORM } from "@mikro-orm/postgresql";
 
 import { AccountSchema, AccountSessionSchema } from "./accounts/entity.js";
 import { PrivateLobbySchema } from "./lobbies/entity.js";
+import { PublicLobbyStateSchema } from "./lobbies/public-state-entity.js";
 
 /** Opens the PostgreSQL connection shared by every persistent feature. */
 export async function openDatabase(databaseUrl: string) {
@@ -22,7 +23,12 @@ export async function openDatabase(databaseUrl: string) {
       enableChannelBinding:
         connectionUrl.searchParams.get("channel_binding") === "require",
     },
-    entities: [AccountSchema, AccountSessionSchema, PrivateLobbySchema],
+    entities: [
+      AccountSchema,
+      AccountSessionSchema,
+      PrivateLobbySchema,
+      PublicLobbyStateSchema,
+    ],
     extensions: [Migrator],
     migrations: {
       path: fileURLToPath(new URL("./migrations", import.meta.url)),
