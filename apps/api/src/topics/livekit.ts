@@ -2,6 +2,7 @@ import {
   AccessToken,
   RoomServiceClient,
   TrackSource,
+  TokenVerifier,
 } from "livekit-server-sdk";
 
 export type DebateRole = "debater" | "spectator";
@@ -23,6 +24,10 @@ type Reservation = {
 };
 
 export type LiveKitGateway = {
+  verifyParticipantToken(
+    token: string,
+    roomName: string,
+  ): Promise<string | undefined>;
   listParticipants(roomName: string): Promise<RoomParticipant[]>;
   removeParticipant(roomName: string, identity: string): Promise<void>;
   issueToken(input: {
@@ -63,6 +68,19 @@ export function createLiveKitGateway(
   );
 
   return {
+    async verifyParticipantToken(token, roomName) {
+      try {
+        const claims = await new TokenVerifier(
+          config.apiKey,
+          config.apiSecret,
+        ).verify(token);
+        return claims.video?.roomJoin && claims.video.room === roomName
+          ? claims.sub
+          : undefined;
+      } catch {
+        return undefined;
+      }
+    },
     async listParticipants(roomName) {
       try {
         const participants = await rooms.listParticipants(roomName);
@@ -154,8 +172,10 @@ export function createRoleAllocator(
     }
   }
 
-  async function occupancy(lobbyId: string) {
-    const active = await livekit.listParticipants(`debate-${lobbyId}`);
+  async function occupancy(lobbyId: string, replacingIdentity?: string) {
+    const active = (await livekit.listParticipants(`debate-${lobbyId}`)).filter(
+      (participant) => participant.identity !== replacingIdentity,
+    );
     const activeDebaters = new Set(
       active
         .filter((participant) => participant.role === "debater")
@@ -172,15 +192,21 @@ export function createRoleAllocator(
     if (reservations.size === 0) pending.delete(lobbyId);
     else pending.set(lobbyId, reservations);
 
+    const countedReservations = new Map(
+      [...reservations].filter(([identity]) => identity !== replacingIdentity),
+    );
     return {
-      debaterIdentities: new Set([...activeDebaters, ...reservations.keys()]),
+      debaterIdentities: new Set([
+        ...activeDebaters,
+        ...countedReservations.keys(),
+      ]),
       occupiedSides: new Set([
         ...active.flatMap((participant) =>
           participant.role === "debater" && participant.sideIndex !== null
             ? [participant.sideIndex]
             : [],
         ),
-        ...[...reservations.values()].map(
+        ...[...countedReservations.values()].map(
           (reservation) => reservation.sideIndex,
         ),
       ]),
@@ -190,11 +216,13 @@ export function createRoleAllocator(
           role,
           sideIndex,
         })),
-        ...[...reservations.values()].map(({ displayName, sideIndex }) => ({
-          displayName,
-          role: "debater" as const,
-          sideIndex,
-        })),
+        ...[...countedReservations.values()].map(
+          ({ displayName, sideIndex }) => ({
+            displayName,
+            role: "debater" as const,
+            sideIndex,
+          }),
+        ),
       ],
       spectatorCount: active.filter(
         (participant) => participant.role === "spectator",
@@ -229,6 +257,7 @@ export function createRoleAllocator(
       role: DebateRole,
       displayName: string,
       requestedSide: DebateSide | null,
+      replacingIdentity?: string,
     ): Promise<
       | { token: string; sideIndex: DebateSide | null }
       | { unavailable: "full" | "taken" }
@@ -241,11 +270,15 @@ export function createRoleAllocator(
           roomName: `debate-${lobbyId}`,
           sideIndex: null,
         });
+        pending.get(lobbyId)?.delete(identity);
         return { token, sideIndex: null };
       }
 
       return inLobbyLock(lobbyId, async () => {
-        const { debaterIdentities, occupiedSides } = await occupancy(lobbyId);
+        const { debaterIdentities, occupiedSides } = await occupancy(
+          lobbyId,
+          replacingIdentity,
+        );
         if (debaterIdentities.size >= 2 || occupiedSides.size >= 2) {
           return { unavailable: "full" };
         }
@@ -256,6 +289,7 @@ export function createRoleAllocator(
 
         const reservations =
           pending.get(lobbyId) ?? new Map<string, Reservation>();
+        const previousReservation = reservations.get(identity);
         reservations.set(identity, {
           displayName,
           expiresAt: Date.now() + tokenTtlSeconds * 1000,
@@ -273,7 +307,9 @@ export function createRoleAllocator(
           });
           return { token, sideIndex };
         } catch (error) {
-          pending.get(lobbyId)?.delete(identity);
+          if (previousReservation)
+            reservations.set(identity, previousReservation);
+          else pending.get(lobbyId)?.delete(identity);
           throw error;
         }
       });

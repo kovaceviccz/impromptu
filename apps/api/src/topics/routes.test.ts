@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../app.js";
 import { apiContract } from "../contracts.js";
 import { createMemoryAccountStore } from "../accounts/store.js";
+import { SESSION_COOKIE } from "../accounts/routes.js";
 import { hashLobbyCode } from "../lobbies/codes.js";
 import {
   createMemoryPrivateLobbyStore,
@@ -27,7 +28,10 @@ afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
 });
 
-function fakeLiveKit(tokenFor: (role: DebateRole) => string = (role) => role) {
+function fakeLiveKit(
+  tokenFor: (role: DebateRole, identity: string) => string = (_, identity) =>
+    identity,
+) {
   const active = new Map<string, RoomParticipant[]>();
   const issued: DebateRole[] = [];
   const issuedRooms: string[] = [];
@@ -47,11 +51,14 @@ function fakeLiveKit(tokenFor: (role: DebateRole) => string = (role) => role) {
         ),
       );
     },
-    async issueToken({ displayName, role, roomName }) {
+    async issueToken({ displayName, identity, role, roomName }) {
       issued.push(role);
       issuedRooms.push(roomName);
       issuedNames.push(displayName);
-      return tokenFor(role);
+      return tokenFor(role, identity);
+    },
+    async verifyParticipantToken(token) {
+      return token;
     },
   };
 
@@ -304,7 +311,7 @@ describe("API contracts", () => {
       url: "/api/topics/dream-cheating/leave",
       payload: {
         lobbyId: privateJoin.lobbyId,
-        participantIdentity: privateJoin.participantIdentity,
+        token: privateJoin.token,
       },
     });
     expect(leaveResponse.statusCode).toBe(200);
@@ -315,7 +322,7 @@ describe("API contracts", () => {
       url: "/api/topics/dream-cheating/leave",
       payload: {
         lobbyId: privateJoin.lobbyId,
-        participantIdentity: privateJoin.participantIdentity,
+        token: privateJoin.token,
       },
     });
     expect(repeatedLeaveResponse.statusCode).toBe(200);
@@ -411,11 +418,270 @@ describe("API contracts", () => {
     expect(apiContract.join.response.parse(switchResponse.json())).toEqual(
       expect.objectContaining({
         lobbyId: creator.lobbyId,
+        hostIdentity: creator.participantIdentity,
         role: "debater",
         sideIndex: 1,
       }),
     );
     expect(issuedRooms.at(-1)).toBe(privateRoomName);
+  });
+
+  it("preserves the host identity through verified role changes and subsequent guest joins", async () => {
+    const { active, gateway } = fakeLiveKit();
+    const signed = createLiveKitGateway({
+      apiKey: "test-key",
+      apiSecret: "a-test-secret-that-is-at-least-32-characters",
+      apiUrl: "http://localhost:7880",
+      tokenTtlSeconds: 60,
+    });
+    gateway.issueToken = (input) => signed.issueToken(input);
+    gateway.verifyParticipantToken = (token, roomName) =>
+      signed.verifyParticipantToken(token, roomName);
+    const app = await testApp(gateway);
+    const creator = apiContract.privateTopic.response.parse(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/topics/dream-cheating/private",
+          payload: { displayName: "Creator", intent: "debater", sideIndex: 0 },
+        })
+      ).json(),
+    );
+    const roomName = `debate-${creator.lobbyId}`;
+    active.set(roomName, [
+      {
+        displayName: "Creator",
+        identity: creator.participantIdentity,
+        role: "debater",
+        sideIndex: 0,
+      },
+    ]);
+    const switchRole = async (previousToken: string, input: object) =>
+      app.inject({
+        method: "POST",
+        url: "/api/topics/dream-cheating/join",
+        payload: { ...input, lobbyId: creator.lobbyId, previousToken },
+      });
+    const spectator = apiContract.join.response.parse(
+      (await switchRole(creator.token, { intent: "spectator" })).json(),
+    );
+    expect(spectator).toMatchObject({
+      participantIdentity: creator.participantIdentity,
+      hostIdentity: creator.participantIdentity,
+      isCreator: true,
+    });
+    active.set(roomName, [
+      {
+        displayName: "Spectator",
+        identity: creator.participantIdentity,
+        role: "spectator",
+        sideIndex: null,
+      },
+    ]);
+    const debater = apiContract.join.response.parse(
+      (await switchRole(spectator.token, debaterInput)).json(),
+    );
+    expect(debater).toMatchObject({
+      participantIdentity: creator.participantIdentity,
+      hostIdentity: creator.participantIdentity,
+      isCreator: true,
+      sideIndex: 0,
+    });
+    const guest = apiContract.joinByCode.response.parse(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/topics/join-code",
+          payload: {
+            code: creator.joinCode,
+            displayName: "Guest",
+            intent: "spectator",
+          },
+        })
+      ).json(),
+    );
+    expect(guest.hostIdentity).toBe(debater.participantIdentity);
+    expect(guest.isCreator).toBe(false);
+    // A token for another room cannot claim the creator's identity here.
+    const foreignToken = await signed.issueToken({
+      displayName: "Other",
+      identity: creator.participantIdentity,
+      role: "spectator",
+      roomName: "debate-other",
+      sideIndex: null,
+    });
+    expect(
+      (await switchRole(foreignToken, { intent: "spectator" })).statusCode,
+    ).toBe(401);
+    expect(
+      (await switchRole("forged-token", { intent: "spectator" })).statusCode,
+    ).toBe(401);
+    active.set(roomName, [
+      {
+        displayName: "Guest",
+        identity: guest.participantIdentity,
+        role: "debater",
+        sideIndex: 1,
+      },
+    ]);
+    expect(
+      (await switchRole(debater.token, { ...debaterInput, sideIndex: 1 }))
+        .statusCode,
+    ).toBe(409);
+  });
+
+  it("returns readable membership and host identity, handles retrieval failure, and removes a guest idempotently", async () => {
+    const { active, gateway, removed } = fakeLiveKit();
+    const signed = createLiveKitGateway({
+      apiKey: "test-key",
+      apiSecret: "a-test-secret-that-is-at-least-32-characters",
+      apiUrl: "http://localhost:7880",
+      tokenTtlSeconds: 60,
+    });
+    gateway.issueToken = (input) => signed.issueToken(input);
+    gateway.verifyParticipantToken = (token, roomName) =>
+      signed.verifyParticipantToken(token, roomName);
+    const app = await testApp(gateway);
+    const creator = apiContract.privateTopic.response.parse(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/topics/dream-cheating/private",
+          payload: { displayName: "Host user", intent: "spectator" },
+        })
+      ).json(),
+    );
+    const guest = apiContract.joinByCode.response.parse(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/topics/join-code",
+          payload: {
+            code: creator.joinCode,
+            displayName: "Guest Ada",
+            intent: "spectator",
+          },
+        })
+      ).json(),
+    );
+    const room = `debate-${creator.lobbyId}`;
+    const hostParticipant = {
+      identity: creator.participantIdentity,
+      displayName: "Host user",
+      role: "spectator" as const,
+      sideIndex: null,
+    };
+    const guestParticipant = {
+      identity: guest.participantIdentity,
+      displayName: "Guest Ada",
+      role: "spectator" as const,
+      sideIndex: null,
+    };
+    active.set(room, [hostParticipant, guestParticipant, guestParticipant]);
+    const retrieve = () =>
+      app.inject({
+        method: "POST",
+        url: "/api/topics/dream-cheating/participants",
+        payload: { lobbyId: creator.lobbyId, token: creator.token },
+      });
+    const snapshot = apiContract.roomParticipants.response.parse(
+      (await retrieve()).json(),
+    );
+    expect(snapshot).toEqual({
+      hostIdentity: creator.participantIdentity,
+      participants: [hostParticipant, guestParticipant],
+    });
+    expect(snapshot).not.toHaveProperty("joinCode");
+    const original = gateway.listParticipants.bind(gateway);
+    gateway.listParticipants = async () => {
+      throw new Error("LiveKit unavailable");
+    };
+    const failed = await retrieve();
+    expect(failed.statusCode).toBe(503);
+    expect(failed.json().message).toContain("Participants could not be loaded");
+    gateway.listParticipants = original;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: "/api/topics/dream-cheating/leave",
+            payload: {
+              lobbyId: creator.lobbyId,
+              token: guest.token,
+            },
+          })
+        ).statusCode,
+      ).toBe(200);
+    }
+    expect(
+      apiContract.roomParticipants.response.parse((await retrieve()).json())
+        .participants,
+    ).toEqual([hostParticipant]);
+    expect(removed).toHaveLength(2);
+    const unauthorized = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/participants",
+      payload: { lobbyId: creator.lobbyId, token: "invalid" },
+    });
+    expect(unauthorized.statusCode).toBe(401);
+  });
+
+  it("allows an authenticated user and a named guest to join by code without exposing the creator's code in public data", async () => {
+    const { gateway, issuedNames } = fakeLiveKit();
+    const app = await testApp(gateway);
+    const creator = apiContract.privateTopic.response.parse(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/topics/dream-cheating/private",
+          payload: { displayName: "Creator", intent: "spectator" },
+        })
+      ).json(),
+    );
+    const registration = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      payload: {
+        username: "private_member",
+        email: "private@example.com",
+        password: "strong-password",
+      },
+    });
+    expect(registration.statusCode).toBe(201);
+    const cookie = registration.cookies.find(
+      ({ name }) => name === SESSION_COOKIE,
+    );
+    expect(cookie).toBeDefined();
+    const signedIn = await app.inject({
+      method: "POST",
+      url: "/api/topics/join-code",
+      cookies: { [cookie!.name]: cookie!.value },
+      payload: {
+        code: creator.joinCode,
+        displayName: "Registered member",
+        intent: "spectator",
+      },
+    });
+    expect(signedIn.statusCode).toBe(200);
+    const guest = await app.inject({
+      method: "POST",
+      url: "/api/topics/join-code",
+      payload: {
+        code: creator.joinCode,
+        displayName: "Guest Ada",
+        intent: "spectator",
+      },
+    });
+    expect(guest.statusCode).toBe(200);
+    expect(issuedNames).toEqual(["Creator", "Registered member", "Guest Ada"]);
+    expect(guest.json()).not.toHaveProperty("joinCode");
+    for (const url of ["/api/topics"]) {
+      const response = await app.inject({ method: "GET", url });
+      expect(response.statusCode).toBe(200);
+      expect(response.body).not.toContain(creator.joinCode);
+      expect(response.body).not.toContain("joinCode");
+    }
   });
 
   it("rejects a role change into a lobby of another topic", async () => {
@@ -553,7 +819,7 @@ describe("API contracts", () => {
       url: "/api/topics/dream-cheating/leave",
       payload: {
         lobbyId: join.lobbyId,
-        participantIdentity: join.participantIdentity,
+        token: join.token,
       },
     });
 

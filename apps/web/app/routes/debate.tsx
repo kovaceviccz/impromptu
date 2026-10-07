@@ -10,13 +10,20 @@ import {
   RoomAudioRenderer,
   VideoTrack,
   useChat,
+  useConnectionState,
   useParticipants,
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
 import { CopyIcon, LogOutIcon, SendIcon, SmileIcon } from "lucide-react";
-import { Track, VideoPresets } from "livekit-client";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { ConnectionState, Track, VideoPresets } from "livekit-client";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   type ClientActionFunctionArgs,
   Form,
@@ -25,6 +32,7 @@ import {
   useActionData,
   useLocation,
   useNavigate,
+  useParams,
 } from "react-router";
 
 import { Alert, AlertDescription } from "~/components/ui/alert";
@@ -65,7 +73,14 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 
-import { joinTopic, leaveTopic } from "../api";
+import { ApiError, getRoomParticipants, joinTopic, leaveTopic } from "../api";
+import {
+  forgetRoom,
+  recalledRoom,
+  rememberRoom,
+  roomPreferences,
+  updateRoomPreferences,
+} from "../room-session";
 
 const VOTE_ATTRIBUTE = "debate.vote";
 const SIDE_ATTRIBUTE = "debate.side";
@@ -106,6 +121,18 @@ export async function clientAction({
 
 type RoomParticipant = ReturnType<typeof useParticipants>[number];
 type ChangeRole = (input: JoinInput) => Promise<string | undefined>;
+
+function useRoomParticipants(join: JoinResult) {
+  const participants = useParticipants();
+  return [
+    ...new Map(
+      participants.map((participant) => [
+        participant.isLocal ? join.participantIdentity : participant.identity,
+        participant,
+      ]),
+    ).values(),
+  ];
+}
 
 // LiveKit fills in the local participant's identity, name, and grants after
 // the first render without re-rendering, so the viewer's own details come from
@@ -170,7 +197,7 @@ function assignDebaters(participants: RoomParticipant[], viewer: JoinResult) {
 
 function DebateVideos({ join }: { join: JoinResult }) {
   const { sides } = join;
-  const participants = useParticipants();
+  const participants = useRoomParticipants(join);
   const cameraTracks = useTracks([Track.Source.Camera]);
   const debatersBySide = assignDebaters(participants, join);
 
@@ -246,15 +273,24 @@ function DebateVideos({ join }: { join: JoinResult }) {
 
 function RoomChat({
   canSend,
+  initialDisplayName,
   participantIdentity,
+  topicId,
 }: {
   canSend: boolean;
+  initialDisplayName?: string;
   participantIdentity: string;
+  topicId: string;
 }) {
   const { chatMessages, isSending, send } = useChat();
+  const room = useRoomContext();
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string>();
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [hasDisplayName, setHasDisplayName] = useState(
+    Boolean(initialDisplayName),
+  );
+  const [isNaming, setIsNaming] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -264,11 +300,24 @@ function RoomChat({
 
     setError(undefined);
     try {
-      await send(value);
+      if (!hasDisplayName) {
+        setIsNaming(true);
+        await room.localParticipant.setName(value);
+        updateRoomPreferences(topicId, { displayName: value });
+        setHasDisplayName(true);
+      } else {
+        await send(value);
+      }
       setDraft("");
       requestAnimationFrame(() => input.current?.focus());
     } catch {
-      setError("Message could not be sent.");
+      setError(
+        hasDisplayName
+          ? "Message could not be sent."
+          : "Display name could not be saved.",
+      );
+    } finally {
+      setIsNaming(false);
     }
   }
 
@@ -335,60 +384,102 @@ function RoomChat({
             </Alert>
           ) : null}
           <label className="sr-only" htmlFor="room-chat-input">
-            Message
+            {hasDisplayName ? "Message" : "Display name"}
           </label>
           <div className="flex items-center gap-2">
-            <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
-              <PopoverTrigger
-                render={
-                  <Button
-                    aria-label="Add emoji"
-                    size="icon"
-                    type="button"
-                    variant="outline"
-                  />
-                }
-              >
-                <SmileIcon />
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-fit p-0" side="top">
-                <EmojiPicker
-                  className="h-80"
-                  onEmojiSelect={({ emoji }) => {
-                    setDraft((current) => current + emoji);
-                    setEmojiOpen(false);
-                    requestAnimationFrame(() => input.current?.focus());
-                  }}
+            {hasDisplayName ? (
+              <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      aria-label="Add emoji"
+                      size="icon"
+                      type="button"
+                      variant="outline"
+                    />
+                  }
                 >
-                  <EmojiPickerSearch />
-                  <EmojiPickerContent />
-                  <EmojiPickerFooter />
-                </EmojiPicker>
-              </PopoverContent>
-            </Popover>
+                  <SmileIcon />
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-fit p-0" side="top">
+                  <EmojiPicker
+                    className="h-80"
+                    onEmojiSelect={({ emoji }) => {
+                      setDraft((current) => current + emoji);
+                      setEmojiOpen(false);
+                      requestAnimationFrame(() => input.current?.focus());
+                    }}
+                  >
+                    <EmojiPickerSearch />
+                    <EmojiPickerContent />
+                    <EmojiPickerFooter />
+                  </EmojiPicker>
+                </PopoverContent>
+              </Popover>
+            ) : null}
             <Input
-              autoComplete="off"
+              autoComplete={hasDisplayName ? "off" : "nickname"}
               id="room-chat-input"
-              maxLength={500}
-              name="message"
-              placeholder="Message the room"
+              maxLength={hasDisplayName ? 500 : 40}
+              name={hasDisplayName ? "message" : "displayName"}
+              placeholder={
+                hasDisplayName ? "Message the room" : "Choose a display name"
+              }
               ref={input}
               required
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
             />
             <Button
-              aria-label="Send message"
-              disabled={isSending || draft.trim().length === 0}
-              size="icon"
+              aria-label={hasDisplayName ? "Send message" : undefined}
+              disabled={isSending || isNaming || draft.trim().length === 0}
+              size={hasDisplayName ? "icon" : "default"}
               type="submit"
             >
-              <SendIcon />
+              {hasDisplayName ? <SendIcon /> : "Continue"}
             </Button>
           </div>
         </form>
       ) : null}
     </section>
+  );
+}
+
+function ParticipantStatus({ join }: { join: JoinResult }) {
+  const { topicId, lobbyId, token } = join;
+  const connection = useConnectionState();
+  const [error, setError] = useState<string>();
+  const requestId = useRef(0);
+  const refresh = useCallback(() => {
+    const currentRequest = ++requestId.current;
+    void getRoomParticipants({ topicId, lobbyId, token }).then(
+      () => {
+        if (currentRequest === requestId.current) setError(undefined);
+      },
+      (cause: unknown) => {
+        if (currentRequest === requestId.current)
+          setError(
+            cause instanceof ApiError
+              ? cause.message
+              : "Participants could not be loaded. Try again.",
+          );
+      },
+    );
+  }, [topicId, lobbyId, token]);
+  useEffect(() => {
+    if (connection === ConnectionState.Connected) refresh();
+    return () => {
+      requestId.current += 1;
+    };
+  }, [connection, refresh]);
+  if (!error) return null;
+  return (
+    <Alert className="col-span-full" variant="destructive">
+      <AlertDescription>{error}</AlertDescription>
+      <Button type="button" variant="outline" size="sm" onClick={refresh}>
+        Retry participant list
+      </Button>
+    </Alert>
   );
 }
 
@@ -399,10 +490,14 @@ function ParticipantRoster({
   join: JoinResult;
   onChangeRole: ChangeRole;
 }) {
-  const participants = useParticipants();
+  const participants = useRoomParticipants(join);
   const debatersBySide = assignDebaters(participants, join);
   const spectators = participants.filter(
     (participant) => !publishes(participant, join),
+  );
+  spectators.sort(
+    (first, second) =>
+      Number(isHost(second, join)) - Number(isHost(first, join)),
   );
   const viewerIsDebater = join.role === "debater";
   const viewer = participants.find((participant) =>
@@ -426,8 +521,12 @@ function ParticipantRoster({
     try {
       const message = await onChangeRole(input);
       if (message) setError(message);
-    } catch {
-      setError("Your role could not be changed. Try again.");
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError
+          ? cause.message
+          : "Your role could not be changed. Try again.",
+      );
     } finally {
       setChanging(false);
       setClaimedSide(undefined);
@@ -496,7 +595,7 @@ function ParticipantRoster({
                       disabled={changing}
                       size="xs"
                       type="button"
-                      variant="outline"
+                      variant="secondary"
                       onClick={() => void changeRole({ intent: "spectator" })}
                     >
                       Spectate
@@ -618,7 +717,7 @@ function AudiencePanel({
   onTabChange: (tab: AudienceTab) => void;
 }) {
   const { participantIdentity, sides } = join;
-  const participants = useParticipants();
+  const participants = useRoomParticipants(join);
   const room = useRoomContext();
   const [isVoting, setIsVoting] = useState(false);
   const [error, setError] = useState<string>();
@@ -647,6 +746,9 @@ function AudiencePanel({
     try {
       await room.localParticipant.setAttributes({
         [VOTE_ATTRIBUTE]: choice,
+      });
+      updateRoomPreferences(join.topicId, {
+        vote: choice === "0" || choice === "1" ? choice : undefined,
       });
     } catch {
       setError("Your vote could not be recorded.");
@@ -808,7 +910,15 @@ function AudiencePanel({
           </section>
         )}
       </div>
-      <RoomChat canSend={canVote} participantIdentity={participantIdentity} />
+      <RoomChat
+        canSend={canVote}
+        initialDisplayName={
+          roomPreferences(join.topicId).displayName ??
+          (join.displayName === "Spectator" ? undefined : join.displayName)
+        }
+        participantIdentity={participantIdentity}
+        topicId={join.topicId}
+      />
     </aside>
   );
 }
@@ -830,12 +940,14 @@ function LeaveButton({
 
   async function leave() {
     setSubmitting(true);
+    onLeaving(true);
     try {
-      await leaveTopic(join.topicId, join.lobbyId, join.participantIdentity);
-      onLeaving(true);
       await room.disconnect();
+      await leaveTopic(join.topicId, join.lobbyId, join.token);
+      forgetRoom(join.topicId);
       await navigate("/");
     } catch (cause) {
+      onLeaving(false);
       setSubmitting(false);
       onError(
         cause instanceof Error ? cause.message : "The lobby could not be left.",
@@ -872,33 +984,53 @@ function MediaPermissionGuard({
   useEffect(() => {
     if (!failed || handled.current) return;
     handled.current = true;
+    forgetRoom(join.topicId);
 
     void (async () => {
       await room.disconnect();
-      await leaveTopic(
-        join.topicId,
-        join.lobbyId,
-        join.participantIdentity,
-      ).catch(() => {});
+      await leaveTopic(join.topicId, join.lobbyId, join.token).catch(() => {});
       await navigate("/", {
         replace: true,
         state: { mediaPermissionFailure: true },
       });
     })();
-  }, [
-    failed,
-    join.lobbyId,
-    join.participantIdentity,
-    join.topicId,
-    navigate,
-    room,
-  ]);
+  }, [failed, join.lobbyId, join.token, join.topicId, navigate, room]);
+
+  return null;
+}
+
+function SessionRestorer({ join }: { join: JoinResult }) {
+  const room = useRoomContext();
+  const connection = useConnectionState();
+  const restored = useRef(false);
+
+  useEffect(() => {
+    if (connection !== ConnectionState.Connected || restored.current) return;
+    restored.current = true;
+    if (join.role !== "spectator") return;
+    const preferences = roomPreferences(join.topicId);
+    void (async () => {
+      try {
+        if (preferences.displayName) {
+          await room.localParticipant.setName(preferences.displayName);
+        }
+        if (preferences.vote) {
+          await room.localParticipant.setAttributes({
+            [VOTE_ATTRIBUTE]: preferences.vote,
+          });
+        }
+      } catch {
+        // The spectator can enter their name or vote again.
+      }
+    })();
+  }, [connection, join.role, join.topicId, room]);
 
   return null;
 }
 
 export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
   const [join, setJoin] = useState(initialJoin);
+  useEffect(() => rememberRoom(join), [join]);
   const [roomError, setRoomError] = useState<string>();
   const [leaving, setLeaving] = useState(false);
   const [mediaPermissionFailed, setMediaPermissionFailed] = useState(false);
@@ -908,27 +1040,30 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
   const isDebater = join.role === "debater";
 
   // A role change is a fresh join in the same lobby: the backend re-checks
-  // availability and issues a token with the new grants, then the previous
-  // identity leaves. The lobby code stays with the person who created it.
+  // availability and verifies the old token to preserve the participant identity.
+  // Reconnecting with new grants keeps the host recognizable to every viewer.
   async function changeRole(input: JoinInput) {
     const result = await joinTopic(join.topicId, {
       ...input,
       lobbyId: join.lobbyId,
+      previousToken: join.token,
     });
     if ("code" in result) return result.message;
 
     const previous = join;
     setRoomError(undefined);
+    if (result.role === "debater") {
+      updateRoomPreferences(join.topicId, { vote: undefined });
+    }
     setJoin({
       ...result,
       isCreator: previous.isCreator,
       joinCode: previous.joinCode,
     });
-    void leaveTopic(
-      previous.topicId,
-      previous.lobbyId,
-      previous.participantIdentity,
-    ).catch(() => {});
+    if (previous.participantIdentity !== result.participantIdentity)
+      void leaveTopic(previous.topicId, previous.lobbyId, previous.token).catch(
+        () => {},
+      );
     return undefined;
   }
 
@@ -945,7 +1080,7 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
   return (
     <main className="grid h-svh grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-muted/30">
       <LiveKitRoom
-        key={join.participantIdentity}
+        key={join.token}
         audio={isDebater}
         connect={!leaving}
         serverUrl={join.livekitUrl}
@@ -960,6 +1095,7 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
         }}
       >
         <MediaPermissionGuard failed={mediaPermissionFailed} join={join} />
+        <SessionRestorer join={join} />
         <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 bg-[#fbfcfe] px-4 py-2">
           <div className="min-w-0">
             <p className="font-editorial text-base font-semibold text-primary">
@@ -996,6 +1132,7 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
             onLeaving={setLeaving}
             onError={setRoomError}
           />
+          <ParticipantStatus join={join} />
           {roomError ? (
             <Alert className="col-span-full" variant="destructive">
               <AlertDescription>{roomError}</AlertDescription>
@@ -1021,6 +1158,8 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
 
 export default function Debate() {
   const actionResult = useActionData<typeof clientAction>();
+  const { topicId } = useParams();
+  const saved = topicId ? recalledRoom(topicId) : undefined;
   const location = useLocation();
   const handoff =
     typeof location.state === "object" &&
@@ -1028,7 +1167,15 @@ export default function Debate() {
     "joinResult" in location.state
       ? joinResultSchema.safeParse(location.state.joinResult)
       : undefined;
-  const result = handoff?.success ? handoff.data : actionResult;
+  const incoming = handoff?.success ? handoff.data : actionResult;
+  const result =
+    saved &&
+    (!incoming ||
+      (!("code" in incoming) &&
+        incoming.participantIdentity === saved.participantIdentity &&
+        incoming.lobbyId === saved.lobbyId))
+      ? saved
+      : incoming;
   if (!result) return <Navigate to="/" replace />;
 
   if ("code" in result) {
@@ -1042,7 +1189,7 @@ export default function Debate() {
           <AlertDescription>{result.message}</AlertDescription>
         </Alert>
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Link className={buttonVariants({ variant: "outline" })} to="/">
+          <Link className={buttonVariants({ variant: "secondary" })} to="/">
             Choose another side
           </Link>
           <Form method="post">

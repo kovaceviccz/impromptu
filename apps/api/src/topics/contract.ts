@@ -47,9 +47,14 @@ export const joinBodySchema = z.discriminatedUnion("intent", [
     displayName: z.string().trim().min(1).max(40),
     intent: z.literal("debater"),
     lobbyId: joinLobbySchema,
+    previousToken: z.string().min(1).optional(),
     sideIndex: debateSideSchema,
   }),
-  z.strictObject({ intent: z.literal("spectator"), lobbyId: joinLobbySchema }),
+  z.strictObject({
+    intent: z.literal("spectator"),
+    lobbyId: joinLobbySchema,
+    previousToken: z.string().min(1).optional(),
+  }),
 ]);
 
 export const privateLobbyCreateBodySchema = z.discriminatedUnion("intent", [
@@ -66,7 +71,7 @@ export const privateLobbyCreateBodySchema = z.discriminatedUnion("intent", [
 
 export const leaveBodySchema = z.strictObject({
   lobbyId: z.string().min(1),
-  participantIdentity: z.string().uuid(),
+  token: z.string().min(1),
 });
 
 export const privateLobbyLookupBodySchema = z.strictObject({
@@ -129,7 +134,32 @@ export const sideUnavailableErrorSchema = z.strictObject({
   topicTitle: z.string().min(1),
 });
 
+export const roomParticipantsRequestSchema = z.strictObject({
+  lobbyId: z.string().min(1),
+  token: z.string().min(1),
+});
+
+export const roomParticipantsResultSchema = z.strictObject({
+  hostIdentity: z.string().nullable(),
+  participants: z.array(
+    z.strictObject({
+      identity: z.string().min(1),
+      displayName: z.string().min(1),
+      role: debateRoleSchema,
+      sideIndex: debateSideSchema.nullable(),
+    }),
+  ),
+});
+
 export const topicContracts = {
+  roomParticipants: {
+    method: "POST",
+    path: "/api/topics/:topicId/participants",
+    params: topicParamsSchema,
+    body: roomParticipantsRequestSchema,
+    response: roomParticipantsResultSchema,
+    errors: { 401: errorSchema, 404: errorSchema, 503: errorSchema },
+  },
   topics: {
     method: "GET",
     path: "/api/topics",
@@ -163,7 +193,11 @@ export const topicContracts = {
     params: topicParamsSchema,
     body: joinBodySchema,
     response: joinResultSchema,
-    errors: { 404: errorSchema, 409: sideUnavailableErrorSchema },
+    errors: {
+      401: errorSchema,
+      404: errorSchema,
+      409: sideUnavailableErrorSchema,
+    },
   },
   leave: {
     method: "POST",
@@ -171,7 +205,7 @@ export const topicContracts = {
     params: topicParamsSchema,
     body: leaveBodySchema,
     response: healthSchema,
-    errors: { 404: errorSchema },
+    errors: { 401: errorSchema, 404: errorSchema },
   },
 } as const;
 

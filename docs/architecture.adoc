@@ -95,10 +95,26 @@ Room features use LiveKit's official client and React packages.
 A participant changes role by joining again with the new intent and the
 current lobby's id, so a change made inside a private lobby stays in that lobby.
 The backend accepts the id only for a live private lobby of the same topic,
-applies the same availability check as the first join, and issues a token with
-the new grants; the browser then connects with that token and releases the
-previous identity. A rejected change leaves the participant in their current
-role with the backend's message.
+verifies the previous LiveKit token's signature, expiry, and room grant, and
+issues a token with the new grants for the same participant identity. The
+browser remounts the room when the token changes and does not remove that
+identity through the leave endpoint. Keeping the identity stable preserves
+private lobby ownership and the Host badge for existing and newly joined
+viewers. Availability checks exclude the participant's own current position;
+a rejected change leaves their reservation and connection intact. An expired
+room token requires rejoining before changing roles.
+
+The browser keeps the current join result, including the creator's code, in
+session storage for that tab. Reloading the room restores the latest role,
+identity, and code rather than an earlier navigation handoff. A successful
+leave removes the saved result; a failed leave keeps it. Storage being disabled
+does not prevent the current room from working.
+
+A token-authenticated participant snapshot checks membership on connection and
+reconnection. Retrieval failures show an error with a retry button while media,
+chat, and leaving remain usable. LiveKit presence events continue to drive the
+roster; entries are deduplicated by identity across counts, video slots, and the
+participant list. Snapshots and public lobby summaries never include join codes.
 
 Topic status lists each connected or reserved participant with their role and
 side, so the browser can present debaters and spectators separately without
