@@ -80,7 +80,7 @@ describe("Account page", () => {
       await screen.findByRole("heading", { name: "Your account" }),
     ).toBeVisible();
     expect(screen.getByLabelText("Email")).toHaveValue("ada@example.com");
-    expect(screen.getByRole("link", { name: "ada_lovelace" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Ada Lovelace" })).toHaveAttribute(
       "href",
       "/account",
     );
@@ -141,6 +141,10 @@ describe("Account page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     expect(await screen.findByText("Profile updated.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Ada Byron" })).toHaveAttribute(
+      "href",
+      "/account",
+    );
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/account",

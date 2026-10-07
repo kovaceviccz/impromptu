@@ -244,7 +244,7 @@ export default function AccountPage() {
               undone.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter>
+          <DialogFooter className="items-center sm:justify-center">
             <Button
               onClick={() => setDeleteDialogOpen(false)}
               type="button"
