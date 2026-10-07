@@ -1,8 +1,11 @@
 import { EntitySchema } from "@mikro-orm/core";
 
+import type { LobbyState } from "./contract.js";
+
 export class PrivateLobbyEntity {
   id!: string;
   topicId!: string;
+  state!: LobbyState;
   codeHash!: string;
   creatorIdentity!: string;
   createdAt!: Date;
@@ -12,6 +15,13 @@ export class PrivateLobbyEntity {
 export const PrivateLobbySchema = new EntitySchema<PrivateLobbyEntity>({
   class: PrivateLobbyEntity,
   tableName: "private_lobby",
+  checks: [
+    {
+      name: "private_lobby_state_check",
+      expression:
+        "state in ('WAITING', 'DEBATE_IN_PROGRESS', 'VOTING', 'ENDED')",
+    },
+  ],
   indexes: [
     {
       name: "private_lobby_expires_at_idx",
@@ -22,6 +32,11 @@ export const PrivateLobbySchema = new EntitySchema<PrivateLobbyEntity>({
   properties: {
     id: { type: "uuid", primary: true },
     topicId: { type: "string", fieldName: "topic_id", columnType: "text" },
+    state: {
+      type: "string",
+      columnType: "text",
+      defaultRaw: "'WAITING'",
+    },
     codeHash: {
       type: "string",
       fieldName: "code_hash",

@@ -7,6 +7,7 @@ import {
   type LoginInput,
   type PrivateLobbyCreateInput,
   type RegisterInput,
+  type StartDebateInput,
   type UpdateAccountInput,
 } from "@impromptu/api/contracts";
 
@@ -107,6 +108,28 @@ export async function joinTopic(topicId: string, input: JoinInput) {
     return apiContract.join.errors[409].parse(payload);
   }
   return readResponse(response, apiContract.join.response);
+}
+
+export async function startDebate(topicId: string, input: StartDebateInput) {
+  const path = apiContract.startDebate.path.replace(
+    ":topicId",
+    encodeURIComponent(topicId),
+  );
+  const response = await postJson(path, input);
+  return readResponse(response, apiContract.startDebate.response);
+}
+
+export async function closeLobby(
+  topicId: string,
+  lobbyId: string,
+  token: string,
+) {
+  const path = apiContract.closeLobby.path.replace(
+    ":topicId",
+    encodeURIComponent(topicId),
+  );
+  const response = await postJson(path, { lobbyId, token });
+  return readResponse(response, apiContract.closeLobby.response);
 }
 
 export async function leaveTopic(
