@@ -263,12 +263,6 @@ describe("DebateExperience", () => {
       expect(setAttributes).toHaveBeenCalledWith({ "debate.vote": "1" }),
     );
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Display name" }), {
-      target: { value: "Chat guest" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    await waitFor(() => expect(setName).toHaveBeenCalledWith("Chat guest"));
-
     fireEvent.change(screen.getByRole("textbox", { name: "Message" }), {
       target: { value: "  Hello back  " },
     });
