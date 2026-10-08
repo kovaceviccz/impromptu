@@ -92,8 +92,10 @@ participant media. Camera video is mirrored. Audience information is distinct
 from the debate media, and occupancy, voting, and chat have separate visual
 hierarchies.
 
-The home lobby shows one topic at a time. Arrows and touch swipes browse the
-topics.
+The home lobby shows one topic at a time. Each topic card is its lobby and shows
+the current side availability and audience count. Arrows and touch swipes browse
+public topics. Creation asks for a question, both positions, and visibility.
+Private topics stay out of the public carousel and are joined by code.
 
 The participant list sits above the audience vote. Debaters appear by side in
 the position colors with the position text; spectators appear in a separate

@@ -13,8 +13,8 @@ const configSchema = z.object({
     .number()
     .int()
     .min(15)
-    .max(300)
-    .default(60),
+    .max(86_400)
+    .default(86_400),
 });
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {

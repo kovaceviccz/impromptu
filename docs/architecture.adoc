@@ -30,7 +30,7 @@ from the shared `PRODUCT` constant.
 ----
 apps/api               Fastify API and browser-safe contract export
 apps/api/src/accounts  Account registration, login, and sessions
-apps/api/src/lobbies   Private lobby persistence and lifecycle
+apps/api/src/lobbies   Lobby persistence and lifecycle
 apps/api/src/migrations  Versioned PostgreSQL migrations for every feature
 apps/web             React Router application and browser tests
 deploy               production and staging containers, configuration, and OpenTofu
@@ -96,7 +96,7 @@ A participant may change role only while the lobby is waiting. They do so by
 joining again with the new intent and the current lobby's id, so a change made
 inside a private lobby stays in that lobby. After the debate starts, new
 participants may spectate but cannot claim a debater position. The backend
-accepts the id only for a live private lobby of the same topic, verifies the
+accepts the id only for a live lobby of the same topic, verifies the
 previous LiveKit token's signature, expiry, and room grant, and
 issues a token with the new grants for the same participant identity. The
 browser remounts the room when the token changes and does not remove that
@@ -129,7 +129,7 @@ deciding roles itself.
 == Accounts and persistence
 
 Accounts and sessions are stored in PostgreSQL through MikroORM, on the same
-connection as private lobbies. `database.ts` opens that connection with every
+connection as lobbies. `database.ts` opens that connection with every
 feature's entities, and each feature keeps its entities and store beside its
 routes. Tables change only through the versioned migrations in
 `apps/api/src/migrations`, which deployment applies before the application
@@ -164,27 +164,35 @@ The API remains the source for application decisions, while LiveKit remains the
 source for connected-room state. The frontend does not copy either source into
 a global application store.
 
-Private lobby records, creator participant identity, code hashes, and optional
-expiry timestamps are stored in PostgreSQL through MikroORM. Join codes are
-hashed at rest. Public topic definitions remain static application data. LiveKit
-is authoritative for connected participant presence and display names; leaving
-a lobby removes the participant from its LiveKit room and releases any pending
-side reservation. Database schema changes are applied through versioned
-migrations before deployment, not through automatic schema synchronization.
+The API supplies three starter topics. A person can create another topic with a
+question, two positions, and public or private visibility. Each topic is its
+lobby, so its topic ID also identifies its LiveKit room. Created topics and their
+creator identities are stored in PostgreSQL through MikroORM. Public created
+topics appear beside the starters; private topics require a code and stay out of
+public discovery. Codes are hashed at rest. Created topics and codes do not
+expire automatically. The creator can close a created topic.
 
-Private join codes expire after 24 hours. Invalid and expired codes are rejected
-before a participant token is issued. A valid code does not guarantee that a
-requested debater side is still available; in that case the API rejects the
-join with a reason and leaves the participant out of the room. Spectating remains
-available when both sides are occupied.
+LiveKit is authoritative for connected participant presence and display names.
+Leaving disconnects the participant and releases any pending side reservation.
+Database schema changes are applied through versioned migrations before
+deployment.
+
+Server-sent events notify the browser when public topic availability changes.
+The browser reads a fresh API snapshot after each event and after reconnection.
+The page route remains `/debates/:topicId`; tab session storage restores the
+latest join result after a reload.
+
+A valid private code does not reserve a debater position. If another participant
+claims the chosen position first, the API rejects the join. Spectating remains
+available when both positions are occupied.
 
 Guests join public and private lobbies without signing in. Their chosen display
 name is included in the LiveKit token and appears in the room participant list.
-Signed-in people have their username suggested as a display name, but lobby
-participation and private lobby ownership are not yet tied to an account. After the browser disconnects from LiveKit, leave requests
-release pending side reservations and remove the participant from LiveKit;
-repeating a leave request is safe. After a successful leave, the browser returns
-to lobby selection.
+Signed-in people have their username suggested as a display name. Debate
+participation and topic ownership are independent of account state. After the
+browser disconnects from LiveKit, leave requests release pending reservations
+and remove the participant from the room. Repeating a leave request is safe.
+After a successful leave, the browser returns home.
 
 Fastify serves the compiled SPA in production. Vite provides the development
 server and proxies API requests during local development.

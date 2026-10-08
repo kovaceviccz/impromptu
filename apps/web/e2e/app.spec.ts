@@ -100,28 +100,19 @@ test("loads backend topics and enters a debate", async ({ page }) => {
     ),
   );
 
-  await dreamTopic
-    .getByRole("button", {
-      name: /Debate.*Yes: intention still matters/,
-    })
-    .click();
-  await page
-    .getByRole("dialog")
-    .getByPlaceholder("Display name")
-    .fill("Race Guest");
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Debate" })
-    .click();
-
   await expect(
-    page.getByRole("heading", { level: 1, name: "Side unavailable" }),
+    dreamTopic.getByText("No debate positions available"),
   ).toBeVisible();
-  await expect(
-    page.getByText(
-      "Both debater positions are taken. You can still join as a spectator.",
-    ),
-  ).toBeVisible();
+  const occupiedResponse = await page.request.post(
+    "/api/topics/dream-cheating/join",
+    {
+      data: { displayName: "Race Guest", intent: "debater", sideIndex: 0 },
+    },
+  );
+  expect(occupiedResponse.status()).toBe(409);
+  expect(await occupiedResponse.json()).toMatchObject({
+    code: "SIDE_UNAVAILABLE",
+  });
 
   await Promise.all(
     reservations.map(async (reservation) => {
@@ -138,13 +129,14 @@ test("loads backend topics and enters a debate", async ({ page }) => {
     }),
   );
 
-  await page.getByRole("button", { name: "Spectate debate" }).click();
+  await expect(dreamTopic.getByText("Both sides open")).toBeVisible();
+  await dreamTopic.getByRole("button", { name: "Watch live" }).click();
   await expect(
     page.getByRole("textbox", { name: "Display name" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Leave lobby" }).click();
   await expect(dreamTopic.getByText("Both sides open")).toBeVisible();
-  expect(joinRequests).toBe(3);
+  expect(joinRequests).toBe(2);
   expect(leaveRequests).toBe(2);
 
   await page.goto("/debates/dream-cheating");
@@ -154,7 +146,7 @@ test("loads backend topics and enters a debate", async ({ page }) => {
       name: "Choose a topic and side to debate",
     }),
   ).toBeVisible();
-  expect(joinRequests).toBe(3);
+  expect(joinRequests).toBe(2);
 });
 
 test("spectators can chat while debaters have a read-only view", async ({
