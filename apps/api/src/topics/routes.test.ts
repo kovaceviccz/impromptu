@@ -696,9 +696,10 @@ describe("API contracts", () => {
 
   it("rejects a role change after a private debate has started", async () => {
     const { gateway, issued } = fakeLiveKit();
+    const startedLobbyId = "45b22393-98f5-41af-a259-7ea625a4e01e";
     const privateLobbies = createMemoryPrivateLobbyStore([
       {
-        id: "started-lobby",
+        id: startedLobbyId,
         topicId: "dream-cheating",
         state: "DEBATE_IN_PROGRESS",
         codeHash: hashLobbyCode("STARTED1"),
@@ -713,7 +714,7 @@ describe("API contracts", () => {
       url: "/api/topics/dream-cheating/join",
       payload: {
         ...debaterInput,
-        lobbyId: "started-lobby",
+        lobbyId: startedLobbyId,
         previousToken: "creator-identity",
       },
     });
@@ -928,7 +929,9 @@ describe("API contracts", () => {
 
   it("rejects an unknown topic", async () => {
     const { gateway } = fakeLiveKit();
-    const app = await testApp(gateway);
+    const lobbies = createMemoryPrivateLobbyStore();
+    const lookup = vi.spyOn(lobbies, "findById");
+    const app = await testApp(gateway, lobbies);
 
     const response = await app.inject({
       method: "POST",
@@ -938,6 +941,16 @@ describe("API contracts", () => {
 
     expect(response.statusCode).toBe(404);
     expect(response.json()).toEqual({ message: "Topic not found" });
+    expect(lookup).not.toHaveBeenCalled();
+
+    const invalidLobby = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/join",
+      payload: { intent: "spectator", lobbyId: "not-a-uuid" },
+    });
+    expect(invalidLobby.statusCode).toBe(404);
+    expect(invalidLobby.json()).toEqual({ message: "Lobby not found" });
+    expect(lookup).not.toHaveBeenCalled();
   });
 
   it("rejects an invalid join request at runtime", async () => {

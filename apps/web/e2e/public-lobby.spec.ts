@@ -34,6 +34,10 @@ test("creating a public topic creates its only lobby and closing it removes the 
   const viewer = await viewerContext.newPage();
   try {
     await Promise.all([page.goto("/"), viewer.goto("/")]);
+    await expect(
+      viewer.getByRole("heading", { name: "Can you cheat in a dream?" }),
+    ).toBeVisible();
+    await viewerContext.setOffline(true);
     await page.getByRole("button", { name: "Create or join a topic" }).click();
     await page.getByLabel("Topic question").fill(title);
     await page.getByLabel("Affirmative position").fill("Yes, they can");
@@ -43,10 +47,13 @@ test("creating a public topic creates its only lobby and closing it removes the 
     await page.getByLabel("Join as").selectOption("spectator");
     await page.getByRole("button", { name: "Create and join" }).click();
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
+    await viewerContext.setOffline(false);
+    await expect(viewer.getByText("1 of 4")).toBeVisible({ timeout: 20_000 });
     for (let index = 0; index < 3; index += 1) {
       await viewer.getByRole("button", { name: "Next topic" }).click();
     }
     await expect(viewer.getByRole("heading", { name: title })).toBeVisible();
+    await expect(viewer.getByText("4 of 4")).toBeVisible();
     await expect(viewer.getByText("1 person watching")).toBeVisible();
     await viewer.getByRole("button", { name: "Watch live" }).click();
     await expect(viewer.getByRole("heading", { name: title })).toBeVisible();

@@ -32,8 +32,6 @@ import {
 } from "react";
 import {
   type ClientActionFunctionArgs,
-  Form,
-  Link,
   Navigate,
   useActionData,
   useLocation,
@@ -45,7 +43,7 @@ import {
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Bubble, BubbleContent } from "~/components/ui/bubble";
-import { Button, buttonVariants } from "~/components/ui/button";
+import { Button } from "~/components/ui/button";
 import {
   EmojiPicker,
   EmojiPickerContent,
@@ -132,10 +130,7 @@ export async function clientAction({
   );
   try {
     const result = await joinTopic(params.topicId, input);
-    if ("code" in result && result.code === "ROUND_ALREADY_STARTED") {
-      return redirect(`/?lobbyError=${encodeURIComponent(result.message)}`);
-    }
-    if ("code" in result && input.lobbyId) {
+    if ("code" in result) {
       return redirect(`/?lobbyError=${encodeURIComponent(result.message)}`);
     }
     return result;
@@ -1429,28 +1424,7 @@ export default function Debate() {
       : incoming;
   if (!result) return <Navigate to="/" replace />;
 
-  if ("code" in result) {
-    return (
-      <main className="mx-auto grid max-w-xl gap-6 p-6 sm:py-12">
-        <header>
-          <h1 className="text-2xl font-semibold">Side unavailable</h1>
-          <p className="text-sm text-muted-foreground">{result.topicTitle}</p>
-        </header>
-        <Alert variant="destructive">
-          <AlertDescription>{result.message}</AlertDescription>
-        </Alert>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Link className={buttonVariants({ variant: "secondary" })} to="/">
-            Choose another side
-          </Link>
-          <Form method="post">
-            <input name="intent" type="hidden" value="spectator" />
-            <Button type="submit">Spectate debate</Button>
-          </Form>
-        </div>
-      </main>
-    );
-  }
+  if ("code" in result) return <Navigate to="/" replace />;
 
   return <DebateExperience join={result} key={result.participantIdentity} />;
 }
