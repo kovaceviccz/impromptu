@@ -226,9 +226,9 @@ describe("TopicList", () => {
     createLobbyMock.mockResolvedValue({
       lobbyId: "private-lobby-id",
       state: "WAITING",
-      topicId: "dream-cheating",
-      topicTitle: "Can you cheat in a dream?",
-      sides: ["Yes", "No"],
+      topicId: "private-lobby-id",
+      topicTitle: "Dream debate",
+      sides: ["Yes: dreams are vivid", "No: dreams are involuntary"],
       participantIdentity: "7ffcd8af-4d5a-45d9-97cc-6db63b930b09",
       displayName: "Sam",
       role: "debater",
@@ -289,7 +289,7 @@ describe("TopicList", () => {
       intent: "debater",
       sideIndex: 0,
     });
-    expect(router.state.location.pathname).toBe("/debates/dream-cheating");
+    expect(router.state.location.pathname).toBe("/debates/private-lobby-id");
     expect(router.state.location.state.joinResult).toMatchObject({
       lobbyId: "private-lobby-id",
       isCreator: true,
