@@ -10,7 +10,7 @@ async function findPrivate(page: Page, code: string, name: string) {
   await page.goto("/");
   await page
     .getByRole("button", {
-      name: "Create or join a private lobby",
+      name: "Create or join a topic",
       exact: true,
     })
     .click();
@@ -27,10 +27,17 @@ test("private codes, guests, registered users, reloads, membership recovery and 
   await page.goto("/");
   await page
     .getByRole("button", {
-      name: "Create or join a private lobby",
+      name: "Create or join a topic",
       exact: true,
     })
     .click();
+  await page
+    .getByLabel("Topic question", { exact: true })
+    .fill("Acceptance lobby");
+  await page
+    .getByLabel("Affirmative position")
+    .fill("Yes: intention still matters");
+  await page.getByLabel("Opposing position").fill("No: outcomes decide");
   await page
     .getByLabel("Creator display name", { exact: true })
     .fill("Acceptance host");
@@ -53,7 +60,7 @@ test("private codes, guests, registered users, reloads, membership recovery and 
     await guest.goto("/");
     await guest
       .getByRole("button", {
-        name: "Create or join a private lobby",
+        name: "Create or join a topic",
         exact: true,
       })
       .click();
@@ -226,7 +233,7 @@ test("private codes, guests, registered users, reloads, membership recovery and 
       restoredRoster.getByText("Acceptance guest", { exact: true }),
     ).toHaveCount(0);
     const repeated = await guest.request.post(
-      "/api/topics/dream-cheating/leave",
+      `/api/topics/${guestJoin.topicId}/leave`,
       {
         data: {
           lobbyId: guestJoin.lobbyId,
@@ -236,8 +243,9 @@ test("private codes, guests, registered users, reloads, membership recovery and 
     );
     expect(repeated.ok()).toBe(true);
     expect(
-      await guest.evaluate(() =>
-        sessionStorage.getItem("impromptu.room.dream-cheating"),
+      await guest.evaluate(
+        (topicId) => sessionStorage.getItem(`impromptu.room.${topicId}`),
+        guestJoin.topicId,
       ),
     ).toBeNull();
     await page.getByRole("button", { name: "Close lobby" }).click();
@@ -247,24 +255,22 @@ test("private codes, guests, registered users, reloads, membership recovery and 
   }
 });
 
-test("a valid code rejects an occupied debate position and leaves the guest out", async ({
+test("a valid private topic code rejects an occupied position", async ({
   page,
 }) => {
-  const creatorResponse = await page.request.post(
-    "/api/topics/dream-cheating/private",
-    { data: { displayName: "Reservation host", intent: "spectator" } },
-  );
-  const creator = apiContract.privateTopic.response.parse(
+  const creatorResponse = await page.request.post("/api/topics", {
+    data: {
+      name: `Can machines dream ${Date.now()}?`,
+      sides: ["Yes, they can", "No, they cannot"],
+      visibility: "private",
+      displayName: "Reservation host",
+      intent: "spectator",
+    },
+  });
+  expect(creatorResponse.ok()).toBe(true);
+  const creator = apiContract.createLobby.response.parse(
     await creatorResponse.json(),
   );
-  const otherResponse = await page.request.post(
-    "/api/topics/dream-cheating/private",
-    { data: { displayName: "Another host", intent: "spectator" } },
-  );
-  const other = apiContract.privateTopic.response.parse(
-    await otherResponse.json(),
-  );
-  expect(other.joinCode).not.toBe(creator.joinCode);
   await findPrivate(page, creator.joinCode!, "Blocked guest");
   const reservedResponse = await page.request.post("/api/topics/join-code", {
     data: {
@@ -284,11 +290,11 @@ test("a valid code rejects an occupied debate position and leaves the guest out"
     );
     await expect(page).toHaveURL("http://127.0.0.1:5173/");
   } finally {
-    await page.request.post("/api/topics/dream-cheating/leave", {
-      data: {
-        lobbyId: reservation.lobbyId,
-        token: reservation.token,
-      },
+    await page.request.post(`/api/topics/${creator.topicId}/leave`, {
+      data: { lobbyId: reservation.lobbyId, token: reservation.token },
+    });
+    await page.request.post(`/api/topics/${creator.topicId}/close`, {
+      data: { lobbyId: creator.lobbyId, token: creator.token },
     });
   }
 });

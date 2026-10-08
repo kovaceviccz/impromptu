@@ -28,20 +28,27 @@ export const privateLobbyPreviewSchema = topicStatusSchema.extend({
   state: lobbyStateSchema,
 });
 
-export const privateTopicStatusSchema = topicStatusSchema.extend({
-  visibility: topicVisibilitySchema,
-  joinCode: z.string().min(1).optional(),
-  shareUrl: z.string().min(1).optional(),
+export const topicsSchema = z.array(topicStatusSchema);
+
+export const publicLobbySchema = z.strictObject({
+  lobbyId: z.string().min(1),
+  topicId: z.string().min(1),
+  name: z.string().min(1),
+  topicTitle: z.string().min(1),
+  sides: z.tuple([z.string().min(1), z.string().min(1)]),
+  state: lobbyStateSchema,
+  debaterCount: z.number().int().min(0).max(2),
+  spectatorCount: z.number().int().min(0),
+  sideAvailability: z.tuple([z.boolean(), z.boolean()]),
 });
 
-export const topicsSchema = z.array(topicStatusSchema);
+export const publicLobbiesSchema = z.array(publicLobbySchema);
 
 export const topicParamsSchema = z.strictObject({
   topicId: z.string().min(1),
 });
 
-// lobbyId selects a private lobby of this topic, used when a participant
-// changes role from inside it; without one, the public lobby is joined.
+// The lobby ID identifies the same room as its topic ID.
 const joinLobbySchema = z.string().min(1).optional();
 
 export const joinBodySchema = z.discriminatedUnion("intent", [
@@ -59,13 +66,25 @@ export const joinBodySchema = z.discriminatedUnion("intent", [
   }),
 ]);
 
-export const privateLobbyCreateBodySchema = z.discriminatedUnion("intent", [
+export const lobbyCreateBodySchema = z.discriminatedUnion("intent", [
   z.strictObject({
+    name: z.string().trim().min(1).max(80),
+    sides: z.tuple([
+      z.string().trim().min(1).max(120),
+      z.string().trim().min(1).max(120),
+    ]),
+    visibility: topicVisibilitySchema,
     displayName: z.string().trim().min(1).max(40),
     intent: z.literal("debater"),
     sideIndex: debateSideSchema,
   }),
   z.strictObject({
+    name: z.string().trim().min(1).max(80),
+    sides: z.tuple([
+      z.string().trim().min(1).max(120),
+      z.string().trim().min(1).max(120),
+    ]),
+    visibility: topicVisibilitySchema,
     displayName: z.string().trim().min(1).max(40),
     intent: z.literal("spectator"),
   }),
@@ -113,6 +132,8 @@ export const joinCodeBodySchema = z.discriminatedUnion("intent", [
 
 export const joinResultSchema = z.strictObject({
   lobbyId: z.string().min(1),
+  lobbyName: z.string().min(1).optional(),
+  visibility: topicVisibilitySchema.optional(),
   state: lobbyStateSchema,
   topicId: z.string().min(1),
   topicTitle: z.string().min(1),
@@ -127,8 +148,6 @@ export const joinResultSchema = z.strictObject({
   livekitUrl: z.string().min(1),
   token: z.string().min(1),
 });
-
-export const privateTopicCreateResultSchema = joinResultSchema;
 
 export const errorSchema = z.strictObject({ message: z.string().min(1) });
 
@@ -172,6 +191,22 @@ export const roomParticipantsResultSchema = z.strictObject({
 });
 
 export const topicContracts = {
+  publicLobbies: {
+    method: "GET",
+    path: "/api/lobbies/public",
+    response: publicLobbiesSchema,
+  },
+  publicLobbyEvents: {
+    method: "GET",
+    path: "/api/lobbies/public/events",
+  },
+  createLobby: {
+    method: "POST",
+    path: "/api/topics",
+    body: lobbyCreateBodySchema,
+    response: joinResultSchema,
+    errors: { 409: errorSchema },
+  },
   startDebate: {
     method: "POST",
     path: "/api/topics/:topicId/start",
@@ -198,14 +233,6 @@ export const topicContracts = {
     method: "GET",
     path: "/api/topics",
     response: topicsSchema,
-  },
-  privateTopic: {
-    method: "POST",
-    path: "/api/topics/:topicId/private",
-    params: topicParamsSchema,
-    body: privateLobbyCreateBodySchema,
-    response: privateTopicCreateResultSchema,
-    errors: { 404: errorSchema, 409: sideUnavailableErrorSchema },
   },
   privateLobbyLookup: {
     method: "POST",
@@ -235,6 +262,7 @@ export const topicContracts = {
     response: joinResultSchema,
     errors: {
       401: errorSchema,
+      403: errorSchema,
       404: errorSchema,
       409: z.union([
         sideUnavailableErrorSchema,
@@ -261,13 +289,12 @@ export const topicContracts = {
 } as const;
 
 export type TopicStatus = z.output<typeof topicStatusSchema>;
+export type PublicLobby = z.output<typeof publicLobbySchema>;
+export type LobbyCreateInput = z.output<typeof lobbyCreateBodySchema>;
 export type LobbyParticipant = z.output<typeof lobbyParticipantSchema>;
 export type JoinInput = z.output<typeof joinBodySchema>;
 export type StartDebateInput = z.output<typeof startDebateBodySchema>;
 export type StartDebateResult = z.output<typeof startDebateResultSchema>;
-export type PrivateLobbyCreateInput = z.output<
-  typeof privateLobbyCreateBodySchema
->;
 export type PrivateLobbyPreview = z.output<typeof privateLobbyPreviewSchema>;
 export type JoinByCodeInput = z.output<typeof joinCodeBodySchema>;
 export type JoinResult = z.output<typeof joinResultSchema>;

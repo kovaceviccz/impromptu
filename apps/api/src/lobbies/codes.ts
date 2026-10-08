@@ -28,6 +28,7 @@ export async function createPrivateLobby(
   topicId: string,
   creatorIdentity: string,
   nextCode: () => string = generateCode,
+  name = topicId,
 ) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const code = nextCode();
@@ -37,6 +38,8 @@ export async function createPrivateLobby(
     const lobby: PrivateLobbyRecord = {
       id: randomUUID(),
       topicId,
+      name,
+      visibility: "private",
       state: "WAITING",
       codeHash,
       creatorIdentity,
@@ -57,6 +60,69 @@ export async function createPrivateLobby(
     }
   }
 
+  throw new Error("Unable to generate a unique private lobby code");
+}
+
+export async function createPublicLobby(
+  store: PrivateLobbyStore,
+  topicId: string,
+  creatorIdentity: string,
+  name: string,
+) {
+  const lobby: PrivateLobbyRecord = {
+    id: randomUUID(),
+    topicId,
+    name,
+    visibility: "public",
+    state: "WAITING",
+    codeHash: null,
+    creatorIdentity,
+    createdAt: new Date(),
+    expiresAt: null,
+  };
+  await store.create(lobby);
+  return lobby;
+}
+
+export async function createTopicLobby(
+  store: PrivateLobbyStore,
+  input: {
+    name: string;
+    sides: [string, string];
+    visibility: "public" | "private";
+    creatorIdentity: string;
+  },
+) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const id = randomUUID();
+    const code = input.visibility === "private" ? generateCode() : undefined;
+    const record: PrivateLobbyRecord = {
+      id,
+      topicId: id,
+      name: input.name,
+      side0: input.sides[0],
+      side1: input.sides[1],
+      visibility: input.visibility,
+      state: "WAITING",
+      codeHash: code ? hashLobbyCode(code) : null,
+      creatorIdentity: input.creatorIdentity,
+      createdAt: new Date(),
+      expiresAt: null,
+    };
+    try {
+      await store.create(record);
+      return { ...record, code };
+    } catch (error) {
+      if (
+        code &&
+        (error instanceof DuplicateLobbyCodeError ||
+          (error instanceof UniqueConstraintViolationException &&
+            (await store.findByCodeHash(hashLobbyCode(code)))))
+      )
+        continue;
+      throw error;
+    }
+  }
   throw new Error("Unable to generate a unique private lobby code");
 }
 

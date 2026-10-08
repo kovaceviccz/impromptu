@@ -1,5 +1,6 @@
 import {
   PRODUCT,
+  apiContract,
   type PrivateLobbyPreview,
   type TopicStatus,
 } from "@impromptu/api/contracts";
@@ -30,7 +31,7 @@ import {
 import { Input } from "~/components/ui/input";
 
 import {
-  createPrivateTopic,
+  createLobby as createLobbyRequest,
   getSession,
   getTopics,
   joinTopicByCode,
@@ -82,14 +83,15 @@ function parseSideIndex(value: LobbyChoice): 0 | 1 | undefined {
 
 function PrivateLobby({
   defaultDisplayName = "",
-  topics,
 }: {
   defaultDisplayName?: string;
-  topics: TopicStatus[];
 }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
-  const [topicId, setTopicId] = useState(topics[0]?.id ?? "");
+  const [lobbyName, setLobbyName] = useState("");
+  const [affirmative, setAffirmative] = useState("");
+  const [opposing, setOpposing] = useState("");
+  const [visibility, setVisibility] = useState<"public" | "private">("private");
   const [joinCode, setJoinCode] = useState("");
   const [creatorName, setCreatorName] = useState(defaultDisplayName);
   const [joinerName, setJoinerName] = useState(defaultDisplayName);
@@ -101,23 +103,36 @@ function PrivateLobby({
 
   async function createLobby(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!lobbyName.trim()) {
+      setError("Enter a topic question.");
+      return;
+    }
+    if (!affirmative.trim() || !opposing.trim()) {
+      setError("Enter both argument positions.");
+      return;
+    }
     setBusy(true);
     setError(undefined);
     try {
       const sideIndex = parseSideIndex(creatorChoice);
       const input =
         sideIndex === undefined
-          ? { displayName: creatorName.trim(), intent: "spectator" as const }
+          ? {
+              name: lobbyName.trim(),
+              sides: [affirmative.trim(), opposing.trim()] as [string, string],
+              visibility,
+              displayName: creatorName.trim(),
+              intent: "spectator" as const,
+            }
           : {
+              name: lobbyName.trim(),
+              sides: [affirmative.trim(), opposing.trim()] as [string, string],
+              visibility,
               displayName: creatorName.trim(),
               intent: "debater" as const,
               sideIndex,
             };
-      const result = await createPrivateTopic(topicId, input);
-      if ("code" in result) {
-        setError(result.message);
-        return;
-      }
+      const result = await createLobbyRequest(input);
       await navigate(`/debates/${result.topicId}`, {
         state: { joinResult: result },
       });
@@ -206,7 +221,7 @@ function PrivateLobby({
         onClick={() => setOpen(true)}
       >
         <LockKeyholeIcon aria-hidden="true" />
-        Create or join a private lobby
+        Create or join a topic
       </Button>
       <Dialog
         open={open}
@@ -218,31 +233,73 @@ function PrivateLobby({
         <DialogContent className="max-h-[calc(100svh-2rem)] gap-5 overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="font-editorial text-xl">
-              Private lobby
+              Create or join a topic
             </DialogTitle>
             <DialogDescription>
-              Create a lobby code or join with one.
+              Create a public or private debate topic, or join with a code.
             </DialogDescription>
           </DialogHeader>
 
           <section className="grid gap-3">
-            <h2 className="font-medium">Create a lobby</h2>
+            <h2 className="font-medium">Create a topic</h2>
             <form className="grid gap-3" onSubmit={createLobby}>
-              <label className="grid gap-1.5 text-sm" htmlFor="private-topic">
-                Topic
+              <label className="grid gap-1.5 text-sm" htmlFor="lobby-name">
+                Topic question
+                <Input
+                  id="lobby-name"
+                  maxLength={80}
+                  pattern=".*\S.*"
+                  required
+                  value={lobbyName}
+                  onChange={(event) => setLobbyName(event.target.value)}
+                  onInvalid={() => setError("Enter a topic question.")}
+                />
+              </label>
+              <label
+                className="grid gap-1.5 text-sm"
+                htmlFor="affirmative-position"
+              >
+                Affirmative position
+                <Input
+                  id="affirmative-position"
+                  maxLength={120}
+                  required
+                  value={affirmative}
+                  onChange={(event) => setAffirmative(event.target.value)}
+                  onInvalid={() => setError("Enter both argument positions.")}
+                />
+              </label>
+              <label
+                className="grid gap-1.5 text-sm"
+                htmlFor="opposing-position"
+              >
+                Opposing position
+                <Input
+                  id="opposing-position"
+                  maxLength={120}
+                  required
+                  value={opposing}
+                  onChange={(event) => setOpposing(event.target.value)}
+                  onInvalid={() => setError("Enter both argument positions.")}
+                />
+              </label>
+              <label
+                className="grid gap-1.5 text-sm"
+                htmlFor="lobby-visibility"
+              >
+                Visibility
                 <select
                   className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
-                  id="private-topic"
-                  value={topicId}
+                  id="lobby-visibility"
+                  value={visibility}
                   onChange={(event) => {
-                    setTopicId(event.target.value);
+                    const next = event.target.value;
+                    if (next === "public" || next === "private")
+                      setVisibility(next);
                   }}
                 >
-                  {topics.map((topic) => (
-                    <option key={topic.id} value={topic.id}>
-                      {topic.title}
-                    </option>
-                  ))}
+                  <option value="public">Public</option>
+                  <option value="private">Private</option>
                 </select>
               </label>
               <label className="grid gap-1.5 text-sm" htmlFor="creator-name">
@@ -255,6 +312,7 @@ function PrivateLobby({
                   required
                   value={creatorName}
                   onChange={(event) => setCreatorName(event.target.value)}
+                  onInvalid={() => setError("Enter a display name.")}
                 />
               </label>
               <label className="grid gap-1.5 text-sm" htmlFor="creator-side">
@@ -267,17 +325,12 @@ function PrivateLobby({
                     setCreatorChoice(parseLobbyChoice(event.target.value))
                   }
                 >
-                  {topics
-                    .find((topic) => topic.id === topicId)
-                    ?.sides.map((side, sideIndex) => (
-                      <option key={side} value={sideIndex}>
-                        {side}
-                      </option>
-                    ))}
+                  <option value="0">{affirmative || "Affirmative"}</option>
+                  <option value="1">{opposing || "Opposing"}</option>
                   <option value="spectator">Spectate</option>
                 </select>
               </label>
-              <Button disabled={busy || topics.length === 0} type="submit">
+              <Button disabled={busy} type="submit">
                 {busy ? "Please wait…" : "Create and join"}
               </Button>
             </form>
@@ -381,7 +434,11 @@ export function TopicList({
   topics: TopicStatus[];
 }) {
   const [selection, setSelection] = useState<Selection>();
-  const [topicIndex, setTopicIndex] = useState(0);
+  const [selectedTopicIndex, setTopicIndex] = useState(0);
+  const topicIndex = Math.min(
+    selectedTopicIndex,
+    Math.max(0, topics.length - 1),
+  );
   const touchStart = useRef<number | undefined>(undefined);
   const navigation = useNavigation();
   const isJoining = navigation.state === "submitting";
@@ -393,15 +450,13 @@ export function TopicList({
         <p className="m-auto text-center text-muted-foreground">
           No debates are available right now.
         </p>
-        <PrivateLobby defaultDisplayName={defaultDisplayName} topics={topics} />
+        <PrivateLobby defaultDisplayName={defaultDisplayName} />
       </>
     );
   }
 
   function moveTopic(offset: number) {
-    setTopicIndex(
-      (current) => (current + offset + topics.length) % topics.length,
-    );
+    setTopicIndex((topicIndex + offset + topics.length) % topics.length);
   }
 
   return (
@@ -433,8 +488,8 @@ export function TopicList({
               touchStart.current = event.touches[0]!.clientX;
             }}
           >
-            <header className="grid h-24 content-center gap-3 px-5 py-4 sm:h-28 sm:px-7">
-              <h2 className="font-editorial max-w-full text-[clamp(1.5rem,5.5vw,2.75rem)] leading-none font-semibold tracking-tight whitespace-nowrap">
+            <header className="grid min-h-24 content-center gap-3 px-5 py-4 sm:min-h-28 sm:px-7">
+              <h2 className="font-editorial max-w-full text-[clamp(1.5rem,5.5vw,2.75rem)] leading-tight font-semibold tracking-tight break-words">
                 {topic.title}
               </h2>
               <p className="flex flex-wrap gap-x-2 gap-y-1 text-sm text-muted-foreground">
@@ -616,13 +671,16 @@ export function TopicList({
           ) : null}
         </DialogContent>
       </Dialog>
-      <PrivateLobby defaultDisplayName={defaultDisplayName} topics={topics} />
+      <PrivateLobby defaultDisplayName={defaultDisplayName} />
     </>
   );
 }
 
 export default function Home() {
-  const { account, topics } = useLoaderData<typeof clientLoader>();
+  const { account, topics: initialTopics } =
+    useLoaderData<typeof clientLoader>();
+  const [topics, setTopics] = useState(initialTopics);
+  const [topicListError, setTopicListError] = useState<string>();
   const location = useLocation();
   const navigate = useNavigate();
   const arrivedAfterMediaPermissionFailure =
@@ -633,6 +691,32 @@ export default function Home() {
   const [showMediaPermissionFailure] = useState(
     arrivedAfterMediaPermissionFailure,
   );
+  const lobbyJoinError = new URLSearchParams(location.search).get("lobbyError");
+
+  useEffect(() => {
+    if (typeof EventSource === "undefined") return undefined;
+    let active = true;
+    const events = new EventSource(apiContract.publicLobbyEvents.path);
+    const refresh = () => {
+      void getTopics().then(
+        (latestTopics) => {
+          if (!active) return;
+          setTopics(latestTopics);
+          setTopicListError(undefined);
+        },
+        () => {
+          if (active)
+            setTopicListError("Debate topics could not be refreshed.");
+        },
+      );
+    };
+    events.addEventListener("changed", refresh);
+    events.onopen = refresh;
+    return () => {
+      active = false;
+      events.close();
+    };
+  }, []);
 
   useEffect(() => {
     if (!showMediaPermissionFailure) return;
@@ -660,6 +744,16 @@ export default function Home() {
         {showMediaPermissionFailure ? (
           <p className="text-sm font-medium text-destructive" role="alert">
             {MEDIA_PERMISSION_MESSAGE}
+          </p>
+        ) : null}
+        {lobbyJoinError ? (
+          <p className="text-sm font-medium text-destructive" role="alert">
+            {lobbyJoinError}
+          </p>
+        ) : null}
+        {topicListError ? (
+          <p className="text-sm text-destructive" role="alert">
+            {topicListError}
           </p>
         ) : null}
         <TopicList defaultDisplayName={account?.displayName} topics={topics} />

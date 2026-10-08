@@ -5,7 +5,7 @@ import "@testing-library/jest-dom/vitest";
 import type {
   JoinByCodeInput,
   JoinResult,
-  PrivateLobbyCreateInput,
+  LobbyCreateInput,
   PrivateLobbyPreview,
   SideUnavailableError,
   TopicStatus,
@@ -21,15 +21,9 @@ import {
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { createPrivateTopicMock, joinTopicByCodeMock, lookupPrivateLobbyMock } =
+const { createLobbyMock, joinTopicByCodeMock, lookupPrivateLobbyMock } =
   vi.hoisted(() => ({
-    createPrivateTopicMock:
-      vi.fn<
-        (
-          topicId: string,
-          input: PrivateLobbyCreateInput,
-        ) => Promise<JoinResult | SideUnavailableError>
-      >(),
+    createLobbyMock: vi.fn<(input: LobbyCreateInput) => Promise<JoinResult>>(),
     joinTopicByCodeMock:
       vi.fn<
         (input: JoinByCodeInput) => Promise<JoinResult | SideUnavailableError>
@@ -40,7 +34,7 @@ const { createPrivateTopicMock, joinTopicByCodeMock, lookupPrivateLobbyMock } =
 
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
-  createPrivateTopic: createPrivateTopicMock,
+  createLobby: createLobbyMock,
   joinTopicByCode: joinTopicByCodeMock,
   lookupPrivateLobby: lookupPrivateLobbyMock,
 }));
@@ -229,7 +223,7 @@ describe("TopicList", () => {
   });
 
   it("creates a private lobby and automatically joins the creator", async () => {
-    createPrivateTopicMock.mockResolvedValue({
+    createLobbyMock.mockResolvedValue({
       lobbyId: "private-lobby-id",
       state: "WAITING",
       topicId: "dream-cheating",
@@ -270,15 +264,27 @@ describe("TopicList", () => {
     render(<RouterProvider router={router} />);
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Create or join a private lobby" }),
+      screen.getByRole("button", { name: "Create or join a topic" }),
     );
+    fireEvent.change(screen.getByLabelText("Topic question"), {
+      target: { value: "Dream debate" },
+    });
+    fireEvent.change(screen.getByLabelText("Affirmative position"), {
+      target: { value: "Yes: dreams are vivid" },
+    });
+    fireEvent.change(screen.getByLabelText("Opposing position"), {
+      target: { value: "No: dreams are involuntary" },
+    });
     fireEvent.change(screen.getByLabelText("Creator display name"), {
       target: { value: "Sam" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create and join" }));
 
     expect(await screen.findByText("Connected to private lobby")).toBeVisible();
-    expect(createPrivateTopicMock).toHaveBeenCalledWith("dream-cheating", {
+    expect(createLobbyMock).toHaveBeenCalledWith({
+      name: "Dream debate",
+      sides: ["Yes: dreams are vivid", "No: dreams are involuntary"],
+      visibility: "private",
       displayName: "Sam",
       intent: "debater",
       sideIndex: 0,
@@ -335,11 +341,8 @@ describe("TopicList", () => {
       screen.getByText("No debates are available right now."),
     ).toBeVisible();
     fireEvent.click(
-      screen.getByRole("button", { name: "Create or join a private lobby" }),
+      screen.getByRole("button", { name: "Create or join a topic" }),
     );
-    expect(
-      screen.getByRole("button", { name: "Create and join" }),
-    ).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Lobby code"), {
       target: { value: "abcd23" },
     });
@@ -408,11 +411,8 @@ describe("TopicList", () => {
       screen.getByText("No debates are available right now."),
     ).toBeVisible();
     fireEvent.click(
-      screen.getByRole("button", { name: "Create or join a private lobby" }),
+      screen.getByRole("button", { name: "Create or join a topic" }),
     );
-    expect(
-      screen.getByRole("button", { name: "Create and join" }),
-    ).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Lobby code"), {
       target: { value: "ABCD23" },
     });
