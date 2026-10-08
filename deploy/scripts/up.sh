@@ -8,6 +8,8 @@ docker compose config --quiet
 sh scripts/validate-envoy.sh
 
 docker compose pull
+docker compose run --rm --no-deps -T --entrypoint node app \
+  apps/api/dist/migrate.js
 docker compose up --detach --remove-orphans
 docker compose restart envoy
 docker compose exec -T app \

@@ -15,9 +15,17 @@ Spectators can watch, vote, and participate in chat.
 ## Features
 
 - Two live debaters per topic
+- Public and private lobbies with shareable join codes
 - Live video and audio with LiveKit
 - Spectator mode with chat
 - Real-time voting
+- Switching between debating and spectating from the room
+- Accounts with registration, login, and persistent sessions
+
+Visit [impromptu.social](https://impromptu.social/) to join a live debate. A
+staging environment is available at
+[staging.impromptu.social](https://staging.impromptu.social/) for validating
+changes from the `staging` branch before they reach production.
 
 ## Run locally
 
@@ -26,6 +34,11 @@ Docker Compose is the easiest way to run the project.
 ```sh
 docker compose up --build
 ```
+
+Compose starts a local PostgreSQL database. In local development, the API resets
+that database and applies all versioned migrations on startup, so local lobbies
+and accounts are cleared each time. No database credentials are needed in a root
+`.env` file.
 
 Then open:
 
@@ -54,6 +67,20 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+Private lobby codes, creator identities, accounts, and sessions are stored in
+PostgreSQL. Connected participant presence and display names come from LiveKit.
+Guests can join lobbies; an account does not own a lobby or determine room
+roles.
+
+Production deployment requires `DATABASE_URL` for the app and
+`MIGRATION_DATABASE_URL` for migrations. Put the pooled and direct PostgreSQL
+URLs in the ignored `deploy/.env` file, then run
+`sh deploy/scripts/configure-github.sh true` to install both as GitHub
+`production` secrets and enable automatic deployment from `main`. Commit each
+schema change with a versioned migration in `apps/api/src/migrations/`. Each
+deployment runs pending migrations from the new image on the server before
+starting the new app container. A migration failure stops the deployment.
 
 ## Documentation
 
