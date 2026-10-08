@@ -763,7 +763,11 @@ export default function Home() {
             {topicListError}
           </p>
         ) : null}
-        <TopicList defaultDisplayName={account?.displayName} topics={topics} />
+        <TopicList
+          defaultDisplayName={account?.displayName}
+          key={location.key}
+          topics={topics}
+        />
       </section>
     </main>
   );
