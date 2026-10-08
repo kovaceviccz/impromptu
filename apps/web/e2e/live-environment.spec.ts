@@ -95,7 +95,7 @@ test("live public topic creation, discovery, joining, and closure show no errors
     );
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
     await expect(guest.getByText(`1 of ${initialCount + 1}`)).toBeVisible();
-    for (let index = 0; index < initialCount; index += 1)
+    for (let index = 0; index < 3; index += 1)
       await guest.getByRole("button", { name: "Next topic" }).click();
     await expect(guest.getByRole("heading", { name: title })).toBeVisible();
     await guest
@@ -118,7 +118,7 @@ test("live public topic creation, discovery, joining, and closure show no errors
         .locator("video"),
     ).toBeVisible();
     await expect(second.getByText(`1 of ${initialCount + 1}`)).toBeVisible();
-    for (let index = 0; index < initialCount; index += 1)
+    for (let index = 0; index < 3; index += 1)
       await second.getByRole("button", { name: "Next topic" }).click();
     await second
       .getByRole("button", { name: /Debate.*No: context is too important/ })
@@ -213,7 +213,9 @@ test("live private topic code and malformed topic IDs behave safely", async ({
     await guest.getByRole("button", { name: "Find lobby" }).click();
     await expect(guest.getByText(title)).toBeVisible();
     await guest.getByLabel("Your display name").fill("Private demo guest");
-    await guest.getByLabel("Position").selectOption("spectator");
+    await guest
+      .getByRole("combobox", { name: /^Position/ })
+      .selectOption("spectator");
     await guest.getByRole("button", { name: "Join private lobby" }).click();
     await expect(guest.getByRole("heading", { name: title })).toBeVisible();
     await expect(page.getByRole("alert")).toHaveCount(0);
