@@ -233,6 +233,49 @@ describe("DebateExperience", () => {
     expect(await screen.findByText("/")).toBeVisible();
   });
 
+  it("returns home with a reason when a selected public side becomes unavailable", async () => {
+    joinRoom.mockResolvedValueOnce({
+      code: "SIDE_UNAVAILABLE",
+      message:
+        "That side was just taken. Choose another side or spectate instead.",
+      sideIndex: 0,
+      topicTitle: "Can you cheat in a dream?",
+    });
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/debates/:topicId",
+          action: (args) =>
+            clientAction({
+              ...args,
+              serverAction: async () => {
+                throw new Error("The server action should not be called.");
+              },
+            }),
+          element: <LocationProbe />,
+        },
+        { path: "/", element: <LocationProbe /> },
+      ],
+      { initialEntries: ["/"] },
+    );
+    render(<RouterProvider router={router} />);
+    const formData = new FormData();
+    formData.set("intent", "debater");
+    formData.set("displayName", "Late guest");
+    formData.set("sideIndex", "0");
+    await router.navigate("/debates/dream-cheating", {
+      formData,
+      formMethod: "post",
+    });
+    expect(await screen.findByText("/")).toBeVisible();
+    expect(router.state.location.search).toContain("lobbyError=");
+    expect(
+      new URLSearchParams(router.state.location.search).get("lobbyError"),
+    ).toBe(
+      "That side was just taken. Choose another side or spectate instead.",
+    );
+  });
+
   it("connects spectators without publishing media and lets them vote and chat", async () => {
     sendChat.mockResolvedValue({});
     setAttributes.mockResolvedValue();

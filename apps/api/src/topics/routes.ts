@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { FastifyPluginAsyncZod } from "@fastify/type-provider-zod";
 import { UniqueConstraintViolationException } from "@mikro-orm/core";
+import { z } from "zod";
 
 import { topicContracts } from "./contract.js";
 import { createTopicLobby, findPrivateLobbyByCode } from "../lobbies/codes.js";
@@ -69,6 +70,11 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
     options.livekit,
     options.tokenTtlSeconds,
   );
+  function findLobby(id: string) {
+    return z.uuid().safeParse(id).success
+      ? options.privateLobbies.findById(id)
+      : Promise.resolve(undefined);
+  }
   async function resolveTopic(id: string): Promise<ResolvedTopic | undefined> {
     const starter = findTopic(id);
     if (starter)
@@ -77,7 +83,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         title: starter.title,
         sides: [starter.sides[0], starter.sides[1]],
       };
-    const record = await options.privateLobbies.findById(id);
+    const record = await findLobby(id);
     if (
       record?.topicId !== id ||
       !record.name ||
@@ -240,7 +246,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         hostIdentity = lobby.hostIdentity;
         state = lobby.state;
       } else {
-        const lobby = await options.privateLobbies.findById(lobbyId);
+        const lobby = await findLobby(lobbyId);
         if (
           !lobby ||
           lobby.topicId !== topic.id ||
@@ -318,7 +324,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       if (!updated) {
         const latestState = isPublicLobby
           ? (await options.publicLobbyState.find(topic.id))?.state
-          : (await options.privateLobbies.findById(lobbyId))?.state;
+          : (await findLobby(lobbyId))?.state;
         if (latestState === "DEBATE_IN_PROGRESS") {
           if (!(await publishDebateStarted(lobbyId))) {
             return reply.code(503).send({
@@ -341,7 +347,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       }
 
       if (!isPublicLobby) {
-        const startedLobby = await options.privateLobbies.findById(lobbyId);
+        const startedLobby = await findLobby(lobbyId);
         if (startedLobby?.visibility === "public") publishPublicChange();
       } else {
         publishPublicChange();
@@ -628,8 +634,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
           request.body.lobbyId !== topic.id)
       ) {
         const privateLobby =
-          topic.record ??
-          (await options.privateLobbies.findById(request.body.lobbyId!));
+          topic.record ?? (await findLobby(request.body.lobbyId!));
         if (
           privateLobby?.topicId !== topic.id ||
           (topic.record &&
@@ -772,8 +777,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       let hostIdentity: string | null = null;
       let state: JoinResult["state"] = "WAITING";
       if (topic.record || lobbyId !== topic.id) {
-        const lobby =
-          topic.record ?? (await options.privateLobbies.findById(lobbyId));
+        const lobby = topic.record ?? (await findLobby(lobbyId));
         if (
           lobby?.topicId !== topic.id ||
           (topic.record && lobbyId !== topic.id) ||
@@ -841,9 +845,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         return reply.code(401).send({ message: "Your room session expired." });
       }
 
-      const privateLobby = await options.privateLobbies.findById(
-        request.body.lobbyId,
-      );
+      const privateLobby = await findLobby(request.body.lobbyId);
       if (!privateLobby || privateLobby.topicId !== topic.id) {
         return reply.code(404).send({ message: "Lobby not found" });
       }
@@ -899,9 +901,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       }
 
       if (topic.record || request.body.lobbyId !== topic.id) {
-        const privateLobby = await options.privateLobbies.findById(
-          request.body.lobbyId,
-        );
+        const privateLobby = await findLobby(request.body.lobbyId);
         if (privateLobby?.topicId !== topic.id) {
           return reply.code(404).send({ message: "Lobby not found" });
         }
@@ -913,9 +913,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         identity,
       );
       if (topic.record || request.body.lobbyId !== topic.id) {
-        const lobby = await options.privateLobbies.findById(
-          request.body.lobbyId,
-        );
+        const lobby = await findLobby(request.body.lobbyId);
         if (lobby?.visibility === "public") publishPublicChange();
       }
       if (!topic.record && request.body.lobbyId === topic.id) {

@@ -571,11 +571,14 @@ export function TopicList({
                 <input name="intent" type="hidden" value="spectator" />
                 <Button
                   className="h-14 w-full rounded-none bg-card text-base hover:bg-[#f5f8fb] active:not-aria-[haspopup]:translate-y-0"
+                  disabled={isJoining}
                   size="lg"
                   type="submit"
                   variant="secondary"
                 >
-                  Watch live
+                  {isJoining && navigation.formAction === `/debates/${topic.id}`
+                    ? "Joining…"
+                    : "Watch live"}
                 </Button>
               </Form>
             </footer>
@@ -664,7 +667,7 @@ export function TopicList({
                   Cancel
                 </Button>
                 <Button disabled={isJoining} type="submit">
-                  Debate
+                  {isJoining ? "Joining…" : "Debate"}
                 </Button>
               </div>
             </Form>
@@ -696,25 +699,29 @@ export default function Home() {
   useEffect(() => {
     if (typeof EventSource === "undefined") return undefined;
     let active = true;
+    let refreshVersion = 0;
     const events = new EventSource(apiContract.publicLobbyEvents.path);
     const refresh = () => {
+      const version = ++refreshVersion;
       void getTopics().then(
         (latestTopics) => {
-          if (!active) return;
+          if (!active || version !== refreshVersion) return;
           setTopics(latestTopics);
           setTopicListError(undefined);
         },
         () => {
-          if (active)
+          if (active && version === refreshVersion)
             setTopicListError("Debate topics could not be refreshed.");
         },
       );
     };
     events.addEventListener("changed", refresh);
     events.onopen = refresh;
+    window.addEventListener("online", refresh);
     return () => {
       active = false;
       events.close();
+      window.removeEventListener("online", refresh);
     };
   }, []);
 
