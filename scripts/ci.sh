@@ -120,6 +120,15 @@ docker run --rm --network "container:$postgres_container" \
     }
   '
 
+for attempt in 1 2; do
+  docker run --rm --network "container:$postgres_container" \
+    --env DATABASE_URL=postgresql://impromptu:impromptu@127.0.0.1:5432/migration_check \
+    --env DEMO_PRIVATE_CODE=DEBATE26 \
+    impromptu:ci node apps/api/dist/topics/seed-demo.js
+done
+test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
+  -Atc "select count(*) from private_lobby where topic_id = id::text")" = 2
+
 ci_stage='browser tests'
 if command -v cygpath >/dev/null 2>&1; then
   # A Linux container cannot follow npm's Windows workspace links or share the
