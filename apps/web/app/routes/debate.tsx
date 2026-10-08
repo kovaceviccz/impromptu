@@ -131,9 +131,23 @@ export async function clientAction({
       : values,
   );
   try {
-    return await joinTopic(params.topicId, input);
+    const result = await joinTopic(params.topicId, input);
+    if ("code" in result && result.code === "ROUND_ALREADY_STARTED") {
+      return redirect(`/?lobbyError=${encodeURIComponent(result.message)}`);
+    }
+    if ("code" in result && input.lobbyId) {
+      return redirect(`/?lobbyError=${encodeURIComponent(result.message)}`);
+    }
+    return result;
   } catch (cause) {
-    if (isPrivateLobbyNotFound(cause)) return redirect("/");
+    if (
+      cause instanceof ApiError &&
+      (cause.status === 403 || cause.status === 404)
+    ) {
+      return redirect(
+        `/?lobbyError=${encodeURIComponent("That lobby is no longer available. Choose another lobby.")}`,
+      );
+    }
     throw cause;
   }
 }
@@ -142,7 +156,9 @@ function isPrivateLobbyNotFound(cause: unknown) {
   return (
     cause instanceof ApiError &&
     cause.status === 404 &&
-    cause.message === "Private lobby not found"
+    (cause.message === "Private lobby not found" ||
+      cause.message === "Lobby not found" ||
+      cause.message === "Topic not found")
   );
 }
 
@@ -488,7 +504,10 @@ function ParticipantStatus({
   const connection = useConnectionState();
   const [error, setError] = useState<string>();
   const requestId = useRef(0);
+  const connectedOnce = useRef(false);
+  const unavailable = useRef(false);
   const refresh = useCallback(() => {
+    if (unavailable.current) return;
     const currentRequest = ++requestId.current;
     void getRoomParticipants({ topicId, lobbyId, token }).then(
       (status) => {
@@ -499,7 +518,10 @@ function ParticipantStatus({
       },
       (cause: unknown) => {
         if (currentRequest !== requestId.current) return;
-        if (onPrivateLobbyNotFound(cause)) return;
+        if (onPrivateLobbyNotFound(cause)) {
+          unavailable.current = true;
+          return;
+        }
         setError(
           cause instanceof ApiError
             ? cause.message
@@ -509,8 +531,12 @@ function ParticipantStatus({
     );
   }, [lobbyId, onPrivateLobbyNotFound, onStatus, token, topicId]);
   useEffect(() => {
-    if (connection === ConnectionState.Connected) refresh();
+    if (connection === ConnectionState.Connected) connectedOnce.current = true;
+    if (!connectedOnce.current) return undefined;
+    refresh();
+    const interval = setInterval(refresh, 2000);
     return () => {
+      clearInterval(interval);
       requestId.current += 1;
     };
   }, [connection, refresh]);
@@ -542,9 +568,7 @@ function LobbyStatus({
   const hasSpectator = participants.some(
     (participant) => !publishes(participant, join),
   );
-  const isLobbyHost =
-    join.hostIdentity === join.participantIdentity ||
-    (join.isCreator && join.lobbyId !== join.topicId);
+  const isLobbyHost = join.hostIdentity === join.participantIdentity;
 
   useEffect(() => {
     function updateState(metadata: string) {
@@ -1054,7 +1078,7 @@ function LeaveButton({
   const room = useRoomContext();
   const navigate = useNavigate();
   const [submitting, setSubmitting] = useState(false);
-  const isCreator = join.isCreator && join.lobbyId !== join.topicId;
+  const isCreator = join.isCreator && Boolean(join.lobbyName);
 
   async function leave() {
     setSubmitting(true);
@@ -1291,7 +1315,7 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
             <DialogHeader>
               <DialogTitle>The lobby was closed</DialogTitle>
               <DialogDescription>
-                This private lobby is no longer available.
+                This lobby is no longer available.
               </DialogDescription>
             </DialogHeader>
             <Button
@@ -1309,8 +1333,15 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
             </p>
             <div className="flex min-w-0 items-baseline gap-3">
               <h1 className="font-editorial min-w-0 truncate text-xl font-semibold tracking-tight sm:text-2xl">
-                {join.topicTitle}
+                {join.lobbyName ?? join.topicTitle}
               </h1>
+              {join.isCreator && join.visibility ? (
+                <span className="text-xs text-muted-foreground">
+                  {join.visibility === "public"
+                    ? "Public lobby"
+                    : "Private lobby"}
+                </span>
+              ) : null}
               <LobbyStatus
                 join={join}
                 onStart={() => void startDebate()}
@@ -1399,19 +1430,6 @@ export default function Debate() {
   if (!result) return <Navigate to="/" replace />;
 
   if ("code" in result) {
-    if (result.code === "ROUND_ALREADY_STARTED") {
-      return (
-        <main className="mx-auto grid max-w-xl gap-6 p-6 sm:py-12">
-          <h1 className="text-2xl font-semibold">Debate already started</h1>
-          <Alert variant="destructive">
-            <AlertDescription>{result.message}</AlertDescription>
-          </Alert>
-          <Link className={buttonVariants({ variant: "secondary" })} to="/">
-            Choose a topic
-          </Link>
-        </main>
-      );
-    }
     return (
       <main className="mx-auto grid max-w-xl gap-6 p-6 sm:py-12">
         <header>

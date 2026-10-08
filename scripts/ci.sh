@@ -102,7 +102,7 @@ for attempt in 1 2; do
     impromptu:ci node apps/api/dist/migrate.js
 done
 test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
-  -Atc 'select count(*) from mikro_orm_migrations')" = 5
+  -Atc 'select count(*) from mikro_orm_migrations')" = 6
 for table in account account_session private_lobby public_lobby_state; do
   test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
     -Atc "select to_regclass('public.$table')")" = "$table"

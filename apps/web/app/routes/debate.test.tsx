@@ -903,7 +903,9 @@ describe("Participant roster", () => {
       </MemoryRouter>,
     );
     expect(within(roster().debaters).getByText("Debater guest")).toBeVisible();
-    await waitFor(() => expect(getParticipants).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(getParticipants.mock.calls.length).toBeGreaterThanOrEqual(2),
+    );
   });
 
   it("displays a sole participant and marks the host before LiveKit fills their identity", () => {

@@ -19,19 +19,12 @@ import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 
 import { ApiError, login } from "../api";
+import { safeRedirect } from "../safe-redirect";
+
+export { safeRedirect } from "../safe-redirect";
 
 export function meta() {
   return [{ title: `Log in · ${PRODUCT.name}` }];
-}
-
-/** Only follows same-origin paths so the login page cannot redirect offsite. */
-export function safeRedirect(value: FormDataEntryValue | null) {
-  return typeof value === "string" &&
-    value.startsWith("/") &&
-    !value.startsWith("//") &&
-    !value.startsWith("/\\")
-    ? value
-    : "/";
 }
 
 export async function clientAction({

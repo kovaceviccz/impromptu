@@ -5,7 +5,7 @@ import {
   type JoinByCodeInput,
   type JoinInput,
   type LoginInput,
-  type PrivateLobbyCreateInput,
+  type LobbyCreateInput,
   type RegisterInput,
   type StartDebateInput,
   type UpdateAccountInput,
@@ -65,20 +65,16 @@ export async function getTopics() {
   return readResponse(response, apiContract.topics.response);
 }
 
-export async function createPrivateTopic(
-  topicId: string,
-  input: PrivateLobbyCreateInput,
-) {
-  const path = apiContract.privateTopic.path.replace(
-    ":topicId",
-    encodeURIComponent(topicId),
-  );
-  const response = await postJson(path, input);
-  if (response.status === 409) {
-    const payload: unknown = await response.json().catch(() => null);
-    return apiContract.privateTopic.errors[409].parse(payload);
-  }
-  return readResponse(response, apiContract.privateTopic.response);
+export async function getPublicLobbies() {
+  const response = await fetch(apiContract.publicLobbies.path, {
+    headers: { accept: "application/json" },
+  });
+  return readResponse(response, apiContract.publicLobbies.response);
+}
+
+export async function createLobby(input: LobbyCreateInput) {
+  const response = await postJson(apiContract.createLobby.path, input);
+  return readResponse(response, apiContract.createLobby.response);
 }
 
 export async function lookupPrivateLobby(code: string) {
