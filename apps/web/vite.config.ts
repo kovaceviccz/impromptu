@@ -5,7 +5,14 @@ import { fileURLToPath } from "node:url";
 
 export default defineConfig({
   optimizeDeps: {
-    entries: ["app/root.tsx", "app/routes/home.tsx", "app/routes/debate.tsx"],
+    entries: [
+      "app/root.tsx",
+      "app/routes/home.tsx",
+      "app/routes/debate.tsx",
+      "app/routes/register.tsx",
+      "app/routes/login.tsx",
+      "app/routes/account.tsx",
+    ],
   },
   plugins: [tailwindcss(), reactRouter()],
   resolve: {

@@ -2,6 +2,7 @@ import {
   AccessToken,
   RoomServiceClient,
   TrackSource,
+  TokenVerifier,
 } from "livekit-server-sdk";
 
 export type DebateRole = "debater" | "spectator";
@@ -9,12 +10,27 @@ export type DebateSide = 0 | 1;
 
 const SIDE_ATTRIBUTE = "debate.side";
 
+export type RoomParticipant = {
+  displayName: string;
+  identity: string;
+  role: DebateRole;
+  sideIndex: DebateSide | null;
+};
+
+type Reservation = {
+  displayName: string;
+  expiresAt: number;
+  sideIndex: DebateSide;
+};
+
 export type LiveKitGateway = {
-  listParticipants(
+  verifyParticipantToken(
+    token: string,
     roomName: string,
-  ): Promise<
-    { identity: string; role: DebateRole; sideIndex: DebateSide | null }[]
-  >;
+  ): Promise<string | undefined>;
+  listParticipants(roomName: string): Promise<RoomParticipant[]>;
+  removeParticipant(roomName: string, identity: string): Promise<void>;
+  updateRoomMetadata(roomName: string, metadata: string): Promise<void>;
   issueToken(input: {
     displayName: string;
     identity: string;
@@ -53,26 +69,58 @@ export function createLiveKitGateway(
   );
 
   return {
+    async verifyParticipantToken(token, roomName) {
+      try {
+        const claims = await new TokenVerifier(
+          config.apiKey,
+          config.apiSecret,
+        ).verify(token);
+        return claims.video?.roomJoin && claims.video.room === roomName
+          ? claims.sub
+          : undefined;
+      } catch {
+        return undefined;
+      }
+    },
     async listParticipants(roomName) {
       try {
         const participants = await rooms.listParticipants(roomName);
-        return participants.map((participant) => ({
-          identity: participant.identity,
-          role:
+        return participants.map((participant) => {
+          const role: DebateRole =
             participant.permission?.canPublish === true
               ? "debater"
-              : "spectator",
-          sideIndex:
-            participant.attributes[SIDE_ATTRIBUTE] === "0"
-              ? 0
-              : participant.attributes[SIDE_ATTRIBUTE] === "1"
-                ? 1
-                : null,
-        }));
+              : "spectator";
+          return {
+            displayName:
+              participant.name ||
+              (role === "debater" ? "Debater" : "Spectator"),
+            identity: participant.identity,
+            role,
+            sideIndex:
+              participant.attributes[SIDE_ATTRIBUTE] === "0"
+                ? 0
+                : participant.attributes[SIDE_ATTRIBUTE] === "1"
+                  ? 1
+                  : null,
+          };
+        });
       } catch (error) {
         if (isMissingRoom(error)) return [];
         throw error;
       }
+    },
+
+    async removeParticipant(roomName, identity) {
+      try {
+        await rooms.removeParticipant(roomName, identity);
+      } catch (error) {
+        if (isMissingRoom(error)) return;
+        throw error;
+      }
+    },
+
+    async updateRoomMetadata(roomName, metadata) {
+      await rooms.updateRoomMetadata(roomName, metadata);
     },
 
     async issueToken({ displayName, identity, role, roomName, sideIndex }) {
@@ -108,40 +156,37 @@ export function createRoleAllocator(
   livekit: LiveKitGateway,
   tokenTtlSeconds: number,
 ) {
-  const pending = new Map<
-    string,
-    Map<string, { expiresAt: number; sideIndex: DebateSide }>
-  >();
+  const pending = new Map<string, Map<string, Reservation>>();
   const locks = new Map<string, Promise<void>>();
 
-  async function inTopicLock<T>(topicId: string, action: () => Promise<T>) {
-    const previous = locks.get(topicId) ?? Promise.resolve();
+  async function inLobbyLock<T>(lobbyId: string, action: () => Promise<T>) {
+    const previous = locks.get(lobbyId) ?? Promise.resolve();
     let release: () => void = () => {};
     const turn = new Promise<void>((resolve) => {
       release = resolve;
     });
     const queued = previous.then(() => turn);
-    locks.set(topicId, queued);
+    locks.set(lobbyId, queued);
     await previous;
 
     try {
       return await action();
     } finally {
       release();
-      if (locks.get(topicId) === queued) locks.delete(topicId);
+      if (locks.get(lobbyId) === queued) locks.delete(lobbyId);
     }
   }
 
-  async function occupancy(topicId: string) {
-    const active = await livekit.listParticipants(`debate-${topicId}`);
+  async function occupancy(lobbyId: string, replacingIdentity?: string) {
+    const active = (await livekit.listParticipants(`debate-${lobbyId}`)).filter(
+      (participant) => participant.identity !== replacingIdentity,
+    );
     const activeDebaters = new Set(
       active
         .filter((participant) => participant.role === "debater")
         .map((participant) => participant.identity),
     );
-    const reservations =
-      pending.get(topicId) ??
-      new Map<string, { expiresAt: number; sideIndex: DebateSide }>();
+    const reservations = pending.get(lobbyId) ?? new Map<string, Reservation>();
 
     for (const [identity, reservation] of reservations) {
       if (reservation.expiresAt <= Date.now() || activeDebaters.has(identity)) {
@@ -149,21 +194,41 @@ export function createRoleAllocator(
       }
     }
 
-    if (reservations.size === 0) pending.delete(topicId);
-    else pending.set(topicId, reservations);
+    if (reservations.size === 0) pending.delete(lobbyId);
+    else pending.set(lobbyId, reservations);
 
+    const countedReservations = new Map(
+      [...reservations].filter(([identity]) => identity !== replacingIdentity),
+    );
     return {
-      debaterIdentities: new Set([...activeDebaters, ...reservations.keys()]),
+      debaterIdentities: new Set([
+        ...activeDebaters,
+        ...countedReservations.keys(),
+      ]),
       occupiedSides: new Set([
         ...active.flatMap((participant) =>
           participant.role === "debater" && participant.sideIndex !== null
             ? [participant.sideIndex]
             : [],
         ),
-        ...[...reservations.values()].map(
+        ...[...countedReservations.values()].map(
           (reservation) => reservation.sideIndex,
         ),
       ]),
+      participants: [
+        ...active.map(({ displayName, role, sideIndex }) => ({
+          displayName,
+          role,
+          sideIndex,
+        })),
+        ...[...countedReservations.values()].map(
+          ({ displayName, sideIndex }) => ({
+            displayName,
+            role: "debater" as const,
+            sideIndex,
+          }),
+        ),
+      ],
       spectatorCount: active.filter(
         (participant) => participant.role === "spectator",
       ).length,
@@ -171,12 +236,17 @@ export function createRoleAllocator(
   }
 
   return {
-    status(topicId: string) {
-      return inTopicLock(topicId, async () => {
-        const { debaterIdentities, occupiedSides, spectatorCount } =
-          await occupancy(topicId);
+    status(lobbyId: string) {
+      return inLobbyLock(lobbyId, async () => {
+        const {
+          debaterIdentities,
+          occupiedSides,
+          participants,
+          spectatorCount,
+        } = await occupancy(lobbyId);
         return {
           debaterCount: Math.min(debaterIdentities.size, 2),
+          participants,
           sideAvailability: [
             !occupiedSides.has(0),
             !occupiedSides.has(1),
@@ -187,64 +257,74 @@ export function createRoleAllocator(
     },
 
     async join(
-      topicId: string,
+      lobbyId: string,
       identity: string,
       role: DebateRole,
       displayName: string,
       requestedSide: DebateSide | null,
-    ) {
+      replacingIdentity?: string,
+    ): Promise<
+      | { token: string; sideIndex: DebateSide | null }
+      | { unavailable: "full" | "taken" }
+    > {
       if (role === "spectator") {
         const token = await livekit.issueToken({
           displayName,
           identity,
           role,
-          roomName: `debate-${topicId}`,
+          roomName: `debate-${lobbyId}`,
           sideIndex: null,
         });
+        pending.get(lobbyId)?.delete(identity);
         return { token, sideIndex: null };
       }
 
-      return inTopicLock(topicId, async () => {
-        const { debaterIdentities, occupiedSides } = await occupancy(topicId);
-        if (
-          requestedSide === null ||
-          debaterIdentities.size >= 2 ||
-          occupiedSides.has(requestedSide)
-        ) {
-          return undefined;
+      return inLobbyLock(lobbyId, async () => {
+        const { debaterIdentities, occupiedSides } = await occupancy(
+          lobbyId,
+          replacingIdentity,
+        );
+        if (debaterIdentities.size >= 2 || occupiedSides.size >= 2) {
+          return { unavailable: "full" };
+        }
+        if (requestedSide === null || occupiedSides.has(requestedSide)) {
+          return { unavailable: "taken" };
         }
         const sideIndex = requestedSide;
 
         const reservations =
-          pending.get(topicId) ??
-          new Map<string, { expiresAt: number; sideIndex: DebateSide }>();
+          pending.get(lobbyId) ?? new Map<string, Reservation>();
+        const previousReservation = reservations.get(identity);
         reservations.set(identity, {
+          displayName,
           expiresAt: Date.now() + tokenTtlSeconds * 1000,
           sideIndex,
         });
-        pending.set(topicId, reservations);
+        pending.set(lobbyId, reservations);
 
         try {
           const token = await livekit.issueToken({
             displayName,
             identity,
             role,
-            roomName: `debate-${topicId}`,
+            roomName: `debate-${lobbyId}`,
             sideIndex,
           });
           return { token, sideIndex };
         } catch (error) {
-          pending.get(topicId)?.delete(identity);
+          if (previousReservation)
+            reservations.set(identity, previousReservation);
+          else pending.get(lobbyId)?.delete(identity);
           throw error;
         }
       });
     },
 
-    leave(topicId: string, identity: string) {
-      return inTopicLock(topicId, async () => {
-        const reservations = pending.get(topicId);
+    leave(lobbyId: string, identity: string) {
+      return inLobbyLock(lobbyId, async () => {
+        const reservations = pending.get(lobbyId);
         reservations?.delete(identity);
-        if (reservations?.size === 0) pending.delete(topicId);
+        if (reservations?.size === 0) pending.delete(lobbyId);
       });
     },
   };
