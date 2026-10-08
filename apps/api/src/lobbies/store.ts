@@ -1,12 +1,17 @@
 import type { LobbyState } from "./contract.js";
 
 export class DuplicateLobbyCodeError extends Error {}
+export class DuplicateTopicNameError extends Error {}
 
 export type PrivateLobbyRecord = {
   id: string;
   topicId: string;
+  name?: string;
+  side0?: string | null;
+  side1?: string | null;
+  visibility?: "public" | "private";
   state: LobbyState;
-  codeHash: string;
+  codeHash: string | null;
   creatorIdentity: string;
   createdAt: Date;
   expiresAt: Date | null;
@@ -14,6 +19,8 @@ export type PrivateLobbyRecord = {
 
 export interface PrivateLobbyStore {
   create(lobby: PrivateLobbyRecord): Promise<void>;
+  listPublic(): Promise<PrivateLobbyRecord[]>;
+  hasCreatedName(name: string): Promise<boolean>;
   findByCodeHash(codeHash: string): Promise<PrivateLobbyRecord | undefined>;
   findById(id: string): Promise<PrivateLobbyRecord | undefined>;
   updateState(
@@ -33,6 +40,18 @@ export function createMemoryPrivateLobbyStore(
   return {
     async create(lobby) {
       if (
+        lobby.topicId === lobby.id &&
+        [...lobbies.values()].some(
+          (existing) =>
+            existing.topicId === existing.id &&
+            existing.name?.toLocaleLowerCase() ===
+              lobby.name?.toLocaleLowerCase(),
+        )
+      ) {
+        throw new DuplicateTopicNameError("Topic already exists");
+      }
+      if (
+        lobby.codeHash &&
         [...lobbies.values()].some(
           (existing) => existing.codeHash === lobby.codeHash,
         )
@@ -43,6 +62,20 @@ export function createMemoryPrivateLobbyStore(
     },
     async findByCodeHash(codeHash) {
       return [...lobbies.values()].find((lobby) => lobby.codeHash === codeHash);
+    },
+    async listPublic() {
+      return [...lobbies.values()]
+        .filter(
+          (lobby) => lobby.visibility === "public" && lobby.state !== "ENDED",
+        )
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    },
+    async hasCreatedName(name) {
+      return [...lobbies.values()].some(
+        (lobby) =>
+          lobby.topicId === lobby.id &&
+          lobby.name?.toLocaleLowerCase() === name.toLocaleLowerCase(),
+      );
     },
     async findById(id) {
       return lobbies.get(id);

@@ -9,7 +9,13 @@ export function createPostgresPrivateLobbyStore(
   return {
     async create(lobby) {
       const em = orm.em.fork();
-      em.create(PrivateLobbyEntity, lobby);
+      em.create(PrivateLobbyEntity, {
+        ...lobby,
+        name: lobby.name ?? lobby.topicId,
+        side0: lobby.side0 ?? null,
+        side1: lobby.side1 ?? null,
+        visibility: lobby.visibility ?? "private",
+      });
       await em.flush();
     },
     async findByCodeHash(codeHash) {
@@ -17,6 +23,26 @@ export function createPostgresPrivateLobbyStore(
         codeHash,
       });
       return entity ? toRecord(entity) : undefined;
+    },
+    async listPublic() {
+      const entities = await orm.em
+        .fork()
+        .find(
+          PrivateLobbyEntity,
+          { visibility: "public", state: { $ne: "ENDED" } },
+          { orderBy: { createdAt: "DESC" } },
+        );
+      return entities.map(toRecord);
+    },
+    async hasCreatedName(name) {
+      const rows: unknown[] = await orm.em
+        .fork()
+        .getConnection()
+        .execute(
+          `select 1 from "private_lobby" where "topic_id" = "id"::text and lower("name") = lower(?) limit 1`,
+          [name],
+        );
+      return rows.length > 0;
     },
     async findById(id) {
       const entity = await orm.em.fork().findOne(PrivateLobbyEntity, { id });
@@ -45,6 +71,10 @@ function toRecord(entity: PrivateLobbyEntity): PrivateLobbyRecord {
   return {
     id: entity.id,
     topicId: entity.topicId,
+    name: entity.name,
+    side0: entity.side0,
+    side1: entity.side1,
+    visibility: entity.visibility,
     state: entity.state,
     codeHash: entity.codeHash,
     creatorIdentity: entity.creatorIdentity,
