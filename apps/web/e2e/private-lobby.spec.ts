@@ -10,7 +10,7 @@ async function findPrivate(page: Page, code: string, name: string) {
   await page.goto("/");
   await page
     .getByRole("button", {
-      name: "Create or join a topic",
+      name: "Create or Join",
       exact: true,
     })
     .click();
@@ -27,7 +27,7 @@ test("private codes, guests, registered users, reloads, membership recovery and 
   await page.goto("/");
   await page
     .getByRole("button", {
-      name: "Create or join a topic",
+      name: "Create or Join",
       exact: true,
     })
     .click();
@@ -60,14 +60,14 @@ test("private codes, guests, registered users, reloads, membership recovery and 
     await guest.goto("/");
     await guest
       .getByRole("button", {
-        name: "Create or join a topic",
+        name: "Create or Join",
         exact: true,
       })
       .click();
     await guest.getByLabel("Lobby code", { exact: true }).fill("ABC");
     await guest.getByRole("button", { name: "Find lobby" }).click();
     await expect(guest.getByRole("alert")).toHaveText(
-      "Enter a 6–8 character lobby code using letters and numbers.",
+      "Enter a 6â€“8 character lobby code using letters and numbers.",
     );
     await guest.getByLabel("Lobby code", { exact: true }).fill("ZZZZZZZZ");
     await guest.getByRole("button", { name: "Find lobby" }).click();

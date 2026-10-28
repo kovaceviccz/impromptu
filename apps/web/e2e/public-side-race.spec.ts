@@ -29,7 +29,7 @@ test("a stale side choice returns home with a visible reason", async ({
       await (await waiting.request.get("/api/topics")).json(),
     ).length;
 
-    await page.getByRole("button", { name: "Create or join a topic" }).click();
+    await page.getByRole("button", { name: "Create or Join" }).click();
     await page.getByLabel("Topic question").fill(title);
     await page.getByLabel("Affirmative position").fill("Yes, they can");
     await page.getByLabel("Opposing position").fill("No, they cannot");

@@ -33,6 +33,8 @@ export {
   type SideUnavailableError,
   type StartDebateInput,
   type StartDebateResult,
+  topicPresets,
+  type TopicPreset,
   type TopicStatus,
 } from "./topics/contract.js";
 

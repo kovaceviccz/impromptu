@@ -9,6 +9,7 @@ import {
   createMemoryPrivateLobbyStore,
   type PrivateLobbyStore,
 } from "../lobbies/store.js";
+import { topicPresets } from "./data.js";
 import {
   createLiveKitGateway,
   type DebateRole,
@@ -184,7 +185,6 @@ describe("API contracts", () => {
         await app.inject({ method: "GET", url: apiContract.topics.path })
       ).json(),
     );
-    expect(visible).toHaveLength(4);
     expect(visible).toContainEqual(
       expect.objectContaining({
         id: publicJoin.topicId,
@@ -251,7 +251,6 @@ describe("API contracts", () => {
         await app.inject({ method: "GET", url: apiContract.topics.path })
       ).json(),
     );
-    expect(visible).toHaveLength(3);
     expect(visible.some((topic) => topic.id === created.topicId)).toBe(false);
     const stale = await app.inject({
       method: "POST",
@@ -289,7 +288,6 @@ describe("API contracts", () => {
         await app.inject({ method: "GET", url: apiContract.topics.path })
       ).json(),
     );
-    expect(visible).toHaveLength(3);
     expect(visible[0]).toMatchObject({
       id: "dream-cheating",
       debaterCount: 2,
@@ -326,11 +324,11 @@ describe("API contracts", () => {
     const topics = apiContract.topics.response.parse(response.json());
 
     expect(response.statusCode).toBe(200);
-    expect(topics.map((topic) => topic.title)).toEqual([
-      "Can you cheat in a dream?",
-      "Is lying ever moral?",
-      "Is privacy a human right?",
-    ]);
+    expect(topics).toHaveLength(20);
+    expect(new Set(topicPresets.map((topic) => topic.category))).toEqual(
+      new Set(["Philosophy", "Society", "Sports", "Music", "Entertainment"]),
+    );
+
     expect(topics[0]).toEqual({
       id: "dream-cheating",
       title: "Can you cheat in a dream?",

@@ -2,6 +2,7 @@ import {
   PRODUCT,
   apiContract,
   type PrivateLobbyPreview,
+  topicPresets,
   type TopicStatus,
 } from "@impromptu/api/contracts";
 import {
@@ -63,6 +64,14 @@ export async function clientLoader() {
   return { account, topics };
 }
 
+const topicCategoryStyles = {
+  Philosophy: "border-violet-200 bg-violet-100 text-violet-900",
+  Society: "border-sky-200 bg-sky-100 text-sky-900",
+  Sports: "border-emerald-200 bg-emerald-100 text-emerald-900",
+  Music: "border-amber-200 bg-amber-100 text-amber-900",
+  Entertainment: "border-pink-200 bg-pink-100 text-pink-900",
+} as const;
+
 type Selection = {
   topic: TopicStatus;
   sideIndex: 0 | 1;
@@ -88,9 +97,18 @@ function PrivateLobby({
 }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
-  const [lobbyName, setLobbyName] = useState("");
-  const [affirmative, setAffirmative] = useState("");
-  const [opposing, setOpposing] = useState("");
+  const [topicBrowserOpen, setTopicBrowserOpen] = useState(false);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [activeMode, setActiveMode] = useState<"create" | "join">("create");
+  const [topicSource, setTopicSource] = useState<"preset" | "custom">("preset");
+  const [selectedPresetId, setSelectedPresetId] = useState<string>(
+    topicPresets[0].id,
+  );
+  const [lobbyName, setLobbyName] = useState<string>(topicPresets[0].title);
+  const [affirmative, setAffirmative] = useState<string>(
+    topicPresets[0].sides[0],
+  );
+  const [opposing, setOpposing] = useState<string>(topicPresets[0].sides[1]);
   const [visibility, setVisibility] = useState<"public" | "private">("private");
   const [joinCode, setJoinCode] = useState("");
   const [creatorName, setCreatorName] = useState(defaultDisplayName);
@@ -221,7 +239,7 @@ function PrivateLobby({
         onClick={() => setOpen(true)}
       >
         <LockKeyholeIcon aria-hidden="true" />
-        Create or join a topic
+        Create or Join
       </Button>
       <Dialog
         open={open}
@@ -233,192 +251,408 @@ function PrivateLobby({
         <DialogContent className="max-h-[calc(100svh-2rem)] gap-5 overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="font-editorial text-xl">
-              Create or join a topic
+              Create or Join
             </DialogTitle>
             <DialogDescription>
               Create a public or private debate topic, or join with a code.
             </DialogDescription>
           </DialogHeader>
 
-          <section className="grid gap-3">
-            <h2 className="font-medium">Create a topic</h2>
-            <form className="grid gap-3" onSubmit={createLobby}>
-              <label className="grid gap-1.5 text-sm" htmlFor="lobby-name">
-                Topic question
-                <Input
-                  id="lobby-name"
-                  maxLength={80}
-                  pattern=".*\S.*"
-                  required
-                  value={lobbyName}
-                  onChange={(event) => setLobbyName(event.target.value)}
-                  onInvalid={() => setError("Enter a topic question.")}
-                />
-              </label>
-              <label
-                className="grid gap-1.5 text-sm"
-                htmlFor="affirmative-position"
-              >
-                Affirmative position
-                <Input
-                  id="affirmative-position"
-                  maxLength={120}
-                  required
-                  value={affirmative}
-                  onChange={(event) => setAffirmative(event.target.value)}
-                  onInvalid={() => setError("Enter both argument positions.")}
-                />
-              </label>
-              <label
-                className="grid gap-1.5 text-sm"
-                htmlFor="opposing-position"
-              >
-                Opposing position
-                <Input
-                  id="opposing-position"
-                  maxLength={120}
-                  required
-                  value={opposing}
-                  onChange={(event) => setOpposing(event.target.value)}
-                  onInvalid={() => setError("Enter both argument positions.")}
-                />
-              </label>
-              <label
-                className="grid gap-1.5 text-sm"
-                htmlFor="lobby-visibility"
-              >
-                Visibility
-                <select
-                  className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
-                  id="lobby-visibility"
-                  value={visibility}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    if (next === "public" || next === "private")
-                      setVisibility(next);
-                  }}
-                >
-                  <option value="public">Public</option>
-                  <option value="private">Private</option>
-                </select>
-              </label>
-              <label className="grid gap-1.5 text-sm" htmlFor="creator-name">
-                Creator display name
-                <Input
-                  autoComplete="nickname"
-                  id="creator-name"
-                  maxLength={40}
-                  pattern=".*\S.*"
-                  required
-                  value={creatorName}
-                  onChange={(event) => setCreatorName(event.target.value)}
-                  onInvalid={() => setError("Enter a display name.")}
-                />
-              </label>
-              <label className="grid gap-1.5 text-sm" htmlFor="creator-side">
-                Join as
-                <select
-                  className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
-                  id="creator-side"
-                  value={creatorChoice}
-                  onChange={(event) =>
-                    setCreatorChoice(parseLobbyChoice(event.target.value))
-                  }
-                >
-                  <option value="0">{affirmative || "Affirmative"}</option>
-                  <option value="1">{opposing || "Opposing"}</option>
-                  <option value="spectator">Spectate</option>
-                </select>
-              </label>
-              <Button disabled={busy} type="submit">
-                {busy ? "Please wait…" : "Create and join"}
-              </Button>
-            </form>
-          </section>
+          <div
+            aria-label="Lobby action"
+            className="grid grid-cols-2 rounded-lg border bg-muted p-1"
+            role="tablist"
+          >
+            <button
+              aria-controls="create-lobby-panel"
+              aria-selected={activeMode === "create"}
+              className={
+                "rounded-md px-3 py-2 text-sm font-medium " +
+                (activeMode === "create"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground")
+              }
+              id="create-lobby-tab"
+              role="tab"
+              tabIndex={activeMode === "create" ? 0 : -1}
+              type="button"
+              onClick={() => {
+                setActiveMode("create");
+                setError(undefined);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+                  event.preventDefault();
+                  setActiveMode("join");
+                  setError(undefined);
+                  event.currentTarget.parentElement
+                    ?.querySelector<HTMLButtonElement>("#join-lobby-tab")
+                    ?.focus();
+                }
+              }}
+            >
+              Create
+            </button>
+            <button
+              aria-controls="join-lobby-panel"
+              aria-selected={activeMode === "join"}
+              className={
+                "rounded-md px-3 py-2 text-sm font-medium " +
+                (activeMode === "join"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground")
+              }
+              id="join-lobby-tab"
+              role="tab"
+              tabIndex={activeMode === "join" ? 0 : -1}
+              type="button"
+              onClick={() => {
+                setActiveMode("join");
+                setError(undefined);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+                  event.preventDefault();
+                  setActiveMode("create");
+                  setError(undefined);
+                  event.currentTarget.parentElement
+                    ?.querySelector<HTMLButtonElement>("#create-lobby-tab")
+                    ?.focus();
+                }
+              }}
+            >
+              Join
+            </button>
+          </div>
 
-          <section className="grid gap-3 border-t pt-4">
-            <h2 className="font-medium">Join a lobby</h2>
-            <form className="grid gap-3" onSubmit={joinLobby}>
-              <label className="grid gap-1.5 text-sm" htmlFor="lobby-code">
-                Lobby code
-                <Input
-                  autoCapitalize="characters"
-                  autoComplete="off"
-                  id="lobby-code"
-                  maxLength={8}
-                  minLength={6}
-                  pattern="[A-Za-z0-9]{6,8}"
-                  required
-                  value={joinCode}
-                  onChange={(event) => {
-                    setJoinCode(event.target.value.toUpperCase());
-                    setPreview(undefined);
-                  }}
-                />
-              </label>
-              <Button
-                disabled={busy || !joinCode.trim()}
-                type="button"
-                variant="outline"
-                onClick={() => void findLobby()}
-              >
-                Find lobby
-              </Button>
-              {preview ? (
-                <div className="grid gap-3 rounded-lg border bg-muted/30 p-3">
-                  <div>
-                    <p className="font-medium">{preview.title}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {preview.debaterCount} debating · {preview.spectatorCount}{" "}
-                      watching
-                    </p>
-                  </div>
-                  <label className="grid gap-1.5 text-sm" htmlFor="join-side">
-                    Position
-                    <select
-                      className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
-                      id="join-side"
-                      value={joinChoice}
-                      onChange={(event) =>
-                        setJoinChoice(parseLobbyChoice(event.target.value))
+          {activeMode === "create" ? (
+            <section
+              aria-labelledby="create-lobby-tab"
+              className="grid gap-3"
+              id="create-lobby-panel"
+              role="tabpanel"
+            >
+              <form className="grid gap-3" onSubmit={createLobby}>
+                <fieldset className="grid gap-1.5">
+                  <legend className="mb-1.5 text-sm">Topic source</legend>
+                  <div
+                    className="grid grid-cols-2 rounded-lg border bg-muted p-1"
+                    role="radiogroup"
+                  >
+                    <label
+                      className={
+                        "cursor-pointer rounded-md px-3 py-2 text-center text-sm font-medium " +
+                        (topicSource === "preset"
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "text-muted-foreground")
                       }
                     >
-                      {preview.sideAvailability.map((available, sideIndex) =>
-                        available ? (
-                          <option key={sideIndex} value={sideIndex}>
-                            {preview.sides[sideIndex]}
-                          </option>
-                        ) : null,
-                      )}
-                      <option value="spectator">Spectate</option>
-                    </select>
-                  </label>
-                </div>
-              ) : null}
-              <label
-                className="grid gap-1.5 text-sm"
-                htmlFor="lobby-display-name"
-              >
-                Your display name
-                <Input
-                  autoComplete="nickname"
-                  id="lobby-display-name"
-                  maxLength={40}
-                  pattern=".*\S.*"
-                  required
-                  value={joinerName}
-                  onChange={(event) => setJoinerName(event.target.value)}
-                />
-              </label>
-              <Button disabled={busy || !preview} type="submit">
-                {busy ? "Please wait…" : "Join private lobby"}
-              </Button>
-            </form>
-          </section>
+                      <input
+                        checked={topicSource === "preset"}
+                        className="sr-only"
+                        name="topic-source"
+                        type="radio"
+                        onChange={() => {
+                          const preset = topicPresets.find(
+                            (topic) => topic.id === selectedPresetId,
+                          );
+                          setTopicSource("preset");
+                          if (preset) {
+                            setLobbyName(preset.title);
+                            setAffirmative(preset.sides[0]);
+                            setOpposing(preset.sides[1]);
+                          }
+                        }}
+                      />
+                      Choose a topic
+                    </label>
+                    <label
+                      className={
+                        "cursor-pointer rounded-md px-3 py-2 text-center text-sm font-medium " +
+                        (topicSource === "custom"
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "text-muted-foreground")
+                      }
+                    >
+                      <input
+                        checked={topicSource === "custom"}
+                        className="sr-only"
+                        name="topic-source"
+                        type="radio"
+                        onChange={() => {
+                          setTopicSource("custom");
+                          setLobbyName("");
+                          setAffirmative("");
+                          setOpposing("");
+                        }}
+                      />
+                      Write your own
+                    </label>
+                  </div>
+                </fieldset>
+
+                {topicSource === "preset" ? (
+                  <Button
+                    aria-label="Select prewritten topic"
+                    className="justify-center"
+                    type="button"
+                    variant="outline"
+                    onClick={() => setTopicBrowserOpen(true)}
+                  >
+                    Select prewritten topic
+                  </Button>
+                ) : null}
+
+                <label className="grid gap-1.5 text-sm" htmlFor="lobby-name">
+                  Topic question
+                  <Input
+                    id="lobby-name"
+                    maxLength={80}
+                    pattern=".*\S.*"
+                    required
+                    value={lobbyName}
+                    onChange={(event) => setLobbyName(event.target.value)}
+                    onInvalid={() => setError("Enter a topic question.")}
+                  />
+                </label>
+                <label
+                  className="grid gap-1.5 text-sm"
+                  htmlFor="affirmative-position"
+                >
+                  Affirmative position
+                  <Input
+                    id="affirmative-position"
+                    maxLength={120}
+                    required
+                    value={affirmative}
+                    onChange={(event) => setAffirmative(event.target.value)}
+                    onInvalid={() => setError("Enter both argument positions.")}
+                  />
+                </label>
+                <label
+                  className="grid gap-1.5 text-sm"
+                  htmlFor="opposing-position"
+                >
+                  Opposing position
+                  <Input
+                    id="opposing-position"
+                    maxLength={120}
+                    required
+                    value={opposing}
+                    onChange={(event) => setOpposing(event.target.value)}
+                    onInvalid={() => setError("Enter both argument positions.")}
+                  />
+                </label>
+                <label
+                  className="grid gap-1.5 text-sm"
+                  htmlFor="lobby-visibility"
+                >
+                  Visibility
+                  <select
+                    className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                    id="lobby-visibility"
+                    value={visibility}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      if (next === "public" || next === "private")
+                        setVisibility(next);
+                    }}
+                  >
+                    <option value="public">Public</option>
+                    <option value="private">Private</option>
+                  </select>
+                </label>
+                <label className="grid gap-1.5 text-sm" htmlFor="creator-name">
+                  Creator display name
+                  <Input
+                    autoComplete="nickname"
+                    id="creator-name"
+                    maxLength={40}
+                    pattern=".*\S.*"
+                    required
+                    value={creatorName}
+                    onChange={(event) => setCreatorName(event.target.value)}
+                    onInvalid={() => setError("Enter a display name.")}
+                  />
+                </label>
+                <label className="grid gap-1.5 text-sm" htmlFor="creator-side">
+                  Join as
+                  <select
+                    className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                    id="creator-side"
+                    value={creatorChoice}
+                    onChange={(event) =>
+                      setCreatorChoice(parseLobbyChoice(event.target.value))
+                    }
+                  >
+                    <option value="0">{affirmative || "Affirmative"}</option>
+                    <option value="1">{opposing || "Opposing"}</option>
+                    <option value="spectator">Spectate</option>
+                  </select>
+                </label>
+                <Button disabled={busy} type="submit">
+                  {busy ? "Please wait…" : "Create and join"}
+                </Button>
+              </form>
+            </section>
+          ) : (
+            <section
+              aria-labelledby="join-lobby-tab"
+              className="grid gap-3"
+              id="join-lobby-panel"
+              role="tabpanel"
+            >
+              <form className="grid gap-3" onSubmit={joinLobby}>
+                <label className="grid gap-1.5 text-sm" htmlFor="lobby-code">
+                  Lobby code
+                  <Input
+                    autoCapitalize="characters"
+                    autoComplete="off"
+                    id="lobby-code"
+                    maxLength={8}
+                    minLength={6}
+                    pattern="[A-Za-z0-9]{6,8}"
+                    required
+                    value={joinCode}
+                    onChange={(event) => {
+                      setJoinCode(event.target.value.toUpperCase());
+                      setPreview(undefined);
+                    }}
+                  />
+                </label>
+                <Button
+                  disabled={busy || !joinCode.trim()}
+                  type="button"
+                  variant="outline"
+                  onClick={() => void findLobby()}
+                >
+                  Find lobby
+                </Button>
+                {preview ? (
+                  <div className="grid gap-3 rounded-lg border bg-muted/30 p-3">
+                    <div>
+                      <p className="font-medium">{preview.title}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {preview.debaterCount} debating ·{" "}
+                        {preview.spectatorCount} watching
+                      </p>
+                    </div>
+                    <label className="grid gap-1.5 text-sm" htmlFor="join-side">
+                      Position
+                      <select
+                        className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                        id="join-side"
+                        value={joinChoice}
+                        onChange={(event) =>
+                          setJoinChoice(parseLobbyChoice(event.target.value))
+                        }
+                      >
+                        {preview.sideAvailability.map((available, sideIndex) =>
+                          available ? (
+                            <option key={sideIndex} value={sideIndex}>
+                              {preview.sides[sideIndex]}
+                            </option>
+                          ) : null,
+                        )}
+                        <option value="spectator">Spectate</option>
+                      </select>
+                    </label>
+                  </div>
+                ) : null}
+                <label
+                  className="grid gap-1.5 text-sm"
+                  htmlFor="lobby-display-name"
+                >
+                  Your display name
+                  <Input
+                    autoComplete="nickname"
+                    id="lobby-display-name"
+                    maxLength={40}
+                    pattern=".*\S.*"
+                    required
+                    value={joinerName}
+                    onChange={(event) => setJoinerName(event.target.value)}
+                  />
+                </label>
+                <Button disabled={busy || !preview} type="submit">
+                  {busy ? "Please wait…" : "Join private lobby"}
+                </Button>
+              </form>
+            </section>
+          )}
           {error ? (
             <p className="text-sm text-destructive" role="alert">
               {error}
             </p>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={topicBrowserOpen} onOpenChange={setTopicBrowserOpen}>
+        <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Browse topics</DialogTitle>
+            <DialogDescription>
+              Choose one or more categories to find a prewritten topic.
+            </DialogDescription>
+          </DialogHeader>
+
+          <fieldset>
+            <legend className="mb-2 text-sm font-medium">Categories</legend>
+            <div className="flex flex-wrap gap-2">
+              {Array.from(
+                new Set(topicPresets.map((topic) => topic.category)),
+              ).map((category) => (
+                <label
+                  className={
+                    "flex items-center gap-1.5 rounded-md border px-2 py-1 text-sm " +
+                    topicCategoryStyles[category]
+                  }
+                  key={category}
+                >
+                  <input
+                    checked={selectedCategories.includes(category)}
+                    type="checkbox"
+                    onChange={(event) => {
+                      setSelectedCategories((categories) =>
+                        event.target.checked
+                          ? [...categories, category]
+                          : categories.filter((item) => item !== category),
+                      );
+                    }}
+                  />
+                  {category}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+
+          {selectedCategories.length > 0 ? (
+            <section className="grid gap-2" aria-live="polite">
+              <h3 className="text-sm font-medium">Topics</h3>
+              {topicPresets
+                .filter((topic) => selectedCategories.includes(topic.category))
+                .map((topic) => (
+                  <Button
+                    className={
+                      "h-auto justify-start px-3 py-2.5 text-left whitespace-normal " +
+                      topicCategoryStyles[topic.category]
+                    }
+                    key={topic.id}
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setSelectedPresetId(topic.id);
+                      setLobbyName(topic.title);
+                      setAffirmative(topic.sides[0]);
+                      setOpposing(topic.sides[1]);
+                      setTopicBrowserOpen(false);
+                    }}
+                  >
+                    <span>{topic.title}</span>
+                  </Button>
+                ))}
+            </section>
           ) : null}
         </DialogContent>
       </Dialog>

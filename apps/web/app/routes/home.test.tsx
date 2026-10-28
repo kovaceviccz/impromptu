@@ -263,8 +263,38 @@ describe("TopicList", () => {
 
     render(<RouterProvider router={router} />);
 
+    fireEvent.click(screen.getByRole("button", { name: "Create or Join" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "Create or join a topic" }),
+      screen.getByRole("button", { name: "Select prewritten topic" }),
+    );
+    const topicBrowser = screen.getByRole("dialog", { name: "Browse topics" });
+    expect(topicBrowser).toBeVisible();
+    const entertainmentCategory = within(topicBrowser)
+      .getByRole("checkbox", {
+        name: "Entertainment",
+      })
+      .closest("label");
+    expect(entertainmentCategory).toHaveClass("bg-pink-100");
+    expect(screen.queryByLabelText("Prewritten topic")).not.toBeInTheDocument();
+    fireEvent.click(
+      within(topicBrowser).getByRole("checkbox", { name: "Entertainment" }),
+    );
+    const animeTopic = within(topicBrowser).getByRole("button", {
+      name: "What is better, anime or manga?",
+    });
+    expect(animeTopic).toHaveClass("bg-pink-100");
+    fireEvent.click(animeTopic);
+    fireEvent.click(screen.getByRole("radio", { name: "Write your own" }));
+    expect(screen.getByLabelText("Topic question")).toHaveValue("");
+    expect(
+      screen.queryByRole("button", { name: "Select prewritten topic" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Choose a topic" }));
+    expect(screen.getByLabelText("Affirmative position")).toHaveValue(
+      "Anime: visual and audio experience",
+    );
+    expect(screen.getByLabelText("Opposing position")).toHaveValue(
+      "Manga: the author's original intent",
     );
     fireEvent.change(screen.getByLabelText("Topic question"), {
       target: { value: "Dream debate" },
@@ -340,9 +370,8 @@ describe("TopicList", () => {
     expect(
       screen.getByText("No debates are available right now."),
     ).toBeVisible();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Create or join a topic" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Create or Join" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Join" }));
     fireEvent.change(screen.getByLabelText("Lobby code"), {
       target: { value: "abcd23" },
     });
@@ -410,9 +439,8 @@ describe("TopicList", () => {
     expect(
       screen.getByText("No debates are available right now."),
     ).toBeVisible();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Create or join a topic" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Create or Join" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Join" }));
     fireEvent.change(screen.getByLabelText("Lobby code"), {
       target: { value: "ABCD23" },
     });
