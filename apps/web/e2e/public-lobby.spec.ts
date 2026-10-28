@@ -38,7 +38,7 @@ test("creating a public topic creates its only lobby and closing it removes the 
       viewer.getByRole("heading", { name: "Can you cheat in a dream?" }),
     ).toBeVisible();
     await viewerContext.setOffline(true);
-    await page.getByRole("button", { name: "Create or join a topic" }).click();
+    await page.getByRole("button", { name: "Create or Join" }).click();
     await page.getByLabel("Topic question").fill(title);
     await page.getByLabel("Affirmative position").fill("Yes, they can");
     await page.getByLabel("Opposing position").fill("No, they cannot");

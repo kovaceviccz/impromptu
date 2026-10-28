@@ -3,6 +3,8 @@ import { z } from "zod";
 import { healthSchema } from "../health/contract.js";
 import { lobbyStateSchema } from "../lobbies/contract.js";
 
+export { topicPresets, type TopicPreset } from "./data.js";
+
 export const debateSideSchema = z.union([z.literal(0), z.literal(1)]);
 export const debateRoleSchema = z.enum(["debater", "spectator"]);
 export const topicVisibilitySchema = z.enum(["public", "private"]);
