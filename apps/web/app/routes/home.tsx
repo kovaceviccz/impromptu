@@ -101,14 +101,10 @@ function PrivateLobby({
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [activeMode, setActiveMode] = useState<"create" | "join">("create");
   const [topicSource, setTopicSource] = useState<"preset" | "custom">("preset");
-  const [selectedPresetId, setSelectedPresetId] = useState<string>(
-    topicPresets[0].id,
-  );
-  const [lobbyName, setLobbyName] = useState<string>(topicPresets[0].title);
-  const [affirmative, setAffirmative] = useState<string>(
-    topicPresets[0].sides[0],
-  );
-  const [opposing, setOpposing] = useState<string>(topicPresets[0].sides[1]);
+  const [selectedPresetId, setSelectedPresetId] = useState<string>();
+  const [lobbyName, setLobbyName] = useState("");
+  const [affirmative, setAffirmative] = useState("");
+  const [opposing, setOpposing] = useState("");
   const [visibility, setVisibility] = useState<"public" | "private">("private");
   const [joinCode, setJoinCode] = useState("");
   const [creatorName, setCreatorName] = useState(defaultDisplayName);
@@ -353,10 +349,10 @@ function PrivateLobby({
                         name="topic-source"
                         type="radio"
                         onChange={() => {
+                          setTopicSource("preset");
                           const preset = topicPresets.find(
                             (topic) => topic.id === selectedPresetId,
                           );
-                          setTopicSource("preset");
                           if (preset) {
                             setLobbyName(preset.title);
                             setAffirmative(preset.sides[0]);
@@ -406,6 +402,7 @@ function PrivateLobby({
                 <label className="grid gap-1.5 text-sm" htmlFor="lobby-name">
                   Topic question
                   <Input
+                    disabled={topicSource === "preset" && !selectedPresetId}
                     id="lobby-name"
                     maxLength={80}
                     pattern=".*\S.*"
@@ -421,6 +418,7 @@ function PrivateLobby({
                 >
                   Affirmative position
                   <Input
+                    disabled={topicSource === "preset" && !selectedPresetId}
                     id="affirmative-position"
                     maxLength={120}
                     required
@@ -435,6 +433,7 @@ function PrivateLobby({
                 >
                   Opposing position
                   <Input
+                    disabled={topicSource === "preset" && !selectedPresetId}
                     id="opposing-position"
                     maxLength={120}
                     required
@@ -490,7 +489,15 @@ function PrivateLobby({
                     <option value="spectator">Spectate</option>
                   </select>
                 </label>
-                <Button disabled={busy} type="submit">
+                <Button
+                  disabled={
+                    busy ||
+                    !lobbyName.trim() ||
+                    !affirmative.trim() ||
+                    !opposing.trim()
+                  }
+                  type="submit"
+                >
                   {busy ? "Please wait…" : "Create and join"}
                 </Button>
               </form>

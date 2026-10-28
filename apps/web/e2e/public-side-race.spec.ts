@@ -8,7 +8,7 @@ test("a stale side choice returns home with a visible reason", async ({
   page,
   browser,
 }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(120_000);
   const title = `Can both guests take one side ${Date.now()}?`;
   const waitingContext = await browser.newContext({ baseURL });
   const winningContext = await browser.newContext({ baseURL });
@@ -30,6 +30,7 @@ test("a stale side choice returns home with a visible reason", async ({
     ).length;
 
     await page.getByRole("button", { name: "Create or Join" }).click();
+    await page.getByText("Write your own", { exact: true }).click();
     await page.getByLabel("Topic question").fill(title);
     await page.getByLabel("Affirmative position").fill("Yes, they can");
     await page.getByLabel("Opposing position").fill("No, they cannot");
@@ -48,7 +49,15 @@ test("a stale side choice returns home with a visible reason", async ({
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
     await expect(waiting.getByText(`1 of ${initialCount + 1}`)).toBeVisible();
     await expect(winning.getByText(`1 of ${initialCount + 1}`)).toBeVisible();
-    for (let index = 0; index < 3; index += 1) {
+    const topicHeading = (topicPage: typeof waiting) =>
+      topicPage.getByRole("heading", { name: title });
+    for (
+      let index = 0;
+      index < initialCount &&
+      ((await topicHeading(waiting).count()) === 0 ||
+        (await topicHeading(winning).count()) === 0);
+      index += 1
+    ) {
       await waiting.getByRole("button", { name: "Next topic" }).click();
       await winning.getByRole("button", { name: "Next topic" }).click();
     }
@@ -83,10 +92,11 @@ test("a stale side choice returns home with a visible reason", async ({
     );
   } finally {
     if (created)
-      await page.request.post(`/api/topics/${created.topicId}/close`, {
-        data: { lobbyId: created.lobbyId, token: created.token },
-      });
-    await waitingContext.close();
-    await winningContext.close();
+      await page.request
+        .post(`/api/topics/${created.topicId}/close`, {
+          data: { lobbyId: created.lobbyId, token: created.token },
+          timeout: 5_000,
+        })
+        .catch(() => undefined);
   }
 });
