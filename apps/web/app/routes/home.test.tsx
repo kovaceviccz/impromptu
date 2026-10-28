@@ -267,6 +267,12 @@ describe("TopicList", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Select prewritten topic" }),
     );
+    expect(screen.getByLabelText("Topic question")).toBeDisabled();
+    expect(screen.getByLabelText("Affirmative position")).toBeDisabled();
+    expect(screen.getByLabelText("Opposing position")).toBeDisabled();
+    expect(
+      screen.getByText("Create and join").closest("button"),
+    ).toBeDisabled();
     const topicBrowser = screen.getByRole("dialog", { name: "Browse topics" });
     expect(topicBrowser).toBeVisible();
     const entertainmentCategory = within(topicBrowser)
@@ -284,6 +290,9 @@ describe("TopicList", () => {
     });
     expect(animeTopic).toHaveClass("bg-pink-100");
     fireEvent.click(animeTopic);
+    expect(screen.getByLabelText("Topic question")).toBeEnabled();
+    expect(screen.getByLabelText("Affirmative position")).toBeEnabled();
+    expect(screen.getByLabelText("Opposing position")).toBeEnabled();
     fireEvent.click(screen.getByRole("radio", { name: "Write your own" }));
     expect(screen.getByLabelText("Topic question")).toHaveValue("");
     expect(
@@ -305,6 +314,9 @@ describe("TopicList", () => {
     fireEvent.change(screen.getByLabelText("Opposing position"), {
       target: { value: "No: dreams are involuntary" },
     });
+    expect(
+      screen.getByRole("button", { name: "Create and join" }),
+    ).toBeEnabled();
     fireEvent.change(screen.getByLabelText("Creator display name"), {
       target: { value: "Sam" },
     });

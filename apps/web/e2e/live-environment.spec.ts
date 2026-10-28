@@ -74,6 +74,7 @@ test("live public topic creation, discovery, joining, and closure show no errors
       page.getByRole("heading", { name: "Can you cheat in a dream?" }),
     ).toBeVisible();
     await page.getByRole("button", { name: "Create or Join" }).click();
+    await page.getByText("Write your own", { exact: true }).click();
     await page.getByLabel("Topic question").fill(title);
     await page
       .getByLabel("Affirmative position")
@@ -187,6 +188,7 @@ test("live private topic code and malformed topic IDs behave safely", async ({
       await (await guest.request.get("/api/topics")).json(),
     ).length;
     await page.getByRole("button", { name: "Create or Join" }).click();
+    await page.getByText("Write your own", { exact: true }).click();
     await page.getByLabel("Topic question").fill(title);
     await page
       .getByLabel("Affirmative position")
@@ -209,6 +211,7 @@ test("live private topic code and malformed topic IDs behave safely", async ({
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
     await expect(guest.getByText(`1 of ${initialCount}`)).toBeVisible();
     await guest.getByRole("button", { name: "Create or Join" }).click();
+    await guest.getByRole("tab", { name: "Join" }).click();
     await guest.getByLabel("Lobby code").fill(code);
     await guest.getByRole("button", { name: "Find lobby" }).click();
     await expect(guest.getByText(title)).toBeVisible();
