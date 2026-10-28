@@ -361,7 +361,7 @@ function RoomChat({
 
   return (
     <section className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] bg-background">
-      <MessageScrollerProvider>
+      <MessageScrollerProvider autoScroll defaultScrollPosition="end">
         <MessageScroller>
           <MessageScrollerViewport>
             <MessageScrollerContent className="gap-4 p-4">
