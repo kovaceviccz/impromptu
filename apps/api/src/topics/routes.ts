@@ -12,6 +12,7 @@ import {
   type PrivateLobbyStore,
 } from "../lobbies/store.js";
 import type { PublicLobbyStateStore } from "../lobbies/public-state.js";
+import type { ChatPolicy } from "../chat/policy.js";
 import { findTopic, topics } from "./data.js";
 import {
   createRoleAllocator,
@@ -27,7 +28,10 @@ export type TopicRoutesOptions = {
   publicLobbyState: PublicLobbyStateStore;
   livekitPublicUrl: string;
   tokenTtlSeconds: number;
+  chatPolicy: ChatPolicy;
 };
+
+const CHAT_DATA_TOPIC = "impromptu.chat";
 
 type ResolvedTopic = {
   id: string;
@@ -814,6 +818,104 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
             "Participants could not be loaded. Your room connection is still available. Try again.",
         });
       }
+    },
+  );
+
+  app.post(
+    topicContracts.sendChatMessage.path,
+    {
+      schema: {
+        params: topicContracts.sendChatMessage.params,
+        body: topicContracts.sendChatMessage.body,
+        response: {
+          200: topicContracts.sendChatMessage.response,
+          400: topicContracts.sendChatMessage.errors[400],
+          401: topicContracts.sendChatMessage.errors[401],
+          403: topicContracts.sendChatMessage.errors[403],
+          404: topicContracts.sendChatMessage.errors[404],
+          409: topicContracts.sendChatMessage.errors[409],
+          429: topicContracts.sendChatMessage.errors[429],
+          503: topicContracts.sendChatMessage.errors[503],
+        },
+      },
+    },
+    async (request, reply) => {
+      const topic = await resolveTopic(request.params.topicId);
+      if (!topic) return reply.code(404).send({ message: "Topic not found" });
+
+      const { lobbyId, message, token } = request.body;
+      if (lobbyId !== topic.id) {
+        return reply.code(404).send({ message: "Lobby not found" });
+      }
+      const roomName = `debate-${lobbyId}`;
+      const identity = await options.livekit.verifyParticipantToken(
+        token,
+        roomName,
+      );
+      if (!identity) {
+        return reply.code(401).send({
+          message: "Your room session expired. Rejoin the lobby.",
+        });
+      }
+
+      let participant;
+      try {
+        participant = (await options.livekit.listParticipants(roomName)).find(
+          (candidate) => candidate.identity === identity,
+        );
+      } catch {
+        return reply.code(503).send({
+          message: "The message service is temporarily unavailable. Try again.",
+        });
+      }
+      if (!participant) {
+        return reply.code(403).send({
+          message: "You must be in this lobby to send a message.",
+        });
+      }
+      if (participant.role !== "spectator") {
+        return reply.code(403).send({
+          message: "Only spectators can send audience messages.",
+        });
+      }
+
+      const policy = options.chatPolicy.check(roomName, identity, message);
+      if (!policy.allowed) {
+        const payload = {
+          code: policy.code,
+          message: policy.message,
+          ...(policy.retryAfterSeconds === undefined
+            ? {}
+            : { retryAfterSeconds: policy.retryAfterSeconds }),
+        };
+        if (policy.code === "INAPPROPRIATE_LANGUAGE") {
+          return reply.code(400).send(payload);
+        }
+        if (policy.code === "DUPLICATE_MESSAGE") {
+          return reply.code(409).send(payload);
+        }
+        return reply.code(429).send(payload);
+      }
+
+      const chatMessage = {
+        id: randomUUID(),
+        message,
+        senderIdentity: identity,
+        senderName: participant.displayName,
+        timestamp: Date.now(),
+      };
+      try {
+        await options.livekit.broadcastData(
+          roomName,
+          new TextEncoder().encode(JSON.stringify(chatMessage)),
+          CHAT_DATA_TOPIC,
+        );
+      } catch {
+        return reply.code(503).send({
+          message: "Message could not be sent. Try again.",
+        });
+      }
+      return chatMessage;
     },
   );
 

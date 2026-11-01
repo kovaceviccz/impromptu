@@ -17,6 +17,7 @@ export {
 export { type LobbyState } from "./lobbies/contract.js";
 export {
   errorSchema,
+  chatMessageSchema,
   joinBodySchema,
   joinResultSchema,
   lobbyCreateBodySchema,
@@ -34,6 +35,8 @@ export {
   type StartDebateInput,
   type StartDebateResult,
   type TopicStatus,
+  type ChatMessage,
+  type SendChatMessageInput,
 } from "./topics/contract.js";
 
 export const PRODUCT = {
