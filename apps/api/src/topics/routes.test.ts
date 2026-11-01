@@ -37,6 +37,8 @@ function fakeLiveKit(
   const issuedNames: string[] = [];
   const removed: { roomName: string; identity: string }[] = [];
   const roomMetadata = new Map<string, string>();
+  const broadcasts: { roomName: string; data: Uint8Array; topic: string }[] =
+    [];
 
   const gateway: LiveKitGateway = {
     async verifyParticipantToken(token) {
@@ -57,6 +59,9 @@ function fakeLiveKit(
     async updateRoomMetadata(roomName, metadata) {
       roomMetadata.set(roomName, metadata);
     },
+    async broadcastData(roomName, data, topic) {
+      broadcasts.push({ roomName, data, topic });
+    },
     async issueToken({ displayName, identity, role, roomName }) {
       issued.push(role);
       issuedRooms.push(roomName);
@@ -67,6 +72,7 @@ function fakeLiveKit(
 
   return {
     active,
+    broadcasts,
     gateway,
     issued,
     issuedNames,
@@ -92,6 +98,115 @@ async function testApp(
 }
 
 describe("API contracts", () => {
+  it("moderates authenticated spectator chat before broadcasting it", async () => {
+    const { active, broadcasts, gateway } = fakeLiveKit();
+    active.set("debate-dream-cheating", [
+      {
+        displayName: "Alice",
+        identity: "alice-id",
+        role: "spectator",
+        sideIndex: null,
+      },
+    ]);
+    const app = await testApp(gateway);
+    const contract = apiContract.sendChatMessage;
+    const url = contract.path.replace(":topicId", "dream-cheating");
+
+    const accepted = await app.inject({
+      method: contract.method,
+      url,
+      payload: {
+        lobbyId: "dream-cheating",
+        message: "A valid contribution",
+        token: "alice-id",
+      },
+    });
+    expect(accepted.statusCode).toBe(200);
+    const message = contract.response.parse(accepted.json());
+    expect(message).toMatchObject({
+      message: "A valid contribution",
+      senderIdentity: "alice-id",
+      senderName: "Alice",
+    });
+    expect(broadcasts).toHaveLength(1);
+    expect(broadcasts[0]).toMatchObject({
+      roomName: "debate-dream-cheating",
+      topic: "impromptu.chat",
+    });
+    expect(
+      contract.response.parse(
+        JSON.parse(new TextDecoder().decode(broadcasts[0]!.data)),
+      ),
+    ).toEqual(message);
+
+    const inappropriate = await app.inject({
+      method: contract.method,
+      url,
+      payload: {
+        lobbyId: "dream-cheating",
+        message: "f.u.c.k",
+        token: "alice-id",
+      },
+    });
+    expect(inappropriate.statusCode).toBe(400);
+    expect(inappropriate.json()).toMatchObject({
+      code: "INAPPROPRIATE_LANGUAGE",
+      message: expect.stringContaining("not allowed"),
+    });
+    expect(broadcasts).toHaveLength(1);
+  });
+
+  it("rejects duplicate chat and identities that are not active spectators", async () => {
+    const { active, broadcasts, gateway } = fakeLiveKit();
+    active.set("debate-dream-cheating", [
+      {
+        displayName: "Alice",
+        identity: "alice-id",
+        role: "spectator",
+        sideIndex: null,
+      },
+      {
+        displayName: "Debater",
+        identity: "debater-id",
+        role: "debater",
+        sideIndex: 0,
+      },
+    ]);
+    const app = await testApp(gateway);
+    const contract = apiContract.sendChatMessage;
+    const url = contract.path.replace(":topicId", "dream-cheating");
+    const payload = {
+      lobbyId: "dream-cheating",
+      message: "First thought",
+      token: "alice-id",
+    };
+
+    expect(
+      (await app.inject({ method: contract.method, url, payload })).statusCode,
+    ).toBe(200);
+    const duplicate = await app.inject({
+      method: contract.method,
+      url,
+      payload: { ...payload, message: " first thought! " },
+    });
+    expect(duplicate.statusCode).toBe(409);
+    expect(duplicate.json()).toMatchObject({ code: "DUPLICATE_MESSAGE" });
+
+    const debater = await app.inject({
+      method: contract.method,
+      url,
+      payload: { ...payload, message: "Debater bypass", token: "debater-id" },
+    });
+    expect(debater.statusCode).toBe(403);
+    const absent = await app.inject({
+      method: contract.method,
+      url,
+      payload: { ...payload, message: "Absent bypass", token: "absent-id" },
+    });
+    expect(absent.statusCode).toBe(403);
+    expect(broadcasts).toHaveLength(1);
+  });
+
   it("creates one lobby per new topic and keeps private topics out of public discovery", async () => {
     const { gateway } = fakeLiveKit();
     const store = createMemoryPrivateLobbyStore();
@@ -1018,7 +1133,7 @@ describe("LiveKit grants", () => {
     expect(claims.video?.roomJoin).toBe(true);
     expect(claims.video?.canSubscribe).toBe(true);
     expect(claims.video?.canPublish).toBe(false);
-    expect(claims.video?.canPublishData).toBe(true);
+    expect(claims.video?.canPublishData).toBe(false);
     expect(claims.video?.canUpdateOwnMetadata).toBe(true);
     expect(claims.name).toBe("Test spectator");
   });

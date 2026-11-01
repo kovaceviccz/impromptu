@@ -1,5 +1,6 @@
 import {
   AccessToken,
+  DataPacket_Kind,
   RoomServiceClient,
   TrackSource,
   TokenVerifier,
@@ -31,6 +32,11 @@ export type LiveKitGateway = {
   listParticipants(roomName: string): Promise<RoomParticipant[]>;
   removeParticipant(roomName: string, identity: string): Promise<void>;
   updateRoomMetadata(roomName: string, metadata: string): Promise<void>;
+  broadcastData(
+    roomName: string,
+    data: Uint8Array,
+    topic: string,
+  ): Promise<void>;
   issueToken(input: {
     displayName: string;
     identity: string;
@@ -124,6 +130,10 @@ export function createLiveKitGateway(
       await rooms.updateRoomMetadata(roomName, metadata);
     },
 
+    async broadcastData(roomName, data, topic) {
+      await rooms.sendData(roomName, data, DataPacket_Kind.RELIABLE, { topic });
+    },
+
     async issueToken({
       displayName,
       identity,
@@ -148,7 +158,7 @@ export function createLiveKitGateway(
         roomJoin: true,
         canSubscribe: true,
         canPublish: isDebater,
-        canPublishData: !isDebater,
+        canPublishData: false,
         canUpdateOwnMetadata: !isDebater && canVote,
         canPublishSources: isDebater
           ? [TrackSource.CAMERA, TrackSource.MICROPHONE]

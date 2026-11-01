@@ -11,6 +11,7 @@ import Fastify from "fastify";
 
 import { accountRoutes } from "./accounts/routes.js";
 import type { AccountStore } from "./accounts/store.js";
+import { ChatPolicy } from "./chat/policy.js";
 import { healthRoutes } from "./health/routes.js";
 import type { PrivateLobbyStore } from "./lobbies/store.js";
 import {
@@ -30,6 +31,7 @@ type BuildAppOptions = {
   logger?: boolean;
   secureCookies?: boolean;
   serveWeb?: boolean;
+  chatPolicy?: ChatPolicy;
 };
 
 export async function buildApp(options: BuildAppOptions) {
@@ -61,6 +63,7 @@ export async function buildApp(options: BuildAppOptions) {
     publicLobbyState,
     livekitPublicUrl: options.livekitPublicUrl,
     tokenTtlSeconds: options.tokenTtlSeconds,
+    chatPolicy: options.chatPolicy ?? new ChatPolicy(),
   });
   app.addHook("onClose", async () => options.privateLobbies.close());
   app.addHook("onClose", async () => publicLobbyState.close());
