@@ -2,6 +2,8 @@ import {
   PRODUCT,
   joinBodySchema,
   joinResultSchema,
+  chatMessageSchema,
+  type ChatMessage,
   type LobbyState,
   type JoinInput,
   type JoinResult,
@@ -10,13 +12,19 @@ import {
   LiveKitRoom,
   RoomAudioRenderer,
   VideoTrack,
-  useChat,
+  useDataChannel,
   useConnectionState,
   useParticipants,
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
-import { CopyIcon, LogOutIcon, SendIcon, SmileIcon } from "lucide-react";
+import {
+  ArrowDownIcon,
+  CopyIcon,
+  LogOutIcon,
+  SendIcon,
+  SmileIcon,
+} from "lucide-react";
 import {
   ConnectionState,
   RoomEvent,
@@ -84,6 +92,7 @@ import {
   getRoomParticipants,
   joinTopic,
   leaveTopic,
+  sendRoomChatMessage,
   startDebate as startDebateRequest,
 } from "../api";
 import {
@@ -312,16 +321,21 @@ function DebateVideos({ join }: { join: JoinResult }) {
 function RoomChat({
   canSend,
   initialDisplayName,
+  lobbyId,
   participantIdentity,
+  token,
   topicId,
 }: {
   canSend: boolean;
   initialDisplayName?: string;
+  lobbyId: string;
   participantIdentity: string;
+  token: string;
   topicId: string;
 }) {
-  const { chatMessages, isSending, send } = useChat();
   const room = useRoomContext();
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [isSending, setIsSending] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string>();
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -330,6 +344,30 @@ function RoomChat({
   );
   const [isNaming, setIsNaming] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const receiveMessage = useCallback((data: { payload: Uint8Array }) => {
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(new TextDecoder().decode(data.payload));
+    } catch {
+      return;
+    }
+    const result = chatMessageSchema.safeParse(decoded);
+    if (!result.success) return;
+    setChatMessages((current) =>
+      current.some((message) => message.id === result.data.id)
+        ? current
+        : [...current, result.data],
+    );
+  }, []);
+  useDataChannel("impromptu.chat", receiveMessage);
+
+  function rememberMessage(message: ChatMessage) {
+    setChatMessages((current) =>
+      current.some((item) => item.id === message.id)
+        ? current
+        : [...current, message],
+    );
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -344,24 +382,35 @@ function RoomChat({
         updateRoomPreferences(topicId, { displayName: value });
         setHasDisplayName(true);
       } else {
-        await send(value);
+        setIsSending(true);
+        rememberMessage(
+          await sendRoomChatMessage({
+            lobbyId,
+            message: value,
+            token,
+            topicId,
+          }),
+        );
       }
       setDraft("");
       requestAnimationFrame(() => input.current?.focus());
-    } catch {
+    } catch (cause) {
       setError(
         hasDisplayName
-          ? "Message could not be sent."
+          ? cause instanceof ApiError
+            ? cause.message
+            : "Message could not be sent."
           : "Display name could not be saved.",
       );
     } finally {
       setIsNaming(false);
+      setIsSending(false);
     }
   }
 
   return (
     <section className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] bg-background">
-      <MessageScrollerProvider>
+      <MessageScrollerProvider autoScroll>
         <MessageScroller>
           <MessageScrollerViewport>
             <MessageScrollerContent className="gap-4 p-4">
@@ -373,9 +422,9 @@ function RoomChat({
                 </p>
               ) : (
                 chatMessages.map((message) => {
-                  const name = message.from?.name || "Participant";
+                  const name = message.senderName;
                   const isOwnMessage =
-                    message.from?.identity === participantIdentity;
+                    message.senderIdentity === participantIdentity;
                   const sentAt = new Date(message.timestamp);
 
                   return (
@@ -407,7 +456,10 @@ function RoomChat({
               )}
             </MessageScrollerContent>
           </MessageScrollerViewport>
-          <MessageScrollerButton />
+          <MessageScrollerButton className="gap-1.5 px-3" size="sm">
+            <ArrowDownIcon />
+            New Messages
+          </MessageScrollerButton>
         </MessageScroller>
       </MessageScrollerProvider>
 
@@ -967,7 +1019,7 @@ function AudiencePanel({
       </div>
       <div
         aria-labelledby={`audience-${activeTab}-tab`}
-        className="min-h-0 flex-1 overflow-y-auto px-4 py-3"
+        className="max-h-[40%] min-h-0 shrink-0 overflow-y-auto px-4 py-3"
         id="audience-tab-panel"
         role="tabpanel"
         tabIndex={0}
@@ -1050,7 +1102,9 @@ function AudiencePanel({
           roomPreferences(join.topicId).displayName ??
           (join.displayName === "Spectator" ? undefined : join.displayName)
         }
+        lobbyId={join.lobbyId}
         participantIdentity={participantIdentity}
+        token={join.token}
         topicId={join.topicId}
       />
     </aside>

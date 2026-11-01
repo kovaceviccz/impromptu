@@ -1,5 +1,6 @@
 import {
   apiContract,
+  chatMessageSchema,
   errorSchema,
   formErrorSchema,
   type JoinByCodeInput,
@@ -204,4 +205,35 @@ export async function getRoomParticipants(join: {
     token: join.token,
   });
   return readResponse(response, apiContract.roomParticipants.response);
+}
+
+export async function sendRoomChatMessage(input: {
+  topicId: string;
+  lobbyId: string;
+  token: string;
+  message: string;
+}) {
+  const path = apiContract.sendChatMessage.path.replace(
+    ":topicId",
+    encodeURIComponent(input.topicId),
+  );
+  const response = await postJson(path, {
+    lobbyId: input.lobbyId,
+    token: input.token,
+    message: input.message,
+  });
+  if (!response.ok) {
+    const payload: unknown = await response.json().catch(() => null);
+    const moderationError =
+      apiContract.sendChatMessage.errors[400].safeParse(payload);
+    if (moderationError.success) {
+      throw new ApiError(moderationError.data.message, response.status);
+    }
+    const error = errorSchema.safeParse(payload);
+    throw new ApiError(
+      error.success ? error.data.message : "Message could not be sent.",
+      response.status,
+    );
+  }
+  return chatMessageSchema.parse(await response.json());
 }

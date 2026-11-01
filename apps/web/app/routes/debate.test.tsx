@@ -53,6 +53,25 @@ const defaultParticipants: MockParticipant[] = [
   },
 ];
 
+function encodedChatMessage(input: {
+  id: string;
+  message: string;
+  senderIdentity?: string;
+  senderName?: string;
+  timestamp?: number;
+}) {
+  return {
+    payload: new TextEncoder().encode(
+      JSON.stringify({
+        senderIdentity: "another-id",
+        senderName: "Another guest",
+        timestamp: 2,
+        ...input,
+      }),
+    ),
+  };
+}
+
 const {
   disconnectRoom,
   joinRoom,
@@ -76,13 +95,29 @@ const {
     participants: [] as MockParticipant[],
     connection: "connected",
     metadataListeners: new Set<(metadata: string) => void>(),
+    chatCallback: undefined as
+      | ((message: { payload: Uint8Array }) => void)
+      | undefined,
   },
   getParticipants: vi.fn<typeof import("../api").getRoomParticipants>(),
   leaveRoom:
     vi.fn<
       (topicId: string, lobbyId: string, token: string) => Promise<unknown>
     >(),
-  sendChat: vi.fn<(message: string) => Promise<unknown>>(),
+  sendChat: vi.fn<
+    (input: {
+      topicId: string;
+      lobbyId: string;
+      token: string;
+      message: string;
+    }) => Promise<{
+      id: string;
+      message: string;
+      senderIdentity: string;
+      senderName: string;
+      timestamp: number;
+    }>
+  >(),
   startDebateRequest:
     vi.fn<
       (
@@ -98,11 +133,19 @@ beforeEach(() => {
   roomState.participants = defaultParticipants;
   roomState.connection = "connected";
   roomState.metadataListeners.clear();
+  roomState.chatCallback = undefined;
   getParticipants.mockResolvedValue({
     hostIdentity: null,
     state: "WAITING",
     participants: [],
   });
+  sendChat.mockImplementation(async ({ message }) => ({
+    id: "9ba90889-f928-4785-bd33-ce5df26992ee",
+    message,
+    senderIdentity: "7ffcd8af-4d5a-45d9-97cc-6db63b930b09",
+    senderName: "Test spectator",
+    timestamp: 2,
+  }));
   sessionStorage.clear();
 });
 
@@ -112,85 +155,106 @@ vi.mock("../api", async (importOriginal) => ({
   leaveTopic: leaveRoom,
   startDebate: startDebateRequest,
   getRoomParticipants: getParticipants,
+  sendRoomChatMessage: sendChat,
 }));
 
-vi.mock("@livekit/components-react", () => ({
-  LiveKitRoom: ({
-    audio,
-    children,
-    connect,
-    onMediaDeviceFailure,
-    token,
-    video,
-  }: {
-    audio: boolean;
-    children: ReactNode;
-    connect: boolean;
-    onMediaDeviceFailure?: () => void;
-    token: string;
-    video: boolean | { resolution: { height: number; width: number } };
-  }) => (
-    <div
-      data-testid="livekit-room"
-      data-audio={audio}
-      data-connect={connect}
-      data-token={token}
-      data-video={Boolean(video)}
-      data-video-height={
-        typeof video === "object" ? video.resolution.height : undefined
-      }
-      data-video-width={
-        typeof video === "object" ? video.resolution.width : undefined
-      }
-    >
-      {children}
-      <button type="button" onClick={onMediaDeviceFailure}>
-        Simulate media failure
-      </button>
-    </div>
-  ),
-  RoomAudioRenderer: () => null,
-  VideoTrack: ({ style }: { style?: CSSProperties }) => (
-    <div data-testid="video-track" style={style} />
-  ),
-  useChat: () => ({
-    chatMessages: [
+vi.mock("@livekit/components-react", async () => {
+  const { useEffect } = await import("react");
+  return {
+    LiveKitRoom: ({
+      audio,
+      children,
+      connect,
+      onMediaDeviceFailure,
+      token,
+      video,
+    }: {
+      audio: boolean;
+      children: ReactNode;
+      connect: boolean;
+      onMediaDeviceFailure?: () => void;
+      token: string;
+      video: boolean | { resolution: { height: number; width: number } };
+    }) => (
+      <div
+        data-testid="livekit-room"
+        data-audio={audio}
+        data-connect={connect}
+        data-token={token}
+        data-video={Boolean(video)}
+        data-video-height={
+          typeof video === "object" ? video.resolution.height : undefined
+        }
+        data-video-width={
+          typeof video === "object" ? video.resolution.width : undefined
+        }
+      >
+        {children}
+        <button type="button" onClick={onMediaDeviceFailure}>
+          Simulate media failure
+        </button>
+      </div>
+    ),
+    RoomAudioRenderer: () => null,
+    VideoTrack: ({ style }: { style?: CSSProperties }) => (
+      <div data-testid="video-track" style={style} />
+    ),
+    useDataChannel: (
+      _topic: string,
+      onMessage: (message: { payload: Uint8Array }) => void,
+    ) => {
+      useEffect(() => {
+        roomState.chatCallback = onMessage;
+        onMessage({
+          payload: new TextEncoder().encode(
+            JSON.stringify({
+              id: "5b122360-7845-40fb-8d01-782daefc7337",
+              message: "Hello room",
+              senderIdentity: "another-id",
+              senderName: "Another guest",
+              timestamp: 1,
+            }),
+          ),
+        });
+        return () => {
+          if (roomState.chatCallback === onMessage) {
+            roomState.chatCallback = undefined;
+          }
+        };
+      }, [onMessage]);
+      return {
+        isSending: false,
+        message: undefined,
+        send: vi.fn<(payload: Uint8Array) => Promise<void>>(),
+      };
+    },
+    useParticipants: () => roomState.participants,
+    useConnectionState: () => roomState.connection,
+    useRoomContext: () => ({
+      disconnect: disconnectRoom,
+      localParticipant: {
+        attributes: { "debate.vote": "0" },
+        setAttributes,
+        setName,
+      },
+      on: (event: string, listener: (metadata: string) => void) => {
+        if (event === "roomMetadataChanged") {
+          roomState.metadataListeners.add(listener);
+        }
+      },
+      off: (event: string, listener: (metadata: string) => void) => {
+        if (event === "roomMetadataChanged") {
+          roomState.metadataListeners.delete(listener);
+        }
+      },
+    }),
+    useTracks: () => [
       {
-        from: { identity: "another-id", name: "Another guest" },
-        id: "message-1",
-        message: "Hello room",
-        timestamp: 1,
+        participant: { identity: "debater-id" },
       },
     ],
-    isSending: false,
-    send: sendChat,
-  }),
-  useParticipants: () => roomState.participants,
-  useConnectionState: () => roomState.connection,
-  useRoomContext: () => ({
-    disconnect: disconnectRoom,
-    localParticipant: {
-      attributes: { "debate.vote": "0" },
-      setAttributes,
-      setName,
-    },
-    on: (event: string, listener: (metadata: string) => void) => {
-      if (event === "roomMetadataChanged") {
-        roomState.metadataListeners.add(listener);
-      }
-    },
-    off: (event: string, listener: (metadata: string) => void) => {
-      if (event === "roomMetadataChanged") {
-        roomState.metadataListeners.delete(listener);
-      }
-    },
-  }),
-  useTracks: () => [
-    {
-      participant: { identity: "debater-id" },
-    },
-  ],
-}));
+  };
+});
 
 import Debate, { clientAction, DebateExperience } from "./debate";
 import { recalledRoom, rememberRoom, roomPreferences } from "../room-session";
@@ -277,7 +341,6 @@ describe("DebateExperience", () => {
   });
 
   it("connects spectators without publishing media and lets them vote and chat", async () => {
-    sendChat.mockResolvedValue({});
     setAttributes.mockResolvedValue();
     setName.mockResolvedValue();
     const join: JoinResult = {
@@ -337,6 +400,7 @@ describe("DebateExperience", () => {
     expect(within(firstSide!).getByTestId("video-track")).toBeVisible();
     fireEvent.click(voteTab);
     expect(screen.getByText(/Hello room/)).toBeVisible();
+    expect(screen.getByText("New Messages")).toBeInTheDocument();
     const messageTime = document.querySelector("time");
     expect(messageTime).toHaveAttribute("datetime", new Date(1).toISOString());
     expect(messageTime).toHaveTextContent(
@@ -385,11 +449,177 @@ describe("DebateExperience", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
-    await waitFor(() => expect(sendChat).toHaveBeenCalledWith("Hello back"));
+    await waitFor(() =>
+      expect(sendChat).toHaveBeenCalledWith({
+        lobbyId: "dream-cheating",
+        message: "Hello back",
+        token: "spectator-token",
+        topicId: "dream-cheating",
+      }),
+    );
+    const ownMessage = await screen.findByText("Hello back");
+    expect(ownMessage.closest('[data-slot="message"]')).toHaveAttribute(
+      "data-align",
+      "end",
+    );
+    expect(ownMessage.closest('[data-slot="bubble"]')).toHaveAttribute(
+      "data-variant",
+      "default",
+    );
+  });
+
+  it("shows moderation errors only to the sender and keeps their draft", async () => {
+    sendChat.mockRejectedValueOnce(
+      new ApiError(
+        "That message contains language that is not allowed. Please revise it.",
+        400,
+      ),
+    );
+    const join: JoinResult = {
+      lobbyId: "dream-cheating",
+      state: "WAITING",
+      topicId: "dream-cheating",
+      topicTitle: "Can you cheat in a dream?",
+      sides: ["Yes: intention still matters", "No: dreams are involuntary"],
+      participantIdentity: "spectator-id",
+      displayName: "Test spectator",
+      role: "spectator",
+      sideIndex: null,
+      isCreator: false,
+      hostIdentity: null,
+      livekitUrl: "ws://localhost:7880",
+      token: "spectator-token",
+    };
+    render(
+      <MemoryRouter>
+        <DebateExperience join={join} />
+      </MemoryRouter>,
+    );
+    const input = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.change(input, { target: { value: "blocked draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(
+      await screen.findByText(
+        "That message contains language that is not allowed. Please revise it.",
+      ),
+    ).toBeVisible();
+    expect(input).toHaveValue("blocked draft");
+  });
+
+  it("preserves an older reading position and exposes a New Messages action", async () => {
+    const join: JoinResult = {
+      lobbyId: "dream-cheating",
+      state: "WAITING",
+      topicId: "dream-cheating",
+      topicTitle: "Can you cheat in a dream?",
+      sides: ["Yes: intention still matters", "No: dreams are involuntary"],
+      participantIdentity: "spectator-id",
+      displayName: "Test spectator",
+      role: "spectator",
+      sideIndex: null,
+      isCreator: false,
+      hostIdentity: null,
+      livekitUrl: "ws://localhost:7880",
+      token: "spectator-token",
+    };
+    render(
+      <MemoryRouter>
+        <DebateExperience join={join} />
+      </MemoryRouter>,
+    );
+    await screen.findByText("Hello room");
+    const viewport = screen.getByRole("region", { name: "Messages" });
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 300 },
+      scrollTo: {
+        configurable: true,
+        value: ({ top }: { top: number }) => {
+          viewport.scrollTop = top;
+        },
+      },
+    });
+    viewport.getBoundingClientRect = () => new DOMRect(0, 0, 0, 100);
+    const firstMessage = document.querySelector<HTMLElement>(
+      '[data-message-id="5b122360-7845-40fb-8d01-782daefc7337"]',
+    );
+    expect(firstMessage).not.toBeNull();
+    firstMessage!.getBoundingClientRect = () => new DOMRect(0, 250, 0, 50);
+
+    fireEvent.wheel(viewport);
+    viewport.scrollTop = 0;
+    fireEvent.scroll(viewport);
+    const indicator = screen.getByText("New Messages").closest("button");
+    expect(indicator).not.toBeNull();
+    await waitFor(() =>
+      expect(indicator).toHaveAttribute("data-active", "true"),
+    );
+
+    act(() => {
+      roomState.chatCallback?.(
+        encodedChatMessage({
+          id: "a42c79fa-07b1-4e50-b320-05526f8a0186",
+          message: "A newer message",
+        }),
+      );
+    });
+    expect(await screen.findByText("A newer message")).toBeVisible();
+    expect(viewport.scrollTop).toBe(0);
+    fireEvent.click(indicator!);
+    expect(viewport.scrollTop).toBe(200);
+  });
+
+  it("follows new messages while the reader is already at the bottom", async () => {
+    const join: JoinResult = {
+      lobbyId: "dream-cheating",
+      state: "WAITING",
+      topicId: "dream-cheating",
+      topicTitle: "Can you cheat in a dream?",
+      sides: ["Yes: intention still matters", "No: dreams are involuntary"],
+      participantIdentity: "spectator-id",
+      displayName: "Test spectator",
+      role: "spectator",
+      sideIndex: null,
+      isCreator: false,
+      hostIdentity: null,
+      livekitUrl: "ws://localhost:7880",
+      token: "spectator-token",
+    };
+    render(
+      <MemoryRouter>
+        <DebateExperience join={join} />
+      </MemoryRouter>,
+    );
+    await screen.findByText("Hello room");
+    const viewport = screen.getByRole("region", { name: "Messages" });
+    let scrollHeight = 300;
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+      scrollTo: {
+        configurable: true,
+        value: ({ top }: { top: number }) => {
+          viewport.scrollTop = top;
+        },
+      },
+    });
+    viewport.scrollTop = 200;
+    fireEvent.scroll(viewport);
+    scrollHeight = 400;
+    act(() => {
+      roomState.chatCallback?.(
+        encodedChatMessage({
+          id: "340e81fa-c8b5-4275-876f-39130d5eaff5",
+          message: "Follow this message",
+        }),
+      );
+    });
+    await screen.findByText("Follow this message");
+    await waitFor(() => expect(viewport.scrollTop).toBe(300));
   });
 
   it("asks a spectator for a name before chat and restores their name and vote", async () => {
-    sendChat.mockResolvedValue({});
     setName.mockResolvedValue();
     setAttributes.mockResolvedValue();
     const join: JoinResult = {
@@ -424,7 +654,14 @@ describe("DebateExperience", () => {
       target: { value: "Hello" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(sendChat).toHaveBeenCalledWith("Hello"));
+    await waitFor(() =>
+      expect(sendChat).toHaveBeenCalledWith({
+        lobbyId: "dream-cheating",
+        message: "Hello",
+        token: "spectator-token",
+        topicId: "dream-cheating",
+      }),
+    );
     fireEvent.click(
       screen.getByRole("button", {
         name: /No: dreams are involuntary.*0/,
