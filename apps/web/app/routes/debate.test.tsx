@@ -63,9 +63,11 @@ const {
   sendChat,
   startDebateRequest,
   endRoundRequest,
+  submitVoteRequest,
   setAttributes,
   setName,
 } = vi.hoisted(() => ({
+  submitVoteRequest: vi.fn<typeof import("../api").submitVote>(),
   endRoundRequest: vi.fn<typeof import("../api").endRound>(),
   disconnectRoom: vi.fn<() => Promise<void>>(),
   joinRoom:
@@ -98,12 +100,20 @@ const {
 }));
 
 beforeEach(() => {
+  submitVoteRequest.mockImplementation(async (_, input) => ({
+    votingEndsAt: new Date(Date.now() + 30000).toISOString(),
+    voteCounts: input.choice === "1" ? [0, 1] : [0, 0],
+    selectedVote: input.choice,
+  }));
   roomState.participants = defaultParticipants;
   roomState.connection = "connected";
   roomState.metadataListeners.clear();
   getParticipants.mockResolvedValue({
     hostIdentity: null,
     state: "WAITING",
+    votingEndsAt: new Date(Date.now() + 30000).toISOString(),
+    voteCounts: [1, 0],
+    selectedVote: "0",
     participants: [],
   });
   sessionStorage.clear();
@@ -115,6 +125,7 @@ vi.mock("../api", async (importOriginal) => ({
   leaveTopic: leaveRoom,
   startDebate: startDebateRequest,
   endRound: endRoundRequest,
+  submitVote: submitVoteRequest,
   getRoomParticipants: getParticipants,
 }));
 
@@ -384,7 +395,11 @@ describe("DebateExperience", () => {
       }),
     );
     await waitFor(() =>
-      expect(setAttributes).toHaveBeenCalledWith({ "debate.vote": "" }),
+      expect(submitVoteRequest).toHaveBeenCalledWith(join.topicId, {
+        lobbyId: join.lobbyId,
+        token: join.token,
+        choice: null,
+      }),
     );
     setAttributes.mockClear();
 
@@ -392,7 +407,11 @@ describe("DebateExperience", () => {
       screen.getByRole("button", { name: /No: dreams are involuntary.*0/ }),
     );
     await waitFor(() =>
-      expect(setAttributes).toHaveBeenCalledWith({ "debate.vote": "1" }),
+      expect(submitVoteRequest).toHaveBeenCalledWith(join.topicId, {
+        lobbyId: join.lobbyId,
+        token: join.token,
+        choice: "1",
+      }),
     );
 
     fireEvent.change(screen.getByRole("textbox", { name: "Message" }), {
@@ -451,7 +470,6 @@ describe("DebateExperience", () => {
     await waitFor(() =>
       expect(roomPreferences(join.topicId)).toEqual({
         displayName: "Ada",
-        vote: "1",
       }),
     );
     view.unmount();
@@ -466,10 +484,10 @@ describe("DebateExperience", () => {
     );
     expect(screen.getByRole("textbox", { name: "Message" })).toBeVisible();
     await waitFor(() => expect(setName).toHaveBeenCalledWith("Ada"));
-    expect(setAttributes).toHaveBeenCalledWith({ "debate.vote": "1" });
+    expect(setAttributes).not.toHaveBeenCalled();
   });
 
-  it("does not let a debater vote or send chat messages", () => {
+  it("does not let a debater vote or send chat messages", async () => {
     const join: JoinResult = {
       lobbyId: "dream-cheating",
       state: "WAITING",
@@ -512,7 +530,7 @@ describe("DebateExperience", () => {
         "Audience votes appear here as spectators choose the stronger argument.",
       ),
     ).toBeVisible();
-    expect(screen.getByText("1 spectator vote")).toBeVisible();
+    expect(await screen.findByText("1 spectator vote")).toBeVisible();
     expect(
       within(readOnlyVote)
         .getByText("Yes: intention still matters")
@@ -1004,6 +1022,112 @@ describe("Participant roster", () => {
       screen.getByTitle("You are not eligible to vote this round."),
     ).toBeVisible();
   });
+
+  it("disables votes at the deadline even while the phase is still VOTING", async () => {
+    vi.useFakeTimers();
+    const endsAt = new Date(Date.now() + 30_000).toISOString();
+    getParticipants.mockResolvedValue({
+      state: "VOTING",
+      hostIdentity: null,
+      participants: [],
+      votingEndsAt: endsAt,
+      voteCounts: [1, 0],
+      selectedVote: "0",
+    });
+    render(
+      <MemoryRouter>
+        <DebateExperience
+          join={{ ...spectatorJoin, state: "VOTING", voteEligible: true }}
+        />
+      </MemoryRouter>,
+    );
+    await act(async () => {});
+    const choice = screen.getByRole("button", {
+      name: /No: dreams are involuntary/,
+    });
+    expect(choice).toBeEnabled();
+    expect(
+      screen.getByRole("timer", { name: "Voting time remaining" }),
+    ).toHaveTextContent("0:30");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(
+      screen.getByRole("timer", { name: "Voting time remaining" }),
+    ).toHaveTextContent("0:20");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    expect(screen.getAllByText("Voting is closed")).toHaveLength(2);
+    expect(
+      screen.queryByRole("timer", { name: "Voting time remaining" }),
+    ).toBeNull();
+    expect(choice).toBeDisabled();
+    fireEvent.click(choice);
+    expect(submitVoteRequest).not.toHaveBeenCalled();
+    expect(screen.getByText("1 spectator vote")).toBeVisible();
+  });
+
+  it.each(["accepted", "rejected", "network failure"])(
+    "shows pending feedback then handles a vote that is %s",
+    async (outcome) => {
+      getParticipants.mockResolvedValue({
+        state: "VOTING",
+        hostIdentity: null,
+        participants: [],
+        votingEndsAt: new Date(Date.now() + 30_000).toISOString(),
+        voteCounts: [0, 0],
+        selectedVote: null,
+      });
+      let resolve!: (
+        value: Awaited<ReturnType<typeof import("../api").submitVote>>,
+      ) => void;
+      let reject!: (error: Error) => void;
+      submitVoteRequest.mockImplementationOnce(
+        () =>
+          new Promise((accept, fail) => {
+            resolve = accept;
+            reject = fail;
+          }),
+      );
+      render(
+        <MemoryRouter>
+          <DebateExperience
+            join={{ ...spectatorJoin, state: "VOTING", voteEligible: true }}
+          />
+        </MemoryRouter>,
+      );
+      await act(async () => {});
+      const choice = screen.getByRole("button", {
+        name: /No: dreams are involuntary/,
+      });
+      fireEvent.click(choice);
+      expect(screen.getByText("Submitting vote…")).toBeVisible();
+      expect(choice).toBeDisabled();
+      fireEvent.click(choice);
+      expect(submitVoteRequest).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        if (outcome === "accepted")
+          resolve({
+            votingEndsAt: new Date(Date.now() + 30_000).toISOString(),
+            voteCounts: [0, 1],
+            selectedVote: "1",
+          });
+        else
+          reject(
+            outcome === "rejected"
+              ? new ApiError("Voting is closed", 409)
+              : new TypeError("Failed to fetch"),
+          );
+      });
+      expect(screen.queryByText("Your vote was received.") !== null).toBe(
+        outcome === "accepted",
+      );
+      expect(
+        screen.queryByText("Your vote could not be recorded.") !== null,
+      ).toBe(outcome !== "accepted");
+    },
+  );
 
   it("loads the current voting phase after reconnecting with stale debate state", async () => {
     const join = { ...spectatorJoin, state: "DEBATE_IN_PROGRESS" as const };

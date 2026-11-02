@@ -216,3 +216,19 @@ export async function getRoomParticipants(join: {
   });
   return readResponse(response, apiContract.roomParticipants.response);
 }
+
+export async function submitVote(
+  topicId: string,
+  input: { lobbyId: string; token: string; choice: "0" | "1" | null },
+) {
+  return readResponse(
+    await postJson(
+      apiContract.submitVote.path.replace(
+        ":topicId",
+        encodeURIComponent(topicId),
+      ),
+      input,
+    ),
+    apiContract.submitVote.response,
+  );
+}

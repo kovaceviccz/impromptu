@@ -82,6 +82,7 @@ import {
   ApiError,
   closeLobby,
   endRound,
+  submitVote,
   getRoomParticipants,
   joinTopic,
   leaveTopic,
@@ -95,7 +96,6 @@ import {
   updateRoomPreferences,
 } from "../room-session";
 
-const VOTE_ATTRIBUTE = "debate.vote";
 const SIDE_ATTRIBUTE = "debate.side";
 const VIDEO_CAPTURE_720P = { resolution: VideoPresets.h720.resolution };
 const chatTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -484,6 +484,12 @@ function RoomChat({
   );
 }
 
+type VotingStatus = {
+  votingEndsAt?: string | null;
+  voteCounts?: [number, number];
+  selectedVote?: "0" | "1" | null;
+};
+
 function ParticipantStatus({
   join,
   onPrivateLobbyNotFound,
@@ -495,6 +501,9 @@ function ParticipantStatus({
     hostIdentity: string | null;
     state: LobbyState;
     roundEndsAt?: string | null;
+    votingEndsAt?: string | null;
+    voteCounts?: [number, number];
+    selectedVote?: "0" | "1" | null;
   }) => void;
 }) {
   const { topicId, lobbyId, token } = join;
@@ -836,6 +845,9 @@ type AudienceTab = "vote" | "participants";
 function AudiencePanel({
   activeTab,
   canVote,
+  voting,
+  votingClosed,
+  onVote,
   join,
   onChangeRole,
   onPrivateLobbyNotFound,
@@ -843,6 +855,9 @@ function AudiencePanel({
 }: {
   activeTab: AudienceTab;
   canVote: boolean;
+  voting: VotingStatus;
+  votingClosed: boolean;
+  onVote: (status: VotingStatus) => void;
   join: JoinResult;
   onChangeRole: ChangeRole;
   onPrivateLobbyNotFound: (cause: unknown) => boolean;
@@ -850,41 +865,47 @@ function AudiencePanel({
 }) {
   const { participantIdentity, sides } = join;
   const participants = useRoomParticipants(join);
-  const room = useRoomContext();
   const [isVoting, setIsVoting] = useState(false);
+  const votePending = useRef(false);
+  const [voteFeedback, setVoteFeedback] = useState<string>();
   const [error, setError] = useState<string>();
   const debaterCount = assignDebaters(participants, join).size;
-  const spectators = participants.filter(
-    (participant) => !publishes(participant, join),
-  );
-  const rawVote = room.localParticipant.attributes[VOTE_ATTRIBUTE];
+  const spectators = participants.filter((p) => !publishes(p, join));
+  const rawVote = voting.selectedVote;
   const selectedVote =
     canVote && (rawVote === "0" || rawVote === "1") ? rawVote : undefined;
-  const voteCounts = sides.map(
-    (_, index) =>
-      spectators.filter(
-        (participant) =>
-          participant.attributes[VOTE_ATTRIBUTE] === String(index),
-      ).length,
-  );
+  const voteCounts = voting.voteCounts ?? [0, 0];
   const voteTotal = voteCounts.reduce((total, count) => total + count, 0);
 
   async function vote(value: readonly string[]) {
-    if (!canVote) return;
-    const choice = value[0] ?? "";
+    if (
+      !canVote ||
+      votingClosed ||
+      !voting.votingEndsAt ||
+      Date.now() >= Date.parse(voting.votingEndsAt) ||
+      votePending.current
+    )
+      return;
+    const choice = value[0] === "0" || value[0] === "1" ? value[0] : null;
+    votePending.current = true;
+    setVoteFeedback(undefined);
 
     setError(undefined);
     setIsVoting(true);
     try {
-      await room.localParticipant.setAttributes({
-        [VOTE_ATTRIBUTE]: choice,
+      const result = await submitVote(join.topicId, {
+        lobbyId: join.lobbyId,
+        token: join.token,
+        choice,
       });
-      updateRoomPreferences(join.topicId, {
-        vote: choice === "0" || choice === "1" ? choice : undefined,
-      });
+      onVote(result);
+      setVoteFeedback(
+        choice === null ? "Your vote was removed." : "Your vote was received.",
+      );
     } catch {
       setError("Your vote could not be recorded.");
     } finally {
+      votePending.current = false;
       setIsVoting(false);
     }
   }
@@ -983,9 +1004,23 @@ function AudiencePanel({
         ) : (
           <section className="grid gap-3">
             <div>
-              <h2 className="font-editorial text-lg font-semibold">
-                Audience vote
-              </h2>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="font-editorial text-lg font-semibold">
+                  Audience vote
+                </h2>
+                {join.state === "VOTING" && voting.votingEndsAt ? (
+                  votingClosed ? (
+                    <span className="text-sm text-muted-foreground">
+                      Voting is closed
+                    </span>
+                  ) : (
+                    <RoundCountdown
+                      endsAt={voting.votingEndsAt}
+                      label="Voting time remaining"
+                    />
+                  )
+                ) : null}
+              </div>
               <p className="text-sm text-muted-foreground">
                 {canVote
                   ? "Vote for the debater who presented the stronger argument. Tap again to undo."
@@ -995,7 +1030,7 @@ function AudiencePanel({
             {canVote ? (
               <ToggleGroup
                 className="flex w-full gap-2"
-                disabled={isVoting}
+                disabled={isVoting || votingClosed || !voting.votingEndsAt}
                 value={selectedVote ? [selectedVote] : []}
                 onValueChange={(value) => void vote(value)}
               >
@@ -1044,6 +1079,11 @@ function AudiencePanel({
               {voteTotal}
               {voteTotal === 1 ? " spectator vote" : " spectator votes"}
             </p>
+            {(isVoting || voteFeedback) && (
+              <output aria-live="polite">
+                {isVoting ? "Submitting vote…" : voteFeedback}
+              </output>
+            )}
             {error ? (
               <Alert variant="destructive">
                 <AlertDescription>{error}</AlertDescription>
@@ -1065,7 +1105,13 @@ function AudiencePanel({
   );
 }
 
-export function RoundCountdown({ endsAt }: { endsAt: string }) {
+export function RoundCountdown({
+  endsAt,
+  label = "Round time remaining",
+}: {
+  endsAt: string;
+  label?: string;
+}) {
   const [now, setNow] = useState(Date.now);
 
   useEffect(() => {
@@ -1080,7 +1126,7 @@ export function RoundCountdown({ endsAt }: { endsAt: string }) {
     <div
       className="grid justify-items-center gap-0.5"
       role="timer"
-      aria-label="Round time remaining"
+      aria-label={label}
     >
       <span className="text-xs text-muted-foreground">Time remaining</span>
       <span className="font-editorial text-2xl font-semibold tabular-nums sm:text-3xl">
@@ -1201,17 +1247,8 @@ function SessionRestorer({ join }: { join: JoinResult }) {
         if (preferences.displayName) {
           await room.localParticipant.setName(preferences.displayName);
         }
-        if (
-          preferences.vote &&
-          join.state === "VOTING" &&
-          join.voteEligible === true
-        ) {
-          await room.localParticipant.setAttributes({
-            [VOTE_ATTRIBUTE]: preferences.vote,
-          });
-        }
       } catch {
-        // The spectator can enter their name or vote again.
+        // The spectator can enter their name again.
       }
     })();
   }, [connection, join.role, join.topicId, room]);
@@ -1235,6 +1272,20 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
   const [endMode, setEndMode] = useState("manual");
   const [durationMinutes, setDurationMinutes] = useState(5);
   const [roundEndsAt, setRoundEndsAt] = useState<string | null>();
+  const [voting, setVoting] = useState<VotingStatus>({});
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!voting.votingEndsAt) return undefined;
+    const timer = setTimeout(
+      () => setNow(Date.now()),
+      Math.max(0, Date.parse(voting.votingEndsAt) - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [voting.votingEndsAt]);
+  const votingClosed =
+    join.state === "VOTING" &&
+    (voting.votingEndsAt === null ||
+      (!!voting.votingEndsAt && now >= Date.parse(voting.votingEndsAt)));
   const [endingRound, setEndingRound] = useState(false);
   const endPending = useRef(false);
   const startPending = useRef(false);
@@ -1295,8 +1346,13 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
       hostIdentity: string | null;
       state: LobbyState;
       roundEndsAt?: string | null;
+      votingEndsAt?: string | null;
+      voteCounts?: [number, number];
+      selectedVote?: "0" | "1" | null;
     }) => {
       setRoundEndsAt(status.roundEndsAt);
+      setVoting(status);
+      setNow(Date.now());
       setJoin((current) => ({
         ...current,
         hostIdentity: status.hostIdentity,
@@ -1526,9 +1582,11 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
               ) : null}
               {join.state === "VOTING" ? (
                 <output aria-live="polite">
-                  {!isDebater && !eligibleToVote
-                    ? "Voting is in progress. You joined after voting opened and cannot vote this round."
-                    : "Audience voting is open"}
+                  {votingClosed
+                    ? "Voting is closed"
+                    : !isDebater && !eligibleToVote
+                      ? "Voting is in progress. You joined after voting opened and cannot vote this round."
+                      : "Audience voting is open"}
                 </output>
               ) : null}
               <LobbyStatus
@@ -1587,6 +1645,9 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
         <div className="grid min-h-0 grid-rows-[minmax(12rem,36svh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)] lg:grid-rows-1">
           <DebateVideos join={join} />
           <AudiencePanel
+            voting={voting}
+            votingClosed={votingClosed}
+            onVote={setVoting}
             activeTab={audienceTab}
             canVote={!isDebater && eligibleToVote && join.state === "VOTING"}
             onTabChange={setAudienceTab}

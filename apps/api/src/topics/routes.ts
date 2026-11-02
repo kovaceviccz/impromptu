@@ -19,6 +19,7 @@ import {
   type DebateSide,
   type LiveKitGateway,
 } from "./livekit.js";
+import { votingSummary } from "../lobbies/voting.js";
 import type { JoinResult } from "./contract.js";
 
 export type TopicRoutesOptions = {
@@ -207,10 +208,21 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
     const store = publicLobby
       ? options.publicLobbyState
       : options.privateLobbies;
+    const participants = await options.livekit.listParticipants(
+      `debate-${lobbyId}`,
+    );
     const updated = await store.updateState(
       lobbyId,
       "DEBATE_IN_PROGRESS",
       "VOTING",
+      undefined,
+      {
+        endsAt: new Date(Date.now() + 30_000).toISOString(),
+        eligible: participants
+          .filter((p) => p.role === "spectator")
+          .map((p) => p.identity),
+        votes: {},
+      },
     );
     if (!updated) return false;
     publishPublicChange();
@@ -245,6 +257,57 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
   app.addHook("onClose", async () => {
     clearInterval(roundTimer);
   });
+
+  app.post(
+    topicContracts.submitVote.path,
+    {
+      schema: {
+        params: topicContracts.submitVote.params,
+        body: topicContracts.submitVote.body,
+        response: {
+          200: topicContracts.submitVote.response,
+          ...topicContracts.submitVote.errors,
+        },
+      },
+    },
+    async (request, reply) => {
+      const topic = await resolveTopic(request.params.topicId);
+      if (!topic) return reply.code(404).send({ message: "Topic not found" });
+      const { lobbyId, token, choice } = request.body;
+      const identity = await options.livekit.verifyParticipantToken(
+        token,
+        `debate-${lobbyId}`,
+      );
+      if (!identity)
+        return reply
+          .code(401)
+          .send({ message: "Your room session expired. Rejoin the lobby." });
+      const publicLobby = !topic.record && lobbyId === topic.id;
+      const store = publicLobby
+        ? options.publicLobbyState
+        : options.privateLobbies;
+      const lobby = publicLobby
+        ? await options.publicLobbyState.find(lobbyId)
+        : await findLobby(lobbyId);
+      if (
+        !lobby ||
+        ("topicId" in lobby && !publicLobby && lobby.topicId !== topic.id) ||
+        ("expiresAt" in lobby &&
+          lobby.expiresAt &&
+          lobby.expiresAt <= new Date())
+      )
+        return reply.code(404).send({ message: "Lobby not found" });
+      if (!(await store.submitVote(lobbyId, identity, choice)))
+        return reply.code(409).send({
+          message:
+            "Voting is closed or you are not eligible to vote this round.",
+        });
+      const current = publicLobby
+        ? await options.publicLobbyState.find(lobbyId)
+        : await findLobby(lobbyId);
+      return votingSummary(current?.voting, identity);
+    },
+  );
 
   app.post(
     topicContracts.endRound.path,
@@ -905,6 +968,13 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
           `debate-${lobbyId}`,
         );
         return {
+          ...votingSummary(
+            (lobbyId === topic.id && !topic.record
+              ? await options.publicLobbyState.find(topic.id)
+              : await findLobby(lobbyId)
+            )?.voting,
+            identity,
+          ),
           hostIdentity,
           state,
           roundEndsAt:

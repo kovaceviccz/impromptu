@@ -1167,6 +1167,59 @@ describe("ending rounds", () => {
     );
   });
 
+  it("opens a 30-second voting window and rejects stale submissions after closing", async () => {
+    const { app, store, active } = await activeLobby();
+    active.set(`debate-${lobbyId}`, [
+      {
+        identity: "spectator",
+        displayName: "Viewer",
+        role: "spectator",
+        sideIndex: null,
+      },
+    ]);
+    const before = Date.now();
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/topics/dream-cheating/end-round",
+          payload: { lobbyId, token: creatorIdentity },
+        })
+      ).statusCode,
+    ).toBe(200);
+    const voting = (await store.findById(lobbyId))!.voting!;
+    expect(Date.parse(voting.endsAt)).toBeGreaterThanOrEqual(before + 30_000);
+    expect(Date.parse(voting.endsAt)).toBeLessThanOrEqual(Date.now() + 30_000);
+    const send = (choice: "0" | "1" | null, token = "spectator") =>
+      app.inject({
+        method: "POST",
+        url: "/api/topics/dream-cheating/vote",
+        payload: { lobbyId, token, choice },
+      });
+    expect((await send("0", creatorIdentity)).statusCode).toBe(409);
+    expect((await send("0")).json()).toMatchObject({
+      voteCounts: [1, 0],
+      selectedVote: "0",
+    });
+    await store.updateState(lobbyId, "VOTING", "VOTING", undefined, {
+      ...(await store.findById(lobbyId))!.voting!,
+      endsAt: new Date(0).toISOString(),
+    });
+    expect((await send("1")).statusCode).toBe(409);
+    expect((await send(null)).statusCode).toBe(409);
+    active.set(`debate-${lobbyId}`, []);
+    const status = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/participants",
+      payload: { lobbyId, token: "spectator" },
+    });
+    expect(status.json()).toMatchObject({
+      votingEndsAt: new Date(0).toISOString(),
+      voteCounts: [1, 0],
+      selectedVote: "0",
+    });
+  });
+
   it("marks spectators joining during voting ineligible and restricts their token", async () => {
     const { store } = await activeLobby();
     const lobby = (await store.findById(lobbyId))!;

@@ -1,3 +1,4 @@
+import { recordVote, type Voting } from "./voting.js";
 import type { LobbyState } from "./contract.js";
 
 export class DuplicateLobbyCodeError extends Error {}
@@ -12,6 +13,7 @@ export type PrivateLobbyRecord = {
   visibility?: "public" | "private";
   state: LobbyState;
   roundEndsAt?: Date | null;
+  voting?: Voting | null;
   codeHash: string | null;
   creatorIdentity: string;
   createdAt: Date;
@@ -29,9 +31,15 @@ export interface PrivateLobbyStore {
     expectedState: LobbyState,
     state: LobbyState,
     roundEndsAt?: Date | null,
+    voting?: Voting,
   ): Promise<boolean>;
   delete(id: string): Promise<void>;
   dueRounds(now: Date): Promise<PrivateLobbyRecord[]>;
+  submitVote(
+    id: string,
+    identity: string,
+    choice: "0" | "1" | null,
+  ): Promise<boolean>;
   close(): Promise<void>;
 }
 
@@ -83,13 +91,14 @@ export function createMemoryPrivateLobbyStore(
     async findById(id) {
       return lobbies.get(id);
     },
-    async updateState(id, expectedState, state, roundEndsAt) {
+    async updateState(id, expectedState, state, roundEndsAt, voting) {
       const lobby = lobbies.get(id);
       if (!lobby || lobby.state !== expectedState) return false;
       lobbies.set(id, {
         ...lobby,
         state,
         ...(roundEndsAt !== undefined ? { roundEndsAt } : {}),
+        ...(voting ? { voting } : {}),
       });
       return true;
     },
@@ -103,6 +112,14 @@ export function createMemoryPrivateLobbyStore(
           lobby.roundEndsAt &&
           lobby.roundEndsAt <= now,
       );
+    },
+    async submitVote(id, identity, choice) {
+      const current = lobbies.get(id);
+      if (!current || current.state !== "VOTING") return false;
+      const voting = recordVote(current.voting, identity, choice, new Date());
+      if (!voting) return false;
+      lobbies.set(id, { ...current, voting });
+      return true;
     },
     async close() {},
   };
