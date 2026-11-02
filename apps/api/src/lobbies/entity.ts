@@ -1,5 +1,6 @@
 import { EntitySchema } from "@mikro-orm/core";
 
+import type { LobbyTag } from "../topics/contract.js";
 import type { LobbyState } from "./contract.js";
 
 export class PrivateLobbyEntity {
@@ -8,6 +9,7 @@ export class PrivateLobbyEntity {
   name!: string;
   side0!: string | null;
   side1!: string | null;
+  tags!: LobbyTag[];
   visibility!: "public" | "private";
   state!: LobbyState;
   codeHash!: string | null;
@@ -33,6 +35,10 @@ export const PrivateLobbySchema = new EntitySchema<PrivateLobbyEntity>({
       name: "private_lobby_code_visibility_check",
       expression:
         "(visibility = 'private' and code_hash is not null) or (visibility = 'public' and code_hash is null)",
+    },
+    {
+      name: "private_lobby_tags_check",
+      expression: `tags <@ array['Casual', 'Serious', 'Beginner-friendly', 'Competitive', 'Educational', 'Open-minded']::text[]`,
     },
   ],
   indexes: [
@@ -64,6 +70,12 @@ export const PrivateLobbySchema = new EntitySchema<PrivateLobbyEntity>({
       fieldName: "side_1",
       columnType: "text",
       nullable: true,
+    },
+    tags: {
+      type: "string",
+      array: true,
+      columnType: "text[]",
+      defaultRaw: "'{}'",
     },
     visibility: { type: "string", columnType: "text", defaultRaw: "'private'" },
     state: {

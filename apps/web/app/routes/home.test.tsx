@@ -320,12 +320,23 @@ describe("TopicList", () => {
     fireEvent.change(screen.getByLabelText("Creator display name"), {
       target: { value: "Sam" },
     });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Casual" }));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Beginner-friendly" }),
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "Casual" }).closest("label"),
+    ).toHaveClass("bg-emerald-50");
+    expect(
+      screen.getByRole("checkbox", { name: "Serious" }).closest("label"),
+    ).toHaveClass("bg-red-50");
     fireEvent.click(screen.getByRole("button", { name: "Create and join" }));
 
     expect(await screen.findByText("Connected to private lobby")).toBeVisible();
     expect(createLobbyMock).toHaveBeenCalledWith({
       name: "Dream debate",
       sides: ["Yes: dreams are vivid", "No: dreams are involuntary"],
+      tags: ["Casual", "Beginner-friendly"],
       visibility: "private",
       displayName: "Sam",
       intent: "debater",
