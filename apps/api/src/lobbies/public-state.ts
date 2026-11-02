@@ -1,3 +1,4 @@
+import { recordVote, type Voting } from "./voting.js";
 import type { LobbyState } from "./contract.js";
 
 export type PublicLobbyState = {
@@ -5,6 +6,7 @@ export type PublicLobbyState = {
   hostIdentity: string | null;
   state: LobbyState;
   roundEndsAt?: Date | null;
+  voting?: Voting | null;
 };
 
 export interface PublicLobbyStateStore {
@@ -20,8 +22,14 @@ export interface PublicLobbyStateStore {
     expectedState: LobbyState,
     state: LobbyState,
     roundEndsAt?: Date | null,
+    voting?: Voting,
   ): Promise<boolean>;
   dueRounds(now: Date): Promise<PublicLobbyState[]>;
+  submitVote(
+    id: string,
+    identity: string,
+    choice: "0" | "1" | null,
+  ): Promise<boolean>;
   close(): Promise<void>;
 }
 
@@ -53,13 +61,14 @@ export function createMemoryPublicLobbyStateStore(
       states.set(topicId, { ...current, hostIdentity: identity });
       return true;
     },
-    async updateState(topicId, expectedState, state, roundEndsAt) {
+    async updateState(topicId, expectedState, state, roundEndsAt, voting) {
       const current = states.get(topicId);
       if (!current || current.state !== expectedState) return false;
       states.set(topicId, {
         ...current,
         state,
         ...(roundEndsAt !== undefined ? { roundEndsAt } : {}),
+        ...(voting ? { voting } : {}),
       });
       return true;
     },
@@ -70,6 +79,14 @@ export function createMemoryPublicLobbyStateStore(
           lobby.roundEndsAt &&
           lobby.roundEndsAt <= now,
       );
+    },
+    async submitVote(id, identity, choice) {
+      const current = states.get(id);
+      if (!current || current.state !== "VOTING") return false;
+      const voting = recordVote(current.voting, identity, choice, new Date());
+      if (!voting) return false;
+      states.set(id, { ...current, voting });
+      return true;
     },
     async close() {},
   };

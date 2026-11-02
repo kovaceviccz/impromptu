@@ -38,14 +38,16 @@ export function createPostgresPublicLobbyStateStore(
         );
       return updated > 0;
     },
-    async updateState(topicId, expectedState, state, roundEndsAt) {
-      const updated = await orm.em
-        .fork()
-        .nativeUpdate(
-          PublicLobbyStateEntity,
-          { topicId, state: expectedState },
-          { state, ...(roundEndsAt !== undefined ? { roundEndsAt } : {}) },
-        );
+    async updateState(topicId, expectedState, state, roundEndsAt, voting) {
+      const updated = await orm.em.fork().nativeUpdate(
+        PublicLobbyStateEntity,
+        { topicId, state: expectedState },
+        {
+          state,
+          ...(roundEndsAt !== undefined ? { roundEndsAt } : {}),
+          ...(voting ? { voting } : {}),
+        },
+      );
       return updated > 0;
     },
     async dueRounds(now) {
@@ -55,6 +57,18 @@ export function createPostgresPublicLobbyStateStore(
           roundEndsAt: { $lte: now },
         })
       ).map(toRecord);
+    },
+    async submitVote(id, identity, choice) {
+      const rows: unknown[] = await orm.em
+        .fork()
+        .getConnection()
+        .execute(
+          `update "public_lobby_state" set voting = jsonb_set(voting, '{votes}', (voting->'votes') || jsonb_build_object(?::text, ?::text))
+         where "topic_id" = ? and state = 'VOTING' and (voting->>'endsAt')::timestamptz > clock_timestamp()
+         and jsonb_exists(voting->'eligible', ?::text) returning "topic_id"`,
+          [identity, choice, id, identity],
+        );
+      return rows.length > 0;
     },
     async close() {},
   };
@@ -66,5 +80,6 @@ function toRecord(entity: PublicLobbyStateEntity): PublicLobbyState {
     hostIdentity: entity.hostIdentity,
     state: entity.state,
     roundEndsAt: entity.roundEndsAt,
+    voting: entity.voting,
   };
 }

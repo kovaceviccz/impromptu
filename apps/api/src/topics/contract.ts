@@ -179,7 +179,17 @@ export const startDebateResultSchema = z.strictObject({
   state: lobbyStateSchema,
 });
 
+export const votingSummarySchema = z.strictObject({
+  votingEndsAt: z.string().nullable(),
+  voteCounts: z.tuple([
+    z.number().int().nonnegative(),
+    z.number().int().nonnegative(),
+  ]),
+  selectedVote: z.enum(["0", "1"]).nullable(),
+});
+
 export const roomParticipantsResultSchema = z.strictObject({
+  ...votingSummarySchema.partial().shape,
   roundEndsAt: z.string().nullable().optional(),
   hostIdentity: z.string().nullable(),
   state: lobbyStateSchema,
@@ -194,6 +204,23 @@ export const roomParticipantsResultSchema = z.strictObject({
 });
 
 export const topicContracts = {
+  submitVote: {
+    method: "POST",
+    path: "/api/topics/:topicId/vote",
+    params: topicParamsSchema,
+    body: z.strictObject({
+      lobbyId: z.string().min(1),
+      token: z.string().min(1),
+      choice: z.enum(["0", "1"]).nullable(),
+    }),
+    response: votingSummarySchema,
+    errors: {
+      401: errorSchema,
+      403: errorSchema,
+      404: errorSchema,
+      409: errorSchema,
+    },
+  },
   publicLobbies: {
     method: "GET",
     path: "/api/lobbies/public",

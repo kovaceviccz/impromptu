@@ -1,3 +1,4 @@
+import type { Voting } from "./voting.js";
 import { EntitySchema } from "@mikro-orm/core";
 
 import type { LobbyState } from "./contract.js";
@@ -11,6 +12,7 @@ export class PrivateLobbyEntity {
   visibility!: "public" | "private";
   state!: LobbyState;
   roundEndsAt!: Date | null;
+  voting!: Voting | null;
   codeHash!: string | null;
   creatorIdentity!: string;
   createdAt!: Date;
@@ -67,6 +69,7 @@ export const PrivateLobbySchema = new EntitySchema<PrivateLobbyEntity>({
       nullable: true,
     },
     visibility: { type: "string", columnType: "text", defaultRaw: "'private'" },
+    voting: { type: "json", columnType: "jsonb", nullable: true },
     roundEndsAt: { type: Date, fieldName: "round_ends_at", nullable: true },
     state: {
       type: "string",

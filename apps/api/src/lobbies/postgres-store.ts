@@ -48,14 +48,16 @@ export function createPostgresPrivateLobbyStore(
       const entity = await orm.em.fork().findOne(PrivateLobbyEntity, { id });
       return entity ? toRecord(entity) : undefined;
     },
-    async updateState(id, expectedState, state, roundEndsAt) {
-      const updated = await orm.em
-        .fork()
-        .nativeUpdate(
-          PrivateLobbyEntity,
-          { id, state: expectedState },
-          { state, ...(roundEndsAt !== undefined ? { roundEndsAt } : {}) },
-        );
+    async updateState(id, expectedState, state, roundEndsAt, voting) {
+      const updated = await orm.em.fork().nativeUpdate(
+        PrivateLobbyEntity,
+        { id, state: expectedState },
+        {
+          state,
+          ...(roundEndsAt !== undefined ? { roundEndsAt } : {}),
+          ...(voting ? { voting } : {}),
+        },
+      );
       return updated > 0;
     },
     async delete(id) {
@@ -71,6 +73,18 @@ export function createPostgresPrivateLobbyStore(
         })
       ).map(toRecord);
     },
+    async submitVote(id, identity, choice) {
+      const rows: unknown[] = await orm.em
+        .fork()
+        .getConnection()
+        .execute(
+          `update "private_lobby" set voting = jsonb_set(voting, '{votes}', (voting->'votes') || jsonb_build_object(?::text, ?::text))
+         where "id" = ? and state = 'VOTING' and (voting->>'endsAt')::timestamptz > clock_timestamp()
+         and jsonb_exists(voting->'eligible', ?::text) returning "id"`,
+          [identity, choice, id, identity],
+        );
+      return rows.length > 0;
+    },
     async close() {},
   };
 }
@@ -85,6 +99,7 @@ function toRecord(entity: PrivateLobbyEntity): PrivateLobbyRecord {
     visibility: entity.visibility,
     state: entity.state,
     roundEndsAt: entity.roundEndsAt,
+    voting: entity.voting,
     codeHash: entity.codeHash,
     creatorIdentity: entity.creatorIdentity,
     createdAt: entity.createdAt,
