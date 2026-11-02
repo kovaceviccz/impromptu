@@ -172,6 +172,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
             topicTitle: topic.title,
             sides: [topic.sides[0], topic.sides[1]] as [string, string],
             state,
+            tags: topic.record?.tags ?? [],
             debaterCount: status.debaterCount,
             spectatorCount: status.spectatorCount,
             sideAvailability: [
@@ -432,6 +433,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
           canDebate && sideAvailability[0],
           canDebate && sideAvailability[1],
         ] satisfies [boolean, boolean],
+        tags: lobby.tags ?? [],
         debaterCount,
         spectatorCount,
         participants,
@@ -531,7 +533,8 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
     },
     async (request, reply) => {
       const identity = randomUUID();
-      const { name, sides, visibility, displayName, intent } = request.body;
+      const { name, sides, tags, visibility, displayName, intent } =
+        request.body;
       if (
         topics.some(
           (topic) => topic.title.toLowerCase() === name.toLowerCase(),
@@ -545,6 +548,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         lobby = await createTopicLobby(options.privateLobbies, {
           name,
           sides,
+          tags,
           visibility,
           creatorIdentity: identity,
         });

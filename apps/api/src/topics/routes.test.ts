@@ -114,12 +114,28 @@ describe("API contracts", () => {
     expect(invalid.statusCode).toBe(400);
     expect(await store.listPublic()).toEqual([]);
 
+    const invalidTag = await app.inject({
+      method: create.method,
+      url: create.path,
+      payload: {
+        name: "Forged tag test",
+        sides,
+        tags: ["User-written tag"],
+        visibility: "public",
+        displayName: "Host",
+        intent: "spectator",
+      },
+    });
+    expect(invalidTag.statusCode).toBe(400);
+    expect(await store.listPublic()).toEqual([]);
+
     const publicResponse = await app.inject({
       method: create.method,
       url: create.path,
       payload: {
         name: "Can machines dream?",
         sides,
+        tags: ["Casual", "Beginner-friendly"],
         visibility: "public",
         displayName: "Host",
         intent: "spectator",
@@ -140,9 +156,24 @@ describe("API contracts", () => {
       name: "Can machines dream?",
       side0: sides[0],
       side1: sides[1],
+      tags: ["Casual", "Beginner-friendly"],
       visibility: "public",
       expiresAt: null,
     });
+    const publicLobbies = apiContract.publicLobbies.response.parse(
+      (
+        await app.inject({
+          method: "GET",
+          url: apiContract.publicLobbies.path,
+        })
+      ).json(),
+    );
+    expect(publicLobbies).toContainEqual(
+      expect.objectContaining({
+        topicId: publicJoin.topicId,
+        tags: ["Casual", "Beginner-friendly"],
+      }),
+    );
 
     const duplicate = await app.inject({
       method: create.method,
@@ -575,6 +606,7 @@ describe("API contracts", () => {
       payload: {
         name: "Can trees communicate?",
         sides: ["Yes, they can", "No, they cannot"],
+        tags: ["Serious"],
         visibility: "private",
         displayName: "Creator",
         intent: "spectator",
@@ -601,6 +633,7 @@ describe("API contracts", () => {
       lobbyId: creator.topicId,
       title: "Can trees communicate?",
       sides: ["Yes, they can", "No, they cannot"],
+      tags: ["Serious"],
     });
     const occupied = await app.inject({
       method: "POST",

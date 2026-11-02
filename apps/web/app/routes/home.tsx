@@ -2,6 +2,8 @@ import {
   PRODUCT,
   apiContract,
   type PrivateLobbyPreview,
+  lobbyTags,
+  type LobbyTag,
   topicPresets,
   type TopicStatus,
 } from "@impromptu/api/contracts";
@@ -72,6 +74,15 @@ const topicCategoryStyles = {
   Entertainment: "border-pink-200 bg-pink-100 text-pink-900",
 } as const;
 
+const lobbyTagStyles: Record<LobbyTag, string> = {
+  Casual: "border-emerald-200 bg-emerald-50 text-emerald-900",
+  Serious: "border-red-200 bg-red-50 text-red-900",
+  "Beginner-friendly": "border-emerald-200 bg-emerald-50 text-emerald-900",
+  Competitive: "border-red-200 bg-red-50 text-red-900",
+  Educational: "border-red-200 bg-red-50 text-red-900",
+  "Open-minded": "border-emerald-200 bg-emerald-50 text-emerald-900",
+};
+
 type Selection = {
   topic: TopicStatus;
   sideIndex: 0 | 1;
@@ -106,6 +117,7 @@ function PrivateLobby({
   const [affirmative, setAffirmative] = useState("");
   const [opposing, setOpposing] = useState("");
   const [visibility, setVisibility] = useState<"public" | "private">("private");
+  const [selectedTags, setSelectedTags] = useState<LobbyTag[]>([]);
   const [joinCode, setJoinCode] = useState("");
   const [creatorName, setCreatorName] = useState(defaultDisplayName);
   const [joinerName, setJoinerName] = useState(defaultDisplayName);
@@ -134,6 +146,7 @@ function PrivateLobby({
           ? {
               name: lobbyName.trim(),
               sides: [affirmative.trim(), opposing.trim()] as [string, string],
+              tags: selectedTags,
               visibility,
               displayName: creatorName.trim(),
               intent: "spectator" as const,
@@ -141,6 +154,7 @@ function PrivateLobby({
           : {
               name: lobbyName.trim(),
               sides: [affirmative.trim(), opposing.trim()] as [string, string],
+              tags: selectedTags,
               visibility,
               displayName: creatorName.trim(),
               intent: "debater" as const,
@@ -461,6 +475,33 @@ function PrivateLobby({
                     <option value="private">Private</option>
                   </select>
                 </label>
+                <fieldset className="grid gap-1.5">
+                  <legend className="mb-1.5 text-sm">Tags</legend>
+                  <div className="flex flex-wrap gap-2">
+                    {lobbyTags.map((tag) => (
+                      <label
+                        className={
+                          "flex items-center gap-1.5 rounded-md border px-2 py-1 text-sm " +
+                          lobbyTagStyles[tag]
+                        }
+                        key={tag}
+                      >
+                        <input
+                          checked={selectedTags.includes(tag)}
+                          type="checkbox"
+                          onChange={(event) => {
+                            setSelectedTags((tags) =>
+                              event.target.checked
+                                ? [...tags, tag]
+                                : tags.filter((item) => item !== tag),
+                            );
+                          }}
+                        />
+                        {tag}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
                 <label className="grid gap-1.5 text-sm" htmlFor="creator-name">
                   Creator display name
                   <Input
