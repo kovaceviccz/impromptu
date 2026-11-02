@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./lobby-fixture";
 
 test("the starter topic card reflects its live room", async ({
   page,
@@ -16,6 +16,7 @@ test("the starter topic card reflects its live room", async ({
       viewer.getByRole("heading", { name: "Is lying ever moral?" }),
     ).toBeVisible();
     await page.getByRole("button", { name: "Watch live" }).click();
+    await page.getByRole("button", { name: "Continue to lobby" }).click();
     await expect(viewer.getByText("1 person watching")).toBeVisible();
     await page.getByRole("button", { name: "Leave lobby" }).click();
     await expect(viewer.getByText("No one watching")).toBeVisible();
