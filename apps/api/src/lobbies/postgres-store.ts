@@ -48,13 +48,13 @@ export function createPostgresPrivateLobbyStore(
       const entity = await orm.em.fork().findOne(PrivateLobbyEntity, { id });
       return entity ? toRecord(entity) : undefined;
     },
-    async updateState(id, expectedState, state) {
+    async updateState(id, expectedState, state, roundEndsAt) {
       const updated = await orm.em
         .fork()
         .nativeUpdate(
           PrivateLobbyEntity,
           { id, state: expectedState },
-          { state },
+          { state, ...(roundEndsAt !== undefined ? { roundEndsAt } : {}) },
         );
       return updated > 0;
     },
@@ -63,6 +63,14 @@ export function createPostgresPrivateLobbyStore(
       await em.nativeDelete(PrivateLobbyEntity, { id });
     },
     // The shared connection is closed by the process that opened it.
+    async dueRounds(now) {
+      return (
+        await orm.em.fork().find(PrivateLobbyEntity, {
+          state: "DEBATE_IN_PROGRESS",
+          roundEndsAt: { $lte: now },
+        })
+      ).map(toRecord);
+    },
     async close() {},
   };
 }
@@ -76,6 +84,7 @@ function toRecord(entity: PrivateLobbyEntity): PrivateLobbyRecord {
     side1: entity.side1,
     visibility: entity.visibility,
     state: entity.state,
+    roundEndsAt: entity.roundEndsAt,
     codeHash: entity.codeHash,
     creatorIdentity: entity.creatorIdentity,
     createdAt: entity.createdAt,

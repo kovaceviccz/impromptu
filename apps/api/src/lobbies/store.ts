@@ -11,6 +11,7 @@ export type PrivateLobbyRecord = {
   side1?: string | null;
   visibility?: "public" | "private";
   state: LobbyState;
+  roundEndsAt?: Date | null;
   codeHash: string | null;
   creatorIdentity: string;
   createdAt: Date;
@@ -27,8 +28,10 @@ export interface PrivateLobbyStore {
     id: string,
     expectedState: LobbyState,
     state: LobbyState,
+    roundEndsAt?: Date | null,
   ): Promise<boolean>;
   delete(id: string): Promise<void>;
+  dueRounds(now: Date): Promise<PrivateLobbyRecord[]>;
   close(): Promise<void>;
 }
 
@@ -80,14 +83,26 @@ export function createMemoryPrivateLobbyStore(
     async findById(id) {
       return lobbies.get(id);
     },
-    async updateState(id, expectedState, state) {
+    async updateState(id, expectedState, state, roundEndsAt) {
       const lobby = lobbies.get(id);
       if (!lobby || lobby.state !== expectedState) return false;
-      lobbies.set(id, { ...lobby, state });
+      lobbies.set(id, {
+        ...lobby,
+        state,
+        ...(roundEndsAt !== undefined ? { roundEndsAt } : {}),
+      });
       return true;
     },
     async delete(id) {
       lobbies.delete(id);
+    },
+    async dueRounds(now) {
+      return [...lobbies.values()].filter(
+        (lobby) =>
+          lobby.state === "DEBATE_IN_PROGRESS" &&
+          lobby.roundEndsAt &&
+          lobby.roundEndsAt <= now,
+      );
     },
     async close() {},
   };

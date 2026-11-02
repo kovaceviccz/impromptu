@@ -6,6 +6,7 @@ export class PublicLobbyStateEntity {
   topicId!: string;
   hostIdentity!: string | null;
   state!: LobbyState;
+  roundEndsAt!: Date | null;
 }
 
 export const PublicLobbyStateSchema = new EntitySchema<PublicLobbyStateEntity>({
@@ -30,6 +31,7 @@ export const PublicLobbyStateSchema = new EntitySchema<PublicLobbyStateEntity>({
       fieldName: "host_identity",
       nullable: true,
     },
+    roundEndsAt: { type: Date, fieldName: "round_ends_at", nullable: true },
     state: {
       type: "string",
       columnType: "text",

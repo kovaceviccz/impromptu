@@ -4,6 +4,7 @@ export type PublicLobbyState = {
   topicId: string;
   hostIdentity: string | null;
   state: LobbyState;
+  roundEndsAt?: Date | null;
 };
 
 export interface PublicLobbyStateStore {
@@ -18,7 +19,9 @@ export interface PublicLobbyStateStore {
     topicId: string,
     expectedState: LobbyState,
     state: LobbyState,
+    roundEndsAt?: Date | null,
   ): Promise<boolean>;
+  dueRounds(now: Date): Promise<PublicLobbyState[]>;
   close(): Promise<void>;
 }
 
@@ -50,11 +53,23 @@ export function createMemoryPublicLobbyStateStore(
       states.set(topicId, { ...current, hostIdentity: identity });
       return true;
     },
-    async updateState(topicId, expectedState, state) {
+    async updateState(topicId, expectedState, state, roundEndsAt) {
       const current = states.get(topicId);
       if (!current || current.state !== expectedState) return false;
-      states.set(topicId, { ...current, state });
+      states.set(topicId, {
+        ...current,
+        state,
+        ...(roundEndsAt !== undefined ? { roundEndsAt } : {}),
+      });
       return true;
+    },
+    async dueRounds(now) {
+      return [...states.values()].filter(
+        (lobby) =>
+          lobby.state === "DEBATE_IN_PROGRESS" &&
+          lobby.roundEndsAt &&
+          lobby.roundEndsAt <= now,
+      );
     },
     async close() {},
   };

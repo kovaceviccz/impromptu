@@ -50,6 +50,7 @@ test("loads backend topics and enters a debate", async ({ page }) => {
   ).toHaveCount(0);
   await preJoin.getByPlaceholder("Display name").fill("Playwright Guest");
   await preJoin.getByRole("button", { name: "Debate" }).click();
+  await page.getByRole("button", { name: "Continue to lobby" }).click();
 
   await expect(
     page.getByRole("heading", {

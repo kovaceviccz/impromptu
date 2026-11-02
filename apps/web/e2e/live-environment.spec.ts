@@ -90,6 +90,7 @@ test("live public topic creation, discovery, joining, and closure show no errors
         response.request().method() === "POST",
     );
     await page.getByRole("button", { name: "Create and join" }).click();
+    await page.getByRole("button", { name: "Continue to lobby" }).click();
     created = apiContract.createLobby.response.parse(
       await (await creation).json(),
     );
@@ -202,6 +203,7 @@ test("live private topic code and malformed topic IDs behave safely", async ({
         response.request().method() === "POST",
     );
     await page.getByRole("button", { name: "Create and join" }).click();
+    await page.getByRole("button", { name: "Continue to lobby" }).click();
     created = apiContract.createLobby.response.parse(
       await (await creation).json(),
     );

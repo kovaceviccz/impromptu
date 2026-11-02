@@ -38,15 +38,23 @@ export function createPostgresPublicLobbyStateStore(
         );
       return updated > 0;
     },
-    async updateState(topicId, expectedState, state) {
+    async updateState(topicId, expectedState, state, roundEndsAt) {
       const updated = await orm.em
         .fork()
         .nativeUpdate(
           PublicLobbyStateEntity,
           { topicId, state: expectedState },
-          { state },
+          { state, ...(roundEndsAt !== undefined ? { roundEndsAt } : {}) },
         );
       return updated > 0;
+    },
+    async dueRounds(now) {
+      return (
+        await orm.em.fork().find(PublicLobbyStateEntity, {
+          state: "DEBATE_IN_PROGRESS",
+          roundEndsAt: { $lte: now },
+        })
+      ).map(toRecord);
     },
     async close() {},
   };
@@ -57,5 +65,6 @@ function toRecord(entity: PublicLobbyStateEntity): PublicLobbyState {
     topicId: entity.topicId,
     hostIdentity: entity.hostIdentity,
     state: entity.state,
+    roundEndsAt: entity.roundEndsAt,
   };
 }

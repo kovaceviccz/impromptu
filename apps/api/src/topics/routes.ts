@@ -59,7 +59,10 @@ function makeJoinResult(input: {
   livekitUrl: string;
   token: string;
 }): JoinResult {
-  return input;
+  return {
+    ...input,
+    voteEligible: input.role === "spectator" && input.state !== "VOTING",
+  };
 }
 
 export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
@@ -200,6 +203,102 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
     }
   }
 
+  async function finishRound(lobbyId: string, publicLobby: boolean) {
+    const store = publicLobby
+      ? options.publicLobbyState
+      : options.privateLobbies;
+    const updated = await store.updateState(
+      lobbyId,
+      "DEBATE_IN_PROGRESS",
+      "VOTING",
+    );
+    if (!updated) return false;
+    publishPublicChange();
+    try {
+      await options.livekit.updateRoomMetadata(`debate-${lobbyId}`, "VOTING");
+    } catch (cause) {
+      app.log.error(
+        { err: cause, lobbyId },
+        "Could not broadcast voting phase",
+      );
+    }
+    return true;
+  }
+  let checkingTimers = false;
+  const roundTimer = setInterval(() => {
+    if (checkingTimers) return;
+    checkingTimers = true;
+    void (async () => {
+      for (const lobby of await options.privateLobbies.dueRounds(new Date()))
+        await finishRound(lobby.id, false);
+      for (const lobby of await options.publicLobbyState.dueRounds(new Date()))
+        await finishRound(lobby.topicId, true);
+    })()
+      .catch((err: unknown) =>
+        app.log.error({ err }, "Could not end timed rounds"),
+      )
+      .finally(() => {
+        checkingTimers = false;
+      });
+  }, 1000);
+  roundTimer.unref();
+  app.addHook("onClose", async () => {
+    clearInterval(roundTimer);
+  });
+
+  app.post(
+    topicContracts.endRound.path,
+    {
+      schema: {
+        params: topicContracts.endRound.params,
+        body: topicContracts.endRound.body,
+        response: {
+          200: topicContracts.endRound.response,
+          ...topicContracts.endRound.errors,
+        },
+      },
+    },
+    async (request, reply) => {
+      const topic = await resolveTopic(request.params.topicId);
+      if (!topic) return reply.code(404).send({ message: "Topic not found" });
+      const { lobbyId, token } = request.body;
+      const identity = await options.livekit.verifyParticipantToken(
+        token,
+        `debate-${lobbyId}`,
+      );
+      if (!identity)
+        return reply
+          .code(401)
+          .send({ message: "Your room session expired. Rejoin the lobby." });
+      const publicLobby = !topic.record && lobbyId === topic.id;
+      const lobby = publicLobby
+        ? await options.publicLobbyState.find(topic.id)
+        : await findLobby(lobbyId);
+      if (
+        !lobby ||
+        ("creatorIdentity" in lobby &&
+          (lobby.topicId !== topic.id ||
+            (lobby.expiresAt && lobby.expiresAt <= new Date())))
+      )
+        return reply.code(404).send({ message: "Lobby not found" });
+      const creator =
+        "creatorIdentity" in lobby ? lobby.creatorIdentity : lobby.hostIdentity;
+      if (identity !== creator)
+        return reply
+          .code(403)
+          .send({ message: "Only the lobby creator can end the round." });
+      if (lobby.roundEndsAt || lobby.state !== "DEBATE_IN_PROGRESS")
+        return reply
+          .code(409)
+          .send({ message: "This round cannot be ended manually." });
+      if (!(await finishRound(lobbyId, publicLobby)))
+        return reply
+          .code(409)
+          .send({ message: "This round has already ended." });
+      return { state: "VOTING" as const };
+    },
+  );
+
   app.post(
     topicContracts.startDebate.path,
     {
@@ -310,16 +409,21 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         });
       }
 
+      const roundEndsAt = request.body.durationSeconds
+        ? new Date(Date.now() + request.body.durationSeconds * 1000)
+        : null;
       const updated = isPublicLobby
         ? await options.publicLobbyState.updateState(
             topic.id,
             "WAITING",
             "DEBATE_IN_PROGRESS",
+            roundEndsAt,
           )
         : await options.privateLobbies.updateState(
             lobbyId,
             "WAITING",
             "DEBATE_IN_PROGRESS",
+            roundEndsAt,
           );
       if (!updated) {
         const latestState = isPublicLobby
@@ -486,6 +590,8 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         role,
         request.body.displayName,
         sideIndex,
+        undefined,
+        lobby.state !== "VOTING",
       );
 
       if ("unavailable" in allocationResult) {
@@ -696,6 +802,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         displayName,
         request.body.intent === "debater" ? request.body.sideIndex : null,
         request.body.previousToken ? participantIdentity : undefined,
+        state !== "VOTING",
       );
       if ("unavailable" in allocationResult) {
         if (request.body.intent === "spectator") {
@@ -729,6 +836,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         publishPublicChange();
 
       return {
+        voteEligible: request.body.intent === "spectator" && state !== "VOTING",
         lobbyId,
         lobbyName,
         visibility: joinedVisibility ?? "public",
@@ -799,6 +907,11 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         return {
           hostIdentity,
           state,
+          roundEndsAt:
+            (lobbyId === topic.id && !topic.record
+              ? (await options.publicLobbyState.find(topic.id))?.roundEndsAt
+              : (await findLobby(lobbyId))?.roundEndsAt
+            )?.toISOString() ?? null,
           participants: [
             ...new Map(
               participants.map((participant) => [
