@@ -106,6 +106,7 @@ describe("API contracts", () => {
       payload: {
         name: "   ",
         sides,
+        category: "Philosophy",
         visibility: "public",
         displayName: "Host",
         intent: "spectator",
@@ -120,6 +121,7 @@ describe("API contracts", () => {
       payload: {
         name: "Forged tag test",
         sides,
+        category: "Philosophy",
         tags: ["User-written tag"],
         visibility: "public",
         displayName: "Host",
@@ -129,12 +131,42 @@ describe("API contracts", () => {
     expect(invalidTag.statusCode).toBe(400);
     expect(await store.listPublic()).toEqual([]);
 
+    const invalidCategory = await app.inject({
+      method: create.method,
+      url: create.path,
+      payload: {
+        name: "Invalid category",
+        sides,
+        category: "Unlisted",
+        visibility: "public",
+        displayName: "Host",
+        intent: "spectator",
+      },
+    });
+    expect(invalidCategory.statusCode).toBe(400);
+    expect(await store.listPublic()).toEqual([]);
+
+    const missingCategory = await app.inject({
+      method: create.method,
+      url: create.path,
+      payload: {
+        name: "Missing category",
+        sides,
+        visibility: "public",
+        displayName: "Host",
+        intent: "spectator",
+      },
+    });
+    expect(missingCategory.statusCode).toBe(400);
+    expect(await store.listPublic()).toEqual([]);
+
     const publicResponse = await app.inject({
       method: create.method,
       url: create.path,
       payload: {
         name: "Can machines dream?",
         sides,
+        category: "Philosophy",
         tags: ["Casual", "Beginner-friendly"],
         visibility: "public",
         displayName: "Host",
@@ -156,6 +188,7 @@ describe("API contracts", () => {
       name: "Can machines dream?",
       side0: sides[0],
       side1: sides[1],
+      category: "Philosophy",
       tags: ["Casual", "Beginner-friendly"],
       visibility: "public",
       expiresAt: null,
@@ -171,6 +204,7 @@ describe("API contracts", () => {
     expect(publicLobbies).toContainEqual(
       expect.objectContaining({
         topicId: publicJoin.topicId,
+        category: "Philosophy",
         tags: ["Casual", "Beginner-friendly"],
       }),
     );
@@ -181,6 +215,7 @@ describe("API contracts", () => {
       payload: {
         name: "can machines DREAM?",
         sides,
+        category: "Philosophy",
         visibility: "public",
         displayName: "Host",
         intent: "spectator",
@@ -194,6 +229,7 @@ describe("API contracts", () => {
       payload: {
         name: "Should robots vote?",
         sides,
+        category: "Miscellaneous",
         visibility: "private",
         displayName: "Private host",
         intent: "spectator",
@@ -221,6 +257,8 @@ describe("API contracts", () => {
         id: publicJoin.topicId,
         title: "Can machines dream?",
         sides,
+        category: "Philosophy",
+        tags: ["Casual", "Beginner-friendly"],
       }),
     );
     expect(JSON.stringify(visible)).not.toContain(privateJoin.topicId);
@@ -238,6 +276,7 @@ describe("API contracts", () => {
           payload: {
             name: "Can machines dream?",
             sides: ["Yes: it can", "No: it cannot"],
+            category: "Philosophy",
             visibility: "public",
             displayName: "Host",
             intent: "spectator",
@@ -364,6 +403,7 @@ describe("API contracts", () => {
       id: "dream-cheating",
       title: "Can you cheat in a dream?",
       sides: ["Yes: intention still matters", "No: dreams are involuntary"],
+      category: "Philosophy",
       sideAvailability: [false, true],
       debaterCount: 1,
       spectatorCount: 2,
@@ -606,6 +646,7 @@ describe("API contracts", () => {
       payload: {
         name: "Can trees communicate?",
         sides: ["Yes, they can", "No, they cannot"],
+        category: "Society",
         tags: ["Serious"],
         visibility: "private",
         displayName: "Creator",

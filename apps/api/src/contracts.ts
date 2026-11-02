@@ -29,6 +29,8 @@ export {
   lobbyTags,
   type LobbyCreateInput,
   type LobbyTag,
+  topicCategories,
+  type TopicCategory,
   type LobbyParticipant,
   type PublicLobby,
   type PrivateLobbyPreview,

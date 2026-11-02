@@ -14,6 +14,7 @@ export function createPostgresPrivateLobbyStore(
         name: lobby.name ?? lobby.topicId,
         side0: lobby.side0 ?? null,
         side1: lobby.side1 ?? null,
+        category: lobby.category ?? "Miscellaneous",
         tags: lobby.tags ?? [],
         visibility: lobby.visibility ?? "private",
       });
@@ -75,6 +76,7 @@ function toRecord(entity: PrivateLobbyEntity): PrivateLobbyRecord {
     name: entity.name,
     side0: entity.side0,
     side1: entity.side1,
+    category: entity.category,
     tags: entity.tags,
     visibility: entity.visibility,
     state: entity.state,

@@ -8,6 +8,16 @@ export { topicPresets, type TopicPreset } from "./data.js";
 export const debateSideSchema = z.union([z.literal(0), z.literal(1)]);
 export const debateRoleSchema = z.enum(["debater", "spectator"]);
 export const topicVisibilitySchema = z.enum(["public", "private"]);
+export const topicCategories = [
+  "Philosophy",
+  "Society",
+  "Sports",
+  "Music",
+  "Entertainment",
+  "Miscellaneous",
+] as const;
+export type TopicCategory = (typeof topicCategories)[number];
+export const topicCategorySchema = z.enum(topicCategories);
 export const lobbyTags = [
   "Casual",
   "Serious",
@@ -33,6 +43,8 @@ export const topicStatusSchema = z.strictObject({
   id: z.string().min(1),
   title: z.string().min(1),
   sides: z.tuple([z.string().min(1), z.string().min(1)]),
+  category: topicCategorySchema.optional(),
+  tags: lobbyTagsSchema.optional(),
   sideAvailability: z.tuple([z.boolean(), z.boolean()]),
   debaterCount: z.number().int().min(0).max(2),
   spectatorCount: z.number().int().min(0),
@@ -53,6 +65,7 @@ export const publicLobbySchema = z.strictObject({
   name: z.string().min(1),
   topicTitle: z.string().min(1),
   sides: z.tuple([z.string().min(1), z.string().min(1)]),
+  category: topicCategorySchema.optional(),
   state: lobbyStateSchema,
   tags: lobbyTagsSchema.optional(),
   debaterCount: z.number().int().min(0).max(2),
@@ -91,6 +104,7 @@ export const lobbyCreateBodySchema = z.discriminatedUnion("intent", [
       z.string().trim().min(1).max(120),
       z.string().trim().min(1).max(120),
     ]),
+    category: topicCategorySchema,
     tags: lobbyTagsSchema.default([]),
     visibility: topicVisibilitySchema,
     displayName: z.string().trim().min(1).max(40),
@@ -103,6 +117,7 @@ export const lobbyCreateBodySchema = z.discriminatedUnion("intent", [
       z.string().trim().min(1).max(120),
       z.string().trim().min(1).max(120),
     ]),
+    category: topicCategorySchema,
     tags: lobbyTagsSchema.default([]),
     visibility: topicVisibilitySchema,
     displayName: z.string().trim().min(1).max(40),
