@@ -4,12 +4,15 @@ import {
   type PrivateLobbyPreview,
   lobbyTags,
   type LobbyTag,
+  topicCategories,
   topicPresets,
+  type TopicCategory,
   type TopicStatus,
 } from "@impromptu/api/contracts";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
+  FilterIcon,
   LockKeyholeIcon,
 } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
@@ -66,13 +69,14 @@ export async function clientLoader() {
   return { account, topics };
 }
 
-const topicCategoryStyles = {
+const topicCategoryStyles: Record<TopicCategory, string> = {
   Philosophy: "border-violet-200 bg-violet-100 text-violet-900",
   Society: "border-sky-200 bg-sky-100 text-sky-900",
   Sports: "border-emerald-200 bg-emerald-100 text-emerald-900",
   Music: "border-amber-200 bg-amber-100 text-amber-900",
   Entertainment: "border-pink-200 bg-pink-100 text-pink-900",
-} as const;
+  Miscellaneous: "border-slate-200 bg-slate-100 text-slate-900",
+};
 
 const lobbyTagStyles: Record<LobbyTag, string> = {
   Casual: "border-emerald-200 bg-emerald-50 text-emerald-900",
@@ -113,6 +117,7 @@ function PrivateLobby({
   const [activeMode, setActiveMode] = useState<"create" | "join">("create");
   const [topicSource, setTopicSource] = useState<"preset" | "custom">("preset");
   const [selectedPresetId, setSelectedPresetId] = useState<string>();
+  const [selectedCategory, setSelectedCategory] = useState<TopicCategory>();
   const [lobbyName, setLobbyName] = useState("");
   const [affirmative, setAffirmative] = useState("");
   const [opposing, setOpposing] = useState("");
@@ -129,6 +134,16 @@ function PrivateLobby({
 
   async function createLobby(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const preset =
+      topicSource === "preset"
+        ? topicPresets.find((topic) => topic.id === selectedPresetId)
+        : undefined;
+    const category =
+      topicSource === "custom" ? selectedCategory : preset?.category;
+    if (!category) {
+      setError("Select a category.");
+      return;
+    }
     if (!lobbyName.trim()) {
       setError("Enter a topic question.");
       return;
@@ -146,6 +161,7 @@ function PrivateLobby({
           ? {
               name: lobbyName.trim(),
               sides: [affirmative.trim(), opposing.trim()] as [string, string],
+              category,
               tags: selectedTags,
               visibility,
               displayName: creatorName.trim(),
@@ -154,6 +170,7 @@ function PrivateLobby({
           : {
               name: lobbyName.trim(),
               sides: [affirmative.trim(), opposing.trim()] as [string, string],
+              category,
               tags: selectedTags,
               visibility,
               displayName: creatorName.trim(),
@@ -368,6 +385,7 @@ function PrivateLobby({
                             (topic) => topic.id === selectedPresetId,
                           );
                           if (preset) {
+                            setSelectedCategory(preset.category);
                             setLobbyName(preset.title);
                             setAffirmative(preset.sides[0]);
                             setOpposing(preset.sides[1]);
@@ -391,6 +409,7 @@ function PrivateLobby({
                         type="radio"
                         onChange={() => {
                           setTopicSource("custom");
+                          setSelectedCategory(undefined);
                           setLobbyName("");
                           setAffirmative("");
                           setOpposing("");
@@ -411,6 +430,41 @@ function PrivateLobby({
                   >
                     Select prewritten topic
                   </Button>
+                ) : null}
+
+                {topicSource === "custom" ? (
+                  <fieldset
+                    aria-required="true"
+                    className="grid gap-1.5"
+                    role="radiogroup"
+                  >
+                    <legend className="mb-1.5 text-sm">Category</legend>
+                    <div className="flex flex-wrap gap-2">
+                      {topicCategories.map((category) => (
+                        <label
+                          className={
+                            "flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-sm " +
+                            topicCategoryStyles[category] +
+                            (selectedCategory === category
+                              ? " ring-2 ring-primary"
+                              : "")
+                          }
+                          key={category}
+                        >
+                          <input
+                            checked={selectedCategory === category}
+                            className="sr-only"
+                            name="custom-category"
+                            required={!selectedCategory}
+                            type="radio"
+                            value={category}
+                            onChange={() => setSelectedCategory(category)}
+                          />
+                          {category}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
                 ) : null}
 
                 <label className="grid gap-1.5 text-sm" htmlFor="lobby-name">
@@ -533,6 +587,7 @@ function PrivateLobby({
                 <Button
                   disabled={
                     busy ||
+                    (topicSource === "custom" && !selectedCategory) ||
                     !lobbyName.trim() ||
                     !affirmative.trim() ||
                     !opposing.trim()
@@ -691,6 +746,7 @@ function PrivateLobby({
                     variant="outline"
                     onClick={() => {
                       setSelectedPresetId(topic.id);
+                      setSelectedCategory(topic.category);
                       setLobbyName(topic.title);
                       setAffirmative(topic.sides[0]);
                       setOpposing(topic.sides[1]);
@@ -716,29 +772,237 @@ export function TopicList({
   topics: TopicStatus[];
 }) {
   const [selection, setSelection] = useState<Selection>();
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<LobbyTag[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<TopicCategory[]>(
+    [],
+  );
+  const [minimumSpectators, setMinimumSpectators] = useState("");
+  const [maximumSpectators, setMaximumSpectators] = useState("");
+  const [requireOpenSide, setRequireOpenSide] = useState(false);
   const [selectedTopicIndex, setTopicIndex] = useState(0);
+  const filteredTopics = topics.filter((candidate) => {
+    if (
+      selectedCategories.length > 0 &&
+      (!candidate.category || !selectedCategories.includes(candidate.category))
+    ) {
+      return false;
+    }
+
+    if (
+      selectedTags.length > 0 &&
+      !selectedTags.some((tag) => candidate.tags?.includes(tag))
+    ) {
+      return false;
+    }
+
+    const minimum = Number(minimumSpectators);
+    if (
+      minimumSpectators !== "" &&
+      (!Number.isInteger(minimum) ||
+        minimum < 0 ||
+        candidate.spectatorCount < minimum)
+    ) {
+      return false;
+    }
+
+    const maximum = Number(maximumSpectators);
+    if (
+      maximumSpectators !== "" &&
+      (!Number.isInteger(maximum) ||
+        maximum < 0 ||
+        candidate.spectatorCount > maximum)
+    ) {
+      return false;
+    }
+
+    return !requireOpenSide || candidate.sideAvailability.some(Boolean);
+  });
   const topicIndex = Math.min(
     selectedTopicIndex,
-    Math.max(0, topics.length - 1),
+    Math.max(0, filteredTopics.length - 1),
   );
   const touchStart = useRef<number | undefined>(undefined);
   const navigation = useNavigation();
   const isJoining = navigation.state === "submitting";
-  const topic = topics[topicIndex] ?? topics[0];
+  const topic = filteredTopics[topicIndex] ?? filteredTopics[0];
+
+  function moveTopic(offset: number) {
+    setTopicIndex(
+      (topicIndex + offset + filteredTopics.length) % filteredTopics.length,
+    );
+  }
+
+  const filterDialog = (
+    <Dialog open={filterOpen} onOpenChange={setFilterOpen}>
+      <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Filter public lobbies</DialogTitle>
+          <DialogDescription>
+            Choose categories, tags, a spectator count range, or lobbies with an
+            open side.
+          </DialogDescription>
+        </DialogHeader>
+        <fieldset className="grid gap-3">
+          <legend className="text-sm font-medium">Categories</legend>
+          <p className="text-xs text-muted-foreground">
+            Lobbies matching any selected category will be shown.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {topicCategories.map((category) => (
+              <label
+                className={
+                  "flex items-center gap-2 rounded-md border px-2 py-1 text-sm " +
+                  topicCategoryStyles[category]
+                }
+                key={category}
+              >
+                <input
+                  checked={selectedCategories.includes(category)}
+                  className="size-4 accent-primary"
+                  type="checkbox"
+                  onChange={(event) => {
+                    const checked = event.currentTarget.checked;
+                    setSelectedCategories((currentCategories) =>
+                      checked
+                        ? [...currentCategories, category]
+                        : currentCategories.filter(
+                            (currentCategory) => currentCategory !== category,
+                          ),
+                    );
+                  }}
+                />
+                {category}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <fieldset className="grid gap-3">
+          <legend className="text-sm font-medium">Tags</legend>
+          <p className="text-xs text-muted-foreground">
+            Lobbies matching any selected tag will be shown.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {lobbyTags.map((tag) => (
+              <label className="flex items-center gap-2 text-sm" key={tag}>
+                <input
+                  checked={selectedTags.includes(tag)}
+                  className="size-4 accent-primary"
+                  type="checkbox"
+                  onChange={(event) => {
+                    const checked = event.currentTarget.checked;
+                    setSelectedTags((currentTags) =>
+                      checked
+                        ? [...currentTags, tag]
+                        : currentTags.filter(
+                            (currentTag) => currentTag !== tag,
+                          ),
+                    );
+                  }}
+                />
+                {tag}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <fieldset className="grid grid-cols-2 gap-3">
+          <legend className="col-span-2 text-sm font-medium">
+            Number of spectators
+          </legend>
+          <label className="grid gap-1.5 text-sm">
+            Minimum
+            <Input
+              min={0}
+              placeholder="Any"
+              type="number"
+              value={minimumSpectators}
+              onChange={(event) =>
+                setMinimumSpectators(event.currentTarget.value)
+              }
+            />
+          </label>
+          <label className="grid gap-1.5 text-sm">
+            Maximum
+            <Input
+              min={0}
+              placeholder="Any"
+              type="number"
+              value={maximumSpectators}
+              onChange={(event) =>
+                setMaximumSpectators(event.currentTarget.value)
+              }
+            />
+          </label>
+        </fieldset>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            checked={requireOpenSide}
+            className="size-4 accent-primary"
+            type="checkbox"
+            onChange={(event) =>
+              setRequireOpenSide(event.currentTarget.checked)
+            }
+          />
+          At least one debate side is open
+        </label>
+        <div className="flex justify-between gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              setSelectedCategories([]);
+              setSelectedTags([]);
+              setMinimumSpectators("");
+              setMaximumSpectators("");
+              setRequireOpenSide(false);
+            }}
+          >
+            Clear filters
+          </Button>
+          <Button type="button" onClick={() => setFilterOpen(false)}>
+            Apply filters
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 
   if (!topic) {
     return (
       <>
-        <p className="m-auto text-center text-muted-foreground">
-          No debates are available right now.
-        </p>
+        <section
+          aria-label="Debate topics"
+          className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-3"
+        >
+          <header className="flex items-end justify-between gap-4">
+            <h1 className="text-base font-medium tracking-tight text-muted-foreground sm:text-lg">
+              Choose a topic and side to debate
+            </h1>
+            <div className="flex shrink-0 items-center gap-2">
+              <p className="text-sm text-muted-foreground tabular-nums">
+                0 of {filteredTopics.length}
+              </p>
+              <Button
+                size="sm"
+                type="button"
+                variant="outline"
+                onClick={() => setFilterOpen(true)}
+              >
+                <FilterIcon />
+                Filter
+              </Button>
+            </div>
+          </header>
+          <p className="m-auto text-center text-muted-foreground">
+            {topics.length > 0
+              ? "No public lobbies match these filters."
+              : "No debates are available right now."}
+          </p>
+        </section>
+        {filterDialog}
         <PrivateLobby defaultDisplayName={defaultDisplayName} />
       </>
     );
-  }
-
-  function moveTopic(offset: number) {
-    setTopicIndex((topicIndex + offset + topics.length) % topics.length);
   }
 
   return (
@@ -751,9 +1015,20 @@ export function TopicList({
           <h1 className="text-base font-medium tracking-tight text-muted-foreground sm:text-lg">
             Choose a topic and side to debate
           </h1>
-          <p className="shrink-0 text-sm text-muted-foreground tabular-nums">
-            {topicIndex + 1} of {topics.length}
-          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            <p className="text-sm text-muted-foreground tabular-nums">
+              {topicIndex + 1} of {filteredTopics.length}
+            </p>
+            <Button
+              size="sm"
+              type="button"
+              variant="outline"
+              onClick={() => setFilterOpen(true)}
+            >
+              <FilterIcon />
+              Filter
+            </Button>
+          </div>
         </header>
 
         <div className="relative min-h-0">
@@ -774,6 +1049,31 @@ export function TopicList({
               <h2 className="font-editorial max-w-full text-[clamp(1.5rem,5.5vw,2.75rem)] leading-tight font-semibold tracking-tight break-words">
                 {topic.title}
               </h2>
+              {topic.category ? (
+                <span
+                  className={
+                    "w-fit rounded-md border px-2 py-0.5 text-xs font-medium " +
+                    topicCategoryStyles[topic.category]
+                  }
+                >
+                  {topic.category}
+                </span>
+              ) : null}
+              {topic.tags?.length ? (
+                <div aria-label="Lobby tags" className="flex flex-wrap gap-1.5">
+                  {topic.tags.map((tag) => (
+                    <span
+                      className={
+                        "rounded-md border px-2 py-0.5 text-xs font-medium " +
+                        lobbyTagStyles[tag]
+                      }
+                      key={tag}
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               <p className="flex flex-wrap gap-x-2 gap-y-1 text-sm text-muted-foreground">
                 <span>
                   {topic.sideAvailability.every((available) => !available)
@@ -868,7 +1168,7 @@ export function TopicList({
 
           <Button
             className="absolute top-[calc(50%-1.125rem)] left-1 z-10 bg-transparent text-foreground/50 shadow-none transition-none hover:bg-transparent hover:text-foreground active:not-aria-[haspopup]:translate-y-0 sm:left-2"
-            disabled={topics.length < 2}
+            disabled={filteredTopics.length < 2}
             size="icon-lg"
             type="button"
             variant="ghost"
@@ -879,7 +1179,7 @@ export function TopicList({
           </Button>
           <Button
             className="absolute top-[calc(50%-1.125rem)] right-1 z-10 bg-transparent text-foreground/50 shadow-none transition-none hover:bg-transparent hover:text-foreground active:not-aria-[haspopup]:translate-y-0 sm:right-2"
-            disabled={topics.length < 2}
+            disabled={filteredTopics.length < 2}
             size="icon-lg"
             type="button"
             variant="ghost"
@@ -890,6 +1190,8 @@ export function TopicList({
           </Button>
         </div>
       </section>
+
+      {filterDialog}
 
       <Dialog
         open={selection !== undefined}
