@@ -106,6 +106,17 @@ export async function joinTopic(topicId: string, input: JoinInput) {
   return readResponse(response, apiContract.join.response);
 }
 
+export async function endRound(
+  topicId: string,
+  input: { lobbyId: string; token: string },
+) {
+  const response = await postJson(
+    apiContract.endRound.path.replace(":topicId", encodeURIComponent(topicId)),
+    input,
+  );
+  return readResponse(response, apiContract.endRound.response);
+}
+
 export async function startDebate(topicId: string, input: StartDebateInput) {
   const path = apiContract.startDebate.path.replace(
     ":topicId",

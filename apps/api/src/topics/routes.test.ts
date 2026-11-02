@@ -1023,28 +1023,173 @@ describe("LiveKit grants", () => {
     expect(claims.name).toBe("Test spectator");
   });
 
-  it("prevents debaters from writing vote metadata", async () => {
-    const apiKey = "test-key";
-    const apiSecret = "a-test-secret-that-is-at-least-32-characters";
-    const gateway = createLiveKitGateway({
-      apiKey,
-      apiSecret,
-      apiUrl: "http://localhost:7880",
-      tokenTtlSeconds: 60,
-    });
+  it.each(["debater", "spectator"] as const)(
+    "prevents ineligible %s participants from writing vote metadata",
+    async (role) => {
+      const apiKey = "test-key";
+      const apiSecret = "a-test-secret-that-is-at-least-32-characters";
+      const gateway = createLiveKitGateway({
+        apiKey,
+        apiSecret,
+        apiUrl: "http://localhost:7880",
+        tokenTtlSeconds: 60,
+      });
 
-    const token = await gateway.issueToken({
-      displayName: "Test debater",
-      identity: "debater-id",
-      role: "debater",
-      roomName: "debate-dream-cheating",
-      sideIndex: 0,
-    });
-    const claims = await new TokenVerifier(apiKey, apiSecret).verify(token);
+      const token = await gateway.issueToken({
+        displayName: "Test debater",
+        identity: "debater-id",
+        role,
+        canVote: false,
+        roomName: "debate-dream-cheating",
+        sideIndex: role === "debater" ? 0 : null,
+      });
+      const claims = await new TokenVerifier(apiKey, apiSecret).verify(token);
 
-    expect(claims.video?.canPublish).toBe(true);
-    expect(claims.video?.canPublishData).toBe(false);
-    expect(claims.video?.canUpdateOwnMetadata).toBe(false);
-    expect(claims.attributes?.["debate.side"]).toBe("0");
+      expect(claims.video?.canPublish).toBe(role === "debater");
+      expect(claims.video?.canPublishData).toBe(role === "spectator");
+      expect(claims.video?.canUpdateOwnMetadata).toBe(false);
+      expect(claims.attributes?.["debate.side"]).toBe(
+        role === "debater" ? "0" : undefined,
+      );
+    },
+  );
+});
+
+describe("ending rounds", () => {
+  const lobbyId = "a5ca122c-e3a2-4dc3-aa8a-8a3c9aac5215";
+  const creatorIdentity = "892203fc-0be5-43cb-a4ae-383bf226e947";
+  async function activeLobby(roundEndsAt: Date | null = null) {
+    const livekit = fakeLiveKit();
+    const store = createMemoryPrivateLobbyStore([
+      {
+        id: lobbyId,
+        topicId: "dream-cheating",
+        state: "DEBATE_IN_PROGRESS",
+        creatorIdentity,
+        codeHash: "test",
+        createdAt: new Date(),
+        expiresAt: null,
+        roundEndsAt,
+      },
+    ]);
+    const app = await testApp(livekit.gateway, store);
+    return { app, store, ...livekit };
+  }
+  it("persists the timer chosen when starting and prevents manual ending", async () => {
+    const { app, store, active } = await activeLobby();
+    await store.updateState(lobbyId, "DEBATE_IN_PROGRESS", "WAITING");
+    active.set(`debate-${lobbyId}`, [
+      {
+        identity: creatorIdentity,
+        displayName: "Creator",
+        role: "spectator",
+        sideIndex: null,
+      },
+      {
+        identity: "side-0",
+        displayName: "First",
+        role: "debater",
+        sideIndex: 0,
+      },
+      {
+        identity: "side-1",
+        displayName: "Second",
+        role: "debater",
+        sideIndex: 1,
+      },
+    ]);
+    const before = Date.now();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/start",
+      payload: { lobbyId, token: creatorIdentity, durationSeconds: 60 },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(
+      (await store.findById(lobbyId))?.roundEndsAt?.getTime(),
+    ).toBeGreaterThanOrEqual(before + 60_000);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/topics/dream-cheating/end-round",
+          payload: { lobbyId, token: creatorIdentity },
+        })
+      ).statusCode,
+    ).toBe(409);
+  });
+
+  it("allows only the creator and rejects concurrent and repeated requests", async () => {
+    const { app, store, roomMetadata } = await activeLobby();
+    const send = (token: string) =>
+      app.inject({
+        method: "POST",
+        url: "/api/topics/dream-cheating/end-round",
+        payload: { lobbyId, token },
+      });
+    expect((await send("someone-else")).statusCode).toBe(403);
+    expect((await store.findById(lobbyId))?.state).toBe("DEBATE_IN_PROGRESS");
+    const responses = await Promise.all([
+      send(creatorIdentity),
+      send(creatorIdentity),
+    ]);
+    expect(
+      responses.map((response) => response.statusCode).sort((a, b) => a - b),
+    ).toEqual([200, 409]);
+    expect((await send(creatorIdentity)).statusCode).toBe(409);
+    expect((await store.findById(lobbyId))?.state).toBe("VOTING");
+    expect(roomMetadata.get(`debate-${lobbyId}`)).toBe("VOTING");
+    const status = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/participants",
+      payload: { lobbyId, token: "reconnecting-participant" },
+    });
+    expect(status.statusCode).toBe(200);
+    expect(status.json().state).toBe("VOTING");
+  });
+  it("rejects manual ending for timed rounds and automatically ends expired deadlines", async () => {
+    const { app, store } = await activeLobby(new Date(Date.now() + 60_000));
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/end-round",
+      payload: { lobbyId, token: creatorIdentity },
+    });
+    expect(response.statusCode).toBe(409);
+    await store.updateState(
+      lobbyId,
+      "DEBATE_IN_PROGRESS",
+      "DEBATE_IN_PROGRESS",
+      new Date(0),
+    );
+    await vi.waitFor(
+      async () => expect((await store.findById(lobbyId))?.state).toBe("VOTING"),
+      { timeout: 2500 },
+    );
+  });
+
+  it("marks spectators joining during voting ineligible and restricts their token", async () => {
+    const { store } = await activeLobby();
+    const lobby = (await store.findById(lobbyId))!;
+    const livekit = fakeLiveKit();
+    const issueToken = vi.spyOn(livekit.gateway, "issueToken");
+    const app = await testApp(
+      livekit.gateway,
+      createMemoryPrivateLobbyStore([
+        { ...lobby, state: "VOTING", visibility: "public" },
+      ]),
+    );
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/join",
+      payload: { lobbyId, intent: "spectator" },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      state: "VOTING",
+      voteEligible: false,
+    });
+    expect(issueToken).toHaveBeenCalledWith(
+      expect.objectContaining({ canVote: false }),
+    );
   });
 });

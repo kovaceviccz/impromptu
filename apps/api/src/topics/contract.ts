@@ -131,6 +131,7 @@ export const joinCodeBodySchema = z.discriminatedUnion("intent", [
 ]);
 
 export const joinResultSchema = z.strictObject({
+  voteEligible: z.boolean().optional(),
   lobbyId: z.string().min(1),
   lobbyName: z.string().min(1).optional(),
   visibility: topicVisibilitySchema.optional(),
@@ -169,6 +170,7 @@ export const roomParticipantsRequestSchema = z.strictObject({
 });
 
 export const startDebateBodySchema = z.strictObject({
+  durationSeconds: z.number().int().min(60).max(3600).optional(),
   lobbyId: z.string().min(1),
   token: z.string().min(1),
 });
@@ -178,6 +180,7 @@ export const startDebateResultSchema = z.strictObject({
 });
 
 export const roomParticipantsResultSchema = z.strictObject({
+  roundEndsAt: z.string().nullable().optional(),
   hostIdentity: z.string().nullable(),
   state: lobbyStateSchema,
   participants: z.array(
@@ -206,6 +209,19 @@ export const topicContracts = {
     body: lobbyCreateBodySchema,
     response: joinResultSchema,
     errors: { 409: errorSchema },
+  },
+  endRound: {
+    method: "POST",
+    path: "/api/topics/:topicId/end-round",
+    params: topicParamsSchema,
+    body: leaveBodySchema,
+    response: startDebateResultSchema,
+    errors: {
+      401: errorSchema,
+      403: errorSchema,
+      404: errorSchema,
+      409: errorSchema,
+    },
   },
   startDebate: {
     method: "POST",

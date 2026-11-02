@@ -37,6 +37,7 @@ export type LiveKitGateway = {
     role: DebateRole;
     roomName: string;
     sideIndex: DebateSide | null;
+    canVote?: boolean;
   }): Promise<string>;
 };
 
@@ -123,7 +124,14 @@ export function createLiveKitGateway(
       await rooms.updateRoomMetadata(roomName, metadata);
     },
 
-    async issueToken({ displayName, identity, role, roomName, sideIndex }) {
+    async issueToken({
+      displayName,
+      identity,
+      role,
+      roomName,
+      sideIndex,
+      canVote = true,
+    }) {
       const isDebater = role === "debater";
       const token = new AccessToken(config.apiKey, config.apiSecret, {
         attributes:
@@ -141,7 +149,7 @@ export function createLiveKitGateway(
         canSubscribe: true,
         canPublish: isDebater,
         canPublishData: !isDebater,
-        canUpdateOwnMetadata: !isDebater,
+        canUpdateOwnMetadata: !isDebater && canVote,
         canPublishSources: isDebater
           ? [TrackSource.CAMERA, TrackSource.MICROPHONE]
           : [],
@@ -263,6 +271,7 @@ export function createRoleAllocator(
       displayName: string,
       requestedSide: DebateSide | null,
       replacingIdentity?: string,
+      canVote = true,
     ): Promise<
       | { token: string; sideIndex: DebateSide | null }
       | { unavailable: "full" | "taken" }
@@ -274,6 +283,7 @@ export function createRoleAllocator(
           role,
           roomName: `debate-${lobbyId}`,
           sideIndex: null,
+          canVote,
         });
         pending.get(lobbyId)?.delete(identity);
         return { token, sideIndex: null };

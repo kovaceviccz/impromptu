@@ -46,6 +46,7 @@ test("creating a public topic creates its only lobby and closing it removes the 
     await page.getByLabel("Creator display name").fill("Public host");
     await page.getByLabel("Join as").selectOption("spectator");
     await page.getByRole("button", { name: "Create and join" }).click();
+    await page.getByRole("button", { name: "Continue to lobby" }).click();
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
     await viewerContext.setOffline(false);
     await expect(viewer.getByText("1 of 4")).toBeVisible({ timeout: 20_000 });

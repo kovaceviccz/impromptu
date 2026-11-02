@@ -10,6 +10,7 @@ export class PrivateLobbyEntity {
   side1!: string | null;
   visibility!: "public" | "private";
   state!: LobbyState;
+  roundEndsAt!: Date | null;
   codeHash!: string | null;
   creatorIdentity!: string;
   createdAt!: Date;
@@ -66,6 +67,7 @@ export const PrivateLobbySchema = new EntitySchema<PrivateLobbyEntity>({
       nullable: true,
     },
     visibility: { type: "string", columnType: "text", defaultRaw: "'private'" },
+    roundEndsAt: { type: Date, fieldName: "round_ends_at", nullable: true },
     state: {
       type: "string",
       columnType: "text",
