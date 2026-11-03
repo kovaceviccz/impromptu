@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../app.js";
 import { apiContract } from "../contracts.js";
 import { createMemoryAccountStore } from "../accounts/store.js";
+import type { AccountStore } from "../accounts/store.js";
 import { hashLobbyCode } from "../lobbies/codes.js";
 import {
   createMemoryPrivateLobbyStore,
@@ -15,6 +16,11 @@ import {
   type LiveKitGateway,
   type RoomParticipant,
 } from "./livekit.js";
+import {
+  createMemoryDebateResultStore,
+  type DebateResultStore,
+} from "../statistics/store.js";
+import { SESSION_COOKIE } from "../accounts/routes.js";
 
 const apps: Awaited<ReturnType<typeof buildApp>>[] = [];
 const debaterInput = {
@@ -85,9 +91,14 @@ function fakeLiveKit(
 async function testApp(
   livekit: LiveKitGateway,
   privateLobbies: PrivateLobbyStore = createMemoryPrivateLobbyStore(),
+  options: {
+    accounts?: AccountStore;
+    debateResults?: DebateResultStore;
+  } = {},
 ) {
   const app = await buildApp({
-    accounts: createMemoryAccountStore(),
+    accounts: options.accounts ?? createMemoryAccountStore(),
+    debateResults: options.debateResults ?? createMemoryDebateResultStore(),
     livekit,
     privateLobbies,
     livekitPublicUrl: "ws://localhost:7880",
@@ -98,6 +109,35 @@ async function testApp(
 }
 
 describe("API contracts", () => {
+  it("uses the authenticated account as the participant identity", async () => {
+    const accounts = createMemoryAccountStore();
+    const created = await accounts.create({
+      username: "signed_in_debater",
+      email: "debater@example.com",
+      passwordHash: "test-only-hash",
+    });
+    if ("duplicates" in created) throw new Error("Account creation failed");
+    const session = await accounts.createSession(created.account.id);
+    const { gateway } = fakeLiveKit();
+    const app = await testApp(gateway, createMemoryPrivateLobbyStore(), {
+      accounts,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/join",
+      cookies: { [SESSION_COOKIE]: session.token },
+      payload: {
+        displayName: "Signed in debater",
+        intent: "debater",
+        sideIndex: 0,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().participantIdentity).toBe(created.account.id);
+  });
+
   it("moderates authenticated spectator chat before broadcasting it", async () => {
     const { active, broadcasts, gateway } = fakeLiveKit();
     active.set("debate-dream-cheating", [
@@ -1161,7 +1201,7 @@ describe("LiveKit grants", () => {
       const claims = await new TokenVerifier(apiKey, apiSecret).verify(token);
 
       expect(claims.video?.canPublish).toBe(role === "debater");
-      expect(claims.video?.canPublishData).toBe(role === "spectator");
+      expect(claims.video?.canPublishData).toBe(false);
       expect(claims.video?.canUpdateOwnMetadata).toBe(false);
       expect(claims.attributes?.["debate.side"]).toBe(
         role === "debater" ? "0" : undefined,
@@ -1333,6 +1373,71 @@ describe("ending rounds", () => {
       voteCounts: [1, 0],
       selectedVote: "0",
     });
+  });
+
+  it("finalizes expired voting and records the winning and losing debaters once", async () => {
+    const debateResults = createMemoryDebateResultStore();
+    const livekit = fakeLiveKit();
+    const store = createMemoryPrivateLobbyStore([
+      {
+        id: lobbyId,
+        topicId: "dream-cheating",
+        state: "DEBATE_IN_PROGRESS",
+        creatorIdentity,
+        codeHash: "test",
+        createdAt: new Date(),
+        expiresAt: null,
+        roundEndsAt: null,
+      },
+    ]);
+    livekit.active.set(`debate-${lobbyId}`, [
+      {
+        identity: "side-0-account",
+        displayName: "First",
+        role: "debater",
+        sideIndex: 0,
+      },
+      {
+        identity: "side-1-account",
+        displayName: "Second",
+        role: "debater",
+        sideIndex: 1,
+      },
+      {
+        identity: "spectator",
+        displayName: "Viewer",
+        role: "spectator",
+        sideIndex: null,
+      },
+    ]);
+    const app = await testApp(livekit.gateway, store, { debateResults });
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/topics/dream-cheating/end-round",
+          payload: { lobbyId, token: creatorIdentity },
+        })
+      ).statusCode,
+    ).toBe(200);
+    const voting = (await store.findById(lobbyId))!.voting!;
+    await store.updateState(lobbyId, "VOTING", "VOTING", undefined, {
+      ...voting,
+      endsAt: new Date(0).toISOString(),
+      votes: { spectator: "0" },
+    });
+
+    await vi.waitFor(
+      async () => expect((await store.findById(lobbyId))?.state).toBe("ENDED"),
+      { timeout: 2500 },
+    );
+    await expect(
+      debateResults.statisticsFor("side-0-account"),
+    ).resolves.toMatchObject({ totalDebates: 1, wins: 1, losses: 0 });
+    await expect(
+      debateResults.statisticsFor("side-1-account"),
+    ).resolves.toMatchObject({ totalDebates: 1, wins: 0, losses: 1 });
+    expect(livekit.roomMetadata.get(`debate-${lobbyId}`)).toBe("ENDED");
   });
 
   it("marks spectators joining during voting ineligible and restricts their token", async () => {

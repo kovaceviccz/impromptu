@@ -35,6 +35,7 @@ export interface PrivateLobbyStore {
   ): Promise<boolean>;
   delete(id: string): Promise<void>;
   dueRounds(now: Date): Promise<PrivateLobbyRecord[]>;
+  dueVotes(now: Date): Promise<PrivateLobbyRecord[]>;
   submitVote(
     id: string,
     identity: string,
@@ -111,6 +112,14 @@ export function createMemoryPrivateLobbyStore(
           lobby.state === "DEBATE_IN_PROGRESS" &&
           lobby.roundEndsAt &&
           lobby.roundEndsAt <= now,
+      );
+    },
+    async dueVotes(now) {
+      return [...lobbies.values()].filter(
+        (lobby) =>
+          lobby.state === "VOTING" &&
+          lobby.voting &&
+          Date.parse(lobby.voting.endsAt) <= now.getTime(),
       );
     },
     async submitVote(id, identity, choice) {

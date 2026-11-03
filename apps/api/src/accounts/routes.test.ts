@@ -6,6 +6,10 @@ import { createMemoryPrivateLobbyStore } from "../lobbies/store.js";
 import type { LiveKitGateway } from "../topics/livekit.js";
 import { SESSION_COOKIE } from "./routes.js";
 import { type AccountStore, createMemoryAccountStore } from "./store.js";
+import {
+  createMemoryDebateResultStore,
+  type DebateResultStore,
+} from "../statistics/store.js";
 
 const apps: Awaited<ReturnType<typeof buildApp>>[] = [];
 const registration = {
@@ -33,9 +37,13 @@ afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
 });
 
-async function testApp(accounts: AccountStore = createMemoryAccountStore()) {
+async function testApp(
+  accounts: AccountStore = createMemoryAccountStore(),
+  debateResults: DebateResultStore = createMemoryDebateResultStore(),
+) {
   const app = await buildApp({
     accounts,
+    debateResults,
     livekit,
     privateLobbies: createMemoryPrivateLobbyStore(),
     livekitPublicUrl: "ws://localhost:7880",
@@ -44,6 +52,71 @@ async function testApp(accounts: AccountStore = createMemoryAccountStore()) {
   apps.push(app);
   return app;
 }
+
+describe("account statistics", () => {
+  it("rejects unauthenticated requests", async () => {
+    const app = await testApp();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/account/statistics",
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ message: "Log in to continue." });
+  });
+
+  it("returns zero history and reflects newly recorded results on reload", async () => {
+    const debateResults = createMemoryDebateResultStore();
+    const app = await testApp(createMemoryAccountStore(), debateResults);
+    const registered = await register(app);
+    const cookies = sessionCookie(registered);
+    const { account } = apiContract.register.response.parse(registered.json());
+
+    const initial = await app.inject({
+      method: "GET",
+      url: "/api/account/statistics",
+      cookies,
+    });
+    expect(
+      apiContract.accountStatistics.response.parse(initial.json()),
+    ).toEqual({
+      totalDebates: 0,
+      wins: 0,
+      losses: 0,
+      winPercentage: 0,
+    });
+
+    await debateResults.recordResults(
+      "round-1",
+      [{ accountId: account.id, sideIndex: 0 }],
+      0,
+    );
+    await debateResults.recordResults(
+      "round-2",
+      [{ accountId: account.id, sideIndex: 1 }],
+      0,
+    );
+    await debateResults.recordResults(
+      "round-3",
+      [{ accountId: account.id, sideIndex: 1 }],
+      1,
+    );
+
+    const updated = await app.inject({
+      method: "GET",
+      url: "/api/account/statistics",
+      cookies,
+    });
+    expect(
+      apiContract.accountStatistics.response.parse(updated.json()),
+    ).toEqual({
+      totalDebates: 3,
+      wins: 2,
+      losses: 1,
+      winPercentage: 66.67,
+    });
+  });
+});
 
 function sessionCookie(response: {
   cookies: { name: string; value: string }[];

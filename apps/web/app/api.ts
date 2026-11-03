@@ -182,6 +182,13 @@ export async function getAccount() {
   return readResponse(response, apiContract.account.response);
 }
 
+export async function getAccountStatistics() {
+  const response = await fetch(apiContract.accountStatistics.path, {
+    headers: { accept: "application/json" },
+  });
+  return readResponse(response, apiContract.accountStatistics.response);
+}
+
 export async function updateAccount(input: UpdateAccountInput) {
   const response = await fetch(apiContract.updateAccount.path, {
     method: apiContract.updateAccount.method,

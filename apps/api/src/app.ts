@@ -20,6 +20,10 @@ import {
 } from "./lobbies/public-state.js";
 import type { LiveKitGateway } from "./topics/livekit.js";
 import { topicRoutes } from "./topics/routes.js";
+import {
+  createMemoryDebateResultStore,
+  type DebateResultStore,
+} from "./statistics/store.js";
 
 type BuildAppOptions = {
   accounts: AccountStore;
@@ -32,6 +36,7 @@ type BuildAppOptions = {
   secureCookies?: boolean;
   serveWeb?: boolean;
   chatPolicy?: ChatPolicy;
+  debateResults?: DebateResultStore;
 };
 
 export async function buildApp(options: BuildAppOptions) {
@@ -40,6 +45,8 @@ export async function buildApp(options: BuildAppOptions) {
   }).withTypeProvider<ZodTypeProvider>();
   const publicLobbyState =
     options.publicLobbyState ?? createMemoryPublicLobbyStateStore();
+  const debateResults =
+    options.debateResults ?? createMemoryDebateResultStore();
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -55,9 +62,12 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(healthRoutes);
   await app.register(accountRoutes, {
     accounts: options.accounts,
+    debateResults,
     secureCookies: options.secureCookies ?? false,
   });
   await app.register(topicRoutes, {
+    accounts: options.accounts,
+    debateResults,
     livekit: options.livekit,
     privateLobbies: options.privateLobbies,
     publicLobbyState,

@@ -2,6 +2,7 @@ export type Voting = {
   endsAt: string;
   eligible: string[];
   votes: Record<string, "0" | "1" | null>;
+  debaters?: Partial<Record<"0" | "1", string>>;
 };
 
 export function recordVote(
