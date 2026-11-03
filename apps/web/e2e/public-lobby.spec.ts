@@ -44,6 +44,7 @@ test("creating a public topic creates its only lobby and closing it removes the 
     await viewerContext.setOffline(true);
     await page.getByRole("button", { name: "Create or Join" }).click();
     await page.getByText("Write your own", { exact: true }).click();
+    await page.getByText("Miscellaneous", { exact: true }).click();
     await page.getByLabel("Topic question").fill(title);
     await page.getByLabel("Affirmative position").fill("Yes, they can");
     await page.getByLabel("Opposing position").fill("No, they cannot");

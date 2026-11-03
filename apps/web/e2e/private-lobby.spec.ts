@@ -34,6 +34,7 @@ test("private codes, guests, registered users, reloads, membership recovery and 
     })
     .click();
   await page.getByText("Write your own", { exact: true }).click();
+  await page.getByText("Miscellaneous", { exact: true }).click();
   await page.getByLabel("Topic question", { exact: true }).fill(title);
   await page
     .getByLabel("Affirmative position")
@@ -264,6 +265,7 @@ test("a valid private topic code rejects an occupied position", async ({
     data: {
       name: `Can machines dream ${Date.now()}?`,
       sides: ["Yes, they can", "No, they cannot"],
+      category: "Miscellaneous",
       visibility: "private",
       displayName: "Reservation host",
       intent: "spectator",

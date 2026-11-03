@@ -75,6 +75,7 @@ test("live public topic creation, discovery, joining, and closure show no errors
     ).toBeVisible();
     await page.getByRole("button", { name: "Create or Join" }).click();
     await page.getByText("Write your own", { exact: true }).click();
+    await page.getByText("Miscellaneous", { exact: true }).click();
     await page.getByLabel("Topic question").fill(title);
     await page
       .getByLabel("Affirmative position")
@@ -189,6 +190,7 @@ test("live private topic code and malformed topic IDs behave safely", async ({
     ).length;
     await page.getByRole("button", { name: "Create or Join" }).click();
     await page.getByText("Write your own", { exact: true }).click();
+    await page.getByText("Miscellaneous", { exact: true }).click();
     await page.getByLabel("Topic question").fill(title);
     await page
       .getByLabel("Affirmative position")
