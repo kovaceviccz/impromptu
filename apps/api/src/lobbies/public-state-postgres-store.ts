@@ -58,6 +58,16 @@ export function createPostgresPublicLobbyStateStore(
         })
       ).map(toRecord);
     },
+    async dueVotes(now) {
+      return (
+        await orm.em.fork().find(PublicLobbyStateEntity, { state: "VOTING" })
+      )
+        .map(toRecord)
+        .filter(
+          (lobby) =>
+            lobby.voting && Date.parse(lobby.voting.endsAt) <= now.getTime(),
+        );
+    },
     async submitVote(id, identity, choice) {
       const rows: unknown[] = await orm.em
         .fork()

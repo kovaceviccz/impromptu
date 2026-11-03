@@ -25,6 +25,7 @@ export interface PublicLobbyStateStore {
     voting?: Voting,
   ): Promise<boolean>;
   dueRounds(now: Date): Promise<PublicLobbyState[]>;
+  dueVotes(now: Date): Promise<PublicLobbyState[]>;
   submitVote(
     id: string,
     identity: string,
@@ -78,6 +79,14 @@ export function createMemoryPublicLobbyStateStore(
           lobby.state === "DEBATE_IN_PROGRESS" &&
           lobby.roundEndsAt &&
           lobby.roundEndsAt <= now,
+      );
+    },
+    async dueVotes(now) {
+      return [...states.values()].filter(
+        (lobby) =>
+          lobby.state === "VOTING" &&
+          lobby.voting &&
+          Date.parse(lobby.voting.endsAt) <= now.getTime(),
       );
     },
     async submitVote(id, identity, choice) {

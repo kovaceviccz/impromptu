@@ -4,11 +4,13 @@ import { topicContracts } from "./topics/contract.js";
 
 export {
   firstFieldErrors,
+  accountStatisticsSchema,
   formErrorSchema,
   loginBodySchema,
   registerBodySchema,
   updateAccountBodySchema,
   type Account,
+  type AccountStatistics,
   type FormError,
   type LoginInput,
   type RegisterInput,

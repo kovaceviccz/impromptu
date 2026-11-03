@@ -108,7 +108,7 @@ for migration in apps/api/src/migrations/Migration*.ts; do
 done
 test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
   -Atc 'select count(*) from mikro_orm_migrations')" = "$expected_migrations"
-for table in account account_session private_lobby public_lobby_state; do
+for table in account account_session debate_result private_lobby public_lobby_state; do
   test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
     -Atc "select to_regclass('public.$table')")" = "$table"
 done

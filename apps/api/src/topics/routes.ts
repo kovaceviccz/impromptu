@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { FastifyPluginAsyncZod } from "@fastify/type-provider-zod";
+import type { FastifyRequest } from "fastify";
 import { UniqueConstraintViolationException } from "@mikro-orm/core";
 import { z } from "zod";
 
@@ -22,8 +23,13 @@ import {
 } from "./livekit.js";
 import { votingSummary } from "../lobbies/voting.js";
 import type { JoinResult } from "./contract.js";
+import type { AccountStore } from "../accounts/store.js";
+import { SESSION_COOKIE } from "../accounts/routes.js";
+import type { DebateResultStore } from "../statistics/store.js";
 
 export type TopicRoutesOptions = {
+  accounts: AccountStore;
+  debateResults: DebateResultStore;
   livekit: LiveKitGateway;
   privateLobbies: PrivateLobbyStore;
   publicLobbyState: PublicLobbyStateStore;
@@ -78,6 +84,13 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
     options.livekit,
     options.tokenTtlSeconds,
   );
+  async function newParticipantIdentity(request: FastifyRequest) {
+    const sessionToken = request.cookies[SESSION_COOKIE];
+    const account = sessionToken
+      ? await options.accounts.findSessionAccount(sessionToken)
+      : undefined;
+    return account?.id ?? randomUUID();
+  }
   function findLobby(id: string) {
     return z.uuid().safeParse(id).success
       ? options.privateLobbies.findById(id)
@@ -226,6 +239,18 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
           .filter((p) => p.role === "spectator")
           .map((p) => p.identity),
         votes: {},
+        debaters: Object.fromEntries(
+          participants
+            .filter(
+              (participant) =>
+                participant.role === "debater" &&
+                participant.sideIndex !== null,
+            )
+            .map((participant) => [
+              String(participant.sideIndex),
+              participant.identity,
+            ]),
+        ),
       },
     );
     if (!updated) return false;
@@ -240,6 +265,39 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
     }
     return true;
   }
+
+  async function finalizeVoting(
+    lobbyId: string,
+    publicLobby: boolean,
+    voting: NonNullable<PrivateLobbyRecord["voting"]>,
+  ) {
+    const [side0Votes, side1Votes] = votingSummary(voting).voteCounts;
+    const winningSide =
+      side0Votes === side1Votes ? null : side0Votes > side1Votes ? 0 : 1;
+    await options.debateResults.recordResults(
+      lobbyId,
+      Object.entries(voting.debaters ?? {}).flatMap(([side, accountId]) =>
+        accountId && (side === "0" || side === "1")
+          ? [{ accountId, sideIndex: side === "0" ? 0 : 1 }]
+          : [],
+      ),
+      winningSide,
+    );
+    const store = publicLobby
+      ? options.publicLobbyState
+      : options.privateLobbies;
+    if (!(await store.updateState(lobbyId, "VOTING", "ENDED"))) return false;
+    publishPublicChange();
+    try {
+      await options.livekit.updateRoomMetadata(`debate-${lobbyId}`, "ENDED");
+    } catch (cause) {
+      app.log.error(
+        { err: cause, lobbyId },
+        "Could not broadcast the completed debate",
+      );
+    }
+    return true;
+  }
   let checkingTimers = false;
   const roundTimer = setInterval(() => {
     if (checkingTimers) return;
@@ -249,6 +307,13 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         await finishRound(lobby.id, false);
       for (const lobby of await options.publicLobbyState.dueRounds(new Date()))
         await finishRound(lobby.topicId, true);
+      for (const lobby of await options.privateLobbies.dueVotes(new Date())) {
+        if (lobby.voting) await finalizeVoting(lobby.id, false, lobby.voting);
+      }
+      for (const lobby of await options.publicLobbyState.dueVotes(new Date())) {
+        if (lobby.voting)
+          await finalizeVoting(lobby.topicId, true, lobby.voting);
+      }
     })()
       .catch((err: unknown) =>
         app.log.error({ err }, "Could not end timed rounds"),
@@ -647,7 +712,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         });
       }
 
-      const participantIdentity = randomUUID();
+      const participantIdentity = await newParticipantIdentity(request);
       const role = request.body.intent satisfies DebateRole;
       const sideIndex =
         request.body.intent === "debater" ? request.body.sideIndex : null;
@@ -703,7 +768,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       },
     },
     async (request, reply) => {
-      const identity = randomUUID();
+      const identity = await newParticipantIdentity(request);
       const { name, sides, visibility, displayName, intent } = request.body;
       if (
         topics.some(
@@ -835,7 +900,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
           (await options.publicLobbyState.find(topic.id))?.state ?? "WAITING";
       }
 
-      let participantIdentity: string = randomUUID();
+      let participantIdentity = await newParticipantIdentity(request);
       if (request.body.previousToken) {
         const verifiedIdentity = await options.livekit.verifyParticipantToken(
           request.body.previousToken,
