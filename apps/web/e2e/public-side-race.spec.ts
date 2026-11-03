@@ -31,6 +31,7 @@ test("a stale side choice returns home with a visible reason", async ({
 
     await page.getByRole("button", { name: "Create or Join" }).click();
     await page.getByText("Write your own", { exact: true }).click();
+    await page.getByText("Miscellaneous", { exact: true }).click();
     await page.getByLabel("Topic question").fill(title);
     await page.getByLabel("Affirmative position").fill("Yes, they can");
     await page.getByLabel("Opposing position").fill("No, they cannot");

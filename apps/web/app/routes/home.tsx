@@ -909,9 +909,13 @@ export function TopicList({
           <legend className="col-span-2 text-sm font-medium">
             Number of spectators
           </legend>
-          <label className="grid gap-1.5 text-sm">
+          <label
+            className="grid gap-1.5 text-sm"
+            htmlFor="filter-minimum-spectators"
+          >
             Minimum
             <Input
+              id="filter-minimum-spectators"
               min={0}
               placeholder="Any"
               type="number"
@@ -921,9 +925,13 @@ export function TopicList({
               }
             />
           </label>
-          <label className="grid gap-1.5 text-sm">
+          <label
+            className="grid gap-1.5 text-sm"
+            htmlFor="filter-maximum-spectators"
+          >
             Maximum
             <Input
+              id="filter-maximum-spectators"
               min={0}
               placeholder="Any"
               type="number"
