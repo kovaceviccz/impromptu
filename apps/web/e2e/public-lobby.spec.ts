@@ -125,6 +125,7 @@ test("public positions reopen after the completed round's debaters leave", async
       .getByRole("dialog")
       .getByRole("button", { name: "Debate", exact: true })
       .click();
+    await expect(guest).toHaveURL(/\/debates\//);
     await expect(guest.getByRole("heading", { name: title })).toBeVisible();
   }
   await page.getByRole("button", { name: "Start Debate", exact: true }).click();
@@ -132,8 +133,13 @@ test("public positions reopen after the completed round's debaters leave", async
   await expect(page.getByRole("region", { name: "Round results" })).toBeVisible(
     { timeout: 35_000 },
   );
-  for (const guest of guests)
+  for (const guest of guests) {
     await guest.getByRole("button", { name: "Leave lobby" }).click();
+    await expect(guest).toHaveURL(/\/$/);
+    await expect(
+      guest.getByRole("heading", { name: "Choose a topic and side to debate" }),
+    ).toBeVisible();
+  }
   for (const guest of guests) {
     for (
       let index = 0;
@@ -142,8 +148,10 @@ test("public positions reopen after the completed round's debaters leave", async
       index++
     )
       await guest.getByRole("button", { name: "Next topic" }).click();
-    await expect(guest.getByRole("heading", { name: title })).toBeVisible();
-    await expect(guest.getByText("Both sides open")).toBeVisible();
+    const card = guest.locator('[data-slot="card"]').filter({
+      has: guest.getByRole("heading", { name: title }),
+    });
+    await expect(card.getByText("Both sides open")).toBeVisible();
   }
   await expect(
     page.getByRole("button", { name: "Start Debate", exact: true }),
@@ -152,6 +160,8 @@ test("public positions reopen after the completed round's debaters leave", async
     page.getByRole("region", { name: "Round results" }),
   ).toBeVisible();
   await guests[0]
+    .locator('[data-slot="card"]')
+    .filter({ has: guests[0].getByRole("heading", { name: title }) })
     .getByRole("button", { name: /Debate.*Yes, reuse it/ })
     .click();
   await guests[0].getByPlaceholder("Display name").fill("Next debater");
@@ -159,6 +169,7 @@ test("public positions reopen after the completed round's debaters leave", async
     .getByRole("dialog")
     .getByRole("button", { name: "Debate", exact: true })
     .click();
+  await expect(guests[0]).toHaveURL(/\/debates\//);
   await expect(guests[0].getByRole("heading", { name: title })).toBeVisible();
   await page.getByRole("button", { name: "Close lobby" }).click();
 });
