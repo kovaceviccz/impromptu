@@ -11,6 +11,7 @@ import Fastify from "fastify";
 
 import { accountRoutes } from "./accounts/routes.js";
 import type { AccountStore } from "./accounts/store.js";
+import { ChatPolicy } from "./chat/policy.js";
 import { healthRoutes } from "./health/routes.js";
 import type { PrivateLobbyStore } from "./lobbies/store.js";
 import {
@@ -19,6 +20,10 @@ import {
 } from "./lobbies/public-state.js";
 import type { LiveKitGateway } from "./topics/livekit.js";
 import { topicRoutes } from "./topics/routes.js";
+import {
+  createMemoryDebateResultStore,
+  type DebateResultStore,
+} from "./statistics/store.js";
 
 type BuildAppOptions = {
   accounts: AccountStore;
@@ -30,6 +35,8 @@ type BuildAppOptions = {
   logger?: boolean;
   secureCookies?: boolean;
   serveWeb?: boolean;
+  chatPolicy?: ChatPolicy;
+  debateResults?: DebateResultStore;
 };
 
 export async function buildApp(options: BuildAppOptions) {
@@ -38,6 +45,8 @@ export async function buildApp(options: BuildAppOptions) {
   }).withTypeProvider<ZodTypeProvider>();
   const publicLobbyState =
     options.publicLobbyState ?? createMemoryPublicLobbyStateStore();
+  const debateResults =
+    options.debateResults ?? createMemoryDebateResultStore();
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -53,14 +62,18 @@ export async function buildApp(options: BuildAppOptions) {
   await app.register(healthRoutes);
   await app.register(accountRoutes, {
     accounts: options.accounts,
+    debateResults,
     secureCookies: options.secureCookies ?? false,
   });
   await app.register(topicRoutes, {
+    accounts: options.accounts,
+    debateResults,
     livekit: options.livekit,
     privateLobbies: options.privateLobbies,
     publicLobbyState,
     livekitPublicUrl: options.livekitPublicUrl,
     tokenTtlSeconds: options.tokenTtlSeconds,
+    chatPolicy: options.chatPolicy ?? new ChatPolicy(),
   });
   app.addHook("onClose", async () => options.privateLobbies.close());
   app.addHook("onClose", async () => publicLobbyState.close());

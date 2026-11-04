@@ -31,6 +31,7 @@ import {
   ApiError,
   deleteAccount,
   getAccount,
+  getAccountStatistics,
   logout,
   updateAccount,
 } from "../api";
@@ -47,8 +48,11 @@ export async function clientLoader({
   request,
 }: Pick<ClientLoaderFunctionArgs, "request">) {
   try {
-    const { account } = await getAccount();
-    return account;
+    const [{ account }, statistics] = await Promise.all([
+      getAccount(),
+      getAccountStatistics(),
+    ]);
+    return { account, statistics };
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       const { pathname, search } = new URL(request.url);
@@ -106,7 +110,7 @@ export async function clientAction({
 }
 
 export default function AccountPage() {
-  const account = useLoaderData<typeof clientLoader>();
+  const { account, statistics } = useLoaderData<typeof clientLoader>();
   const result = useActionData<typeof clientAction>();
   const navigation = useNavigation();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -128,6 +132,35 @@ export default function AccountPage() {
             </time>
           </p>
         </header>
+
+        <section className="grid gap-4" aria-labelledby="statistics-heading">
+          <div className="grid gap-1">
+            <h2 className="text-lg font-semibold" id="statistics-heading">
+              Debate statistics
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Results from debates completed while signed in.
+            </p>
+          </div>
+          <dl className="grid grid-cols-2 gap-3">
+            {[
+              ["Total debates", statistics.totalDebates],
+              ["Wins", statistics.wins],
+              ["Losses", statistics.losses],
+              ["Win percentage", `${statistics.winPercentage}%`],
+            ].map(([label, value]) => (
+              <div
+                className="rounded-lg border bg-card p-4 text-card-foreground"
+                key={label}
+              >
+                <dt className="text-sm text-muted-foreground">{label}</dt>
+                <dd className="font-editorial mt-1 text-2xl font-semibold">
+                  {value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </section>
 
         <section className="grid gap-4" aria-labelledby="profile-heading">
           <h2 className="text-lg font-semibold" id="profile-heading">

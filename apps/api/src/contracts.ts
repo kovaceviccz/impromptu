@@ -4,11 +4,13 @@ import { topicContracts } from "./topics/contract.js";
 
 export {
   firstFieldErrors,
+  accountStatisticsSchema,
   formErrorSchema,
   loginBodySchema,
   registerBodySchema,
   updateAccountBodySchema,
   type Account,
+  type AccountStatistics,
   type FormError,
   type LoginInput,
   type RegisterInput,
@@ -17,6 +19,7 @@ export {
 export { type LobbyState } from "./lobbies/contract.js";
 export {
   errorSchema,
+  chatMessageSchema,
   joinBodySchema,
   joinResultSchema,
   lobbyCreateBodySchema,
@@ -26,6 +29,7 @@ export {
   type JoinInput,
   type JoinByCodeInput,
   type JoinResult,
+  type RoundResults,
   lobbyTags,
   type LobbyCreateInput,
   type LobbyTag,
@@ -40,6 +44,8 @@ export {
   topicPresets,
   type TopicPreset,
   type TopicStatus,
+  type ChatMessage,
+  type SendChatMessageInput,
 } from "./topics/contract.js";
 
 export const PRODUCT = {

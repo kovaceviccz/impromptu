@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 
 import type {
   JoinResult,
+  RoundResults,
   SideUnavailableError,
 } from "@impromptu/api/contracts";
 import {
@@ -27,6 +28,7 @@ import { ApiError } from "../api";
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.clearAllMocks();
 });
 
@@ -53,6 +55,25 @@ const defaultParticipants: MockParticipant[] = [
   },
 ];
 
+function encodedChatMessage(input: {
+  id: string;
+  message: string;
+  senderIdentity?: string;
+  senderName?: string;
+  timestamp?: number;
+}) {
+  return {
+    payload: new TextEncoder().encode(
+      JSON.stringify({
+        senderIdentity: "another-id",
+        senderName: "Another guest",
+        timestamp: 2,
+        ...input,
+      }),
+    ),
+  };
+}
+
 const {
   disconnectRoom,
   joinRoom,
@@ -61,9 +82,13 @@ const {
   getParticipants,
   sendChat,
   startDebateRequest,
+  endRoundRequest,
+  submitVoteRequest,
   setAttributes,
   setName,
 } = vi.hoisted(() => ({
+  submitVoteRequest: vi.fn<typeof import("../api").submitVote>(),
+  endRoundRequest: vi.fn<typeof import("../api").endRound>(),
   disconnectRoom: vi.fn<() => Promise<void>>(),
   joinRoom:
     vi.fn<
@@ -76,13 +101,29 @@ const {
     participants: [] as MockParticipant[],
     connection: "connected",
     metadataListeners: new Set<(metadata: string) => void>(),
+    chatCallback: undefined as
+      | ((message: { payload: Uint8Array }) => void)
+      | undefined,
   },
   getParticipants: vi.fn<typeof import("../api").getRoomParticipants>(),
   leaveRoom:
     vi.fn<
       (topicId: string, lobbyId: string, token: string) => Promise<unknown>
     >(),
-  sendChat: vi.fn<(message: string) => Promise<unknown>>(),
+  sendChat: vi.fn<
+    (input: {
+      topicId: string;
+      lobbyId: string;
+      token: string;
+      message: string;
+    }) => Promise<{
+      id: string;
+      message: string;
+      senderIdentity: string;
+      senderName: string;
+      timestamp: number;
+    }>
+  >(),
   startDebateRequest:
     vi.fn<
       (
@@ -95,14 +136,30 @@ const {
 }));
 
 beforeEach(() => {
+  submitVoteRequest.mockImplementation(async (_, input) => ({
+    votingEndsAt: new Date(Date.now() + 30000).toISOString(),
+    voteCounts: input.choice === "1" ? [0, 1] : [0, 0],
+    selectedVote: input.choice,
+  }));
   roomState.participants = defaultParticipants;
   roomState.connection = "connected";
   roomState.metadataListeners.clear();
+  roomState.chatCallback = undefined;
   getParticipants.mockResolvedValue({
     hostIdentity: null,
     state: "WAITING",
+    votingEndsAt: new Date(Date.now() + 30000).toISOString(),
+    voteCounts: [1, 0],
+    selectedVote: "0",
     participants: [],
   });
+  sendChat.mockImplementation(async ({ message }) => ({
+    id: "9ba90889-f928-4785-bd33-ce5df26992ee",
+    message,
+    senderIdentity: "7ffcd8af-4d5a-45d9-97cc-6db63b930b09",
+    senderName: "Test spectator",
+    timestamp: 2,
+  }));
   sessionStorage.clear();
 });
 
@@ -111,88 +168,115 @@ vi.mock("../api", async (importOriginal) => ({
   joinTopic: joinRoom,
   leaveTopic: leaveRoom,
   startDebate: startDebateRequest,
+  endRound: endRoundRequest,
+  submitVote: submitVoteRequest,
   getRoomParticipants: getParticipants,
+  sendRoomChatMessage: sendChat,
 }));
 
-vi.mock("@livekit/components-react", () => ({
-  LiveKitRoom: ({
-    audio,
-    children,
-    connect,
-    onMediaDeviceFailure,
-    token,
-    video,
-  }: {
-    audio: boolean;
-    children: ReactNode;
-    connect: boolean;
-    onMediaDeviceFailure?: () => void;
-    token: string;
-    video: boolean | { resolution: { height: number; width: number } };
-  }) => (
-    <div
-      data-testid="livekit-room"
-      data-audio={audio}
-      data-connect={connect}
-      data-token={token}
-      data-video={Boolean(video)}
-      data-video-height={
-        typeof video === "object" ? video.resolution.height : undefined
-      }
-      data-video-width={
-        typeof video === "object" ? video.resolution.width : undefined
-      }
-    >
-      {children}
-      <button type="button" onClick={onMediaDeviceFailure}>
-        Simulate media failure
-      </button>
-    </div>
-  ),
-  RoomAudioRenderer: () => null,
-  VideoTrack: ({ style }: { style?: CSSProperties }) => (
-    <div data-testid="video-track" style={style} />
-  ),
-  useChat: () => ({
-    chatMessages: [
+vi.mock("@livekit/components-react", async () => {
+  const { useEffect } = await import("react");
+  return {
+    LiveKitRoom: ({
+      audio,
+      children,
+      connect,
+      onMediaDeviceFailure,
+      token,
+      video,
+    }: {
+      audio: boolean;
+      children: ReactNode;
+      connect: boolean;
+      onMediaDeviceFailure?: () => void;
+      token: string;
+      video: boolean | { resolution: { height: number; width: number } };
+    }) => (
+      <div
+        data-testid="livekit-room"
+        data-audio={audio}
+        data-connect={connect}
+        data-token={token}
+        data-video={Boolean(video)}
+        data-video-height={
+          typeof video === "object" ? video.resolution.height : undefined
+        }
+        data-video-width={
+          typeof video === "object" ? video.resolution.width : undefined
+        }
+      >
+        {children}
+        <button type="button" onClick={onMediaDeviceFailure}>
+          Simulate media failure
+        </button>
+      </div>
+    ),
+    RoomAudioRenderer: () => null,
+    VideoTrack: ({ style }: { style?: CSSProperties }) => (
+      <div data-testid="video-track" style={style} />
+    ),
+    useDataChannel: (
+      _topic: string,
+      onMessage: (message: { payload: Uint8Array }) => void,
+    ) => {
+      useEffect(() => {
+        roomState.chatCallback = onMessage;
+        onMessage({
+          payload: new TextEncoder().encode(
+            JSON.stringify({
+              id: "5b122360-7845-40fb-8d01-782daefc7337",
+              message: "Hello room",
+              senderIdentity: "another-id",
+              senderName: "Another guest",
+              timestamp: 1,
+            }),
+          ),
+        });
+        return () => {
+          if (roomState.chatCallback === onMessage) {
+            roomState.chatCallback = undefined;
+          }
+        };
+      }, [onMessage]);
+      return {
+        isSending: false,
+        message: undefined,
+        send: vi.fn<(payload: Uint8Array) => Promise<void>>(),
+      };
+    },
+    useParticipants: () => roomState.participants,
+    useConnectionState: () => roomState.connection,
+    useRoomContext: () => ({
+      disconnect: disconnectRoom,
+      localParticipant: {
+        attributes: { "debate.vote": "0" },
+        setAttributes,
+        setName,
+      },
+      on: (event: string, listener: (metadata: string) => void) => {
+        if (event === "roomMetadataChanged") {
+          roomState.metadataListeners.add(listener);
+        }
+      },
+      off: (event: string, listener: (metadata: string) => void) => {
+        if (event === "roomMetadataChanged") {
+          roomState.metadataListeners.delete(listener);
+        }
+      },
+    }),
+    useTracks: () => [
       {
-        from: { identity: "another-id", name: "Another guest" },
-        id: "message-1",
-        message: "Hello room",
-        timestamp: 1,
+        participant: { identity: "debater-id" },
       },
     ],
-    isSending: false,
-    send: sendChat,
-  }),
-  useParticipants: () => roomState.participants,
-  useConnectionState: () => roomState.connection,
-  useRoomContext: () => ({
-    disconnect: disconnectRoom,
-    localParticipant: {
-      attributes: { "debate.vote": "0" },
-      setAttributes,
-      setName,
-    },
-    on: (event: string, listener: (metadata: string) => void) => {
-      if (event === "roomMetadataChanged") {
-        roomState.metadataListeners.add(listener);
-      }
-    },
-    off: (event: string, listener: (metadata: string) => void) => {
-      if (event === "roomMetadataChanged") {
-        roomState.metadataListeners.delete(listener);
-      }
-    },
-  }),
-  useTracks: () => [
-    {
-      participant: { identity: "debater-id" },
-    },
-  ],
-}));
+  };
+});
 
-import Debate, { clientAction, DebateExperience } from "./debate";
+import Debate, {
+  clientAction,
+  DebateExperience,
+  RoundCountdown,
+} from "./debate";
 import { recalledRoom, rememberRoom, roomPreferences } from "../room-session";
 
 function LocationProbe() {
@@ -277,7 +361,6 @@ describe("DebateExperience", () => {
   });
 
   it("connects spectators without publishing media and lets them vote and chat", async () => {
-    sendChat.mockResolvedValue({});
     setAttributes.mockResolvedValue();
     setName.mockResolvedValue();
     const join: JoinResult = {
@@ -337,6 +420,7 @@ describe("DebateExperience", () => {
     expect(within(firstSide!).getByTestId("video-track")).toBeVisible();
     fireEvent.click(voteTab);
     expect(screen.getByText(/Hello room/)).toBeVisible();
+    expect(screen.getByText("New Messages")).toBeInTheDocument();
     const messageTime = document.querySelector("time");
     expect(messageTime).toHaveAttribute("datetime", new Date(1).toISOString());
     expect(messageTime).toHaveTextContent(
@@ -345,6 +429,13 @@ describe("DebateExperience", () => {
         minute: "2-digit",
       }).format(new Date(1)),
     );
+    await act(async () => {});
+    expect(
+      screen.queryByRole("button", { name: /Yes: intention still matters.*1/ }),
+    ).toBeNull();
+    act(() => {
+      for (const listener of roomState.metadataListeners) listener("VOTING");
+    });
     const sidesFilled = screen.getByText("Sides filled").closest("div");
     const spectatorCount = screen.getByText("Spectators").closest("div");
     expect(within(sidesFilled!).getByText("1 of 2")).toBeVisible();
@@ -369,7 +460,11 @@ describe("DebateExperience", () => {
       }),
     );
     await waitFor(() =>
-      expect(setAttributes).toHaveBeenCalledWith({ "debate.vote": "" }),
+      expect(submitVoteRequest).toHaveBeenCalledWith(join.topicId, {
+        lobbyId: join.lobbyId,
+        token: join.token,
+        choice: null,
+      }),
     );
     setAttributes.mockClear();
 
@@ -377,7 +472,11 @@ describe("DebateExperience", () => {
       screen.getByRole("button", { name: /No: dreams are involuntary.*0/ }),
     );
     await waitFor(() =>
-      expect(setAttributes).toHaveBeenCalledWith({ "debate.vote": "1" }),
+      expect(submitVoteRequest).toHaveBeenCalledWith(join.topicId, {
+        lobbyId: join.lobbyId,
+        token: join.token,
+        choice: "1",
+      }),
     );
 
     fireEvent.change(screen.getByRole("textbox", { name: "Message" }), {
@@ -385,11 +484,177 @@ describe("DebateExperience", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
-    await waitFor(() => expect(sendChat).toHaveBeenCalledWith("Hello back"));
+    await waitFor(() =>
+      expect(sendChat).toHaveBeenCalledWith({
+        lobbyId: "dream-cheating",
+        message: "Hello back",
+        token: "spectator-token",
+        topicId: "dream-cheating",
+      }),
+    );
+    const ownMessage = await screen.findByText("Hello back");
+    expect(ownMessage.closest('[data-slot="message"]')).toHaveAttribute(
+      "data-align",
+      "end",
+    );
+    expect(ownMessage.closest('[data-slot="bubble"]')).toHaveAttribute(
+      "data-variant",
+      "default",
+    );
+  });
+
+  it("shows moderation errors only to the sender and keeps their draft", async () => {
+    sendChat.mockRejectedValueOnce(
+      new ApiError(
+        "That message contains language that is not allowed. Please revise it.",
+        400,
+      ),
+    );
+    const join: JoinResult = {
+      lobbyId: "dream-cheating",
+      state: "WAITING",
+      topicId: "dream-cheating",
+      topicTitle: "Can you cheat in a dream?",
+      sides: ["Yes: intention still matters", "No: dreams are involuntary"],
+      participantIdentity: "spectator-id",
+      displayName: "Test spectator",
+      role: "spectator",
+      sideIndex: null,
+      isCreator: false,
+      hostIdentity: null,
+      livekitUrl: "ws://localhost:7880",
+      token: "spectator-token",
+    };
+    render(
+      <MemoryRouter>
+        <DebateExperience join={join} />
+      </MemoryRouter>,
+    );
+    const input = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.change(input, { target: { value: "blocked draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(
+      await screen.findByText(
+        "That message contains language that is not allowed. Please revise it.",
+      ),
+    ).toBeVisible();
+    expect(input).toHaveValue("blocked draft");
+  });
+
+  it("preserves an older reading position and exposes a New Messages action", async () => {
+    const join: JoinResult = {
+      lobbyId: "dream-cheating",
+      state: "WAITING",
+      topicId: "dream-cheating",
+      topicTitle: "Can you cheat in a dream?",
+      sides: ["Yes: intention still matters", "No: dreams are involuntary"],
+      participantIdentity: "spectator-id",
+      displayName: "Test spectator",
+      role: "spectator",
+      sideIndex: null,
+      isCreator: false,
+      hostIdentity: null,
+      livekitUrl: "ws://localhost:7880",
+      token: "spectator-token",
+    };
+    render(
+      <MemoryRouter>
+        <DebateExperience join={join} />
+      </MemoryRouter>,
+    );
+    await screen.findByText("Hello room");
+    const viewport = screen.getByRole("region", { name: "Messages" });
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 300 },
+      scrollTo: {
+        configurable: true,
+        value: ({ top }: { top: number }) => {
+          viewport.scrollTop = top;
+        },
+      },
+    });
+    viewport.getBoundingClientRect = () => new DOMRect(0, 0, 0, 100);
+    const firstMessage = document.querySelector<HTMLElement>(
+      '[data-message-id="5b122360-7845-40fb-8d01-782daefc7337"]',
+    );
+    expect(firstMessage).not.toBeNull();
+    firstMessage!.getBoundingClientRect = () => new DOMRect(0, 250, 0, 50);
+
+    fireEvent.wheel(viewport);
+    viewport.scrollTop = 0;
+    fireEvent.scroll(viewport);
+    const indicator = screen.getByText("New Messages").closest("button");
+    expect(indicator).not.toBeNull();
+    await waitFor(() =>
+      expect(indicator).toHaveAttribute("data-active", "true"),
+    );
+
+    act(() => {
+      roomState.chatCallback?.(
+        encodedChatMessage({
+          id: "a42c79fa-07b1-4e50-b320-05526f8a0186",
+          message: "A newer message",
+        }),
+      );
+    });
+    expect(await screen.findByText("A newer message")).toBeVisible();
+    expect(viewport.scrollTop).toBe(0);
+    fireEvent.click(indicator!);
+    expect(viewport.scrollTop).toBe(200);
+  });
+
+  it("follows new messages while the reader is already at the bottom", async () => {
+    const join: JoinResult = {
+      lobbyId: "dream-cheating",
+      state: "WAITING",
+      topicId: "dream-cheating",
+      topicTitle: "Can you cheat in a dream?",
+      sides: ["Yes: intention still matters", "No: dreams are involuntary"],
+      participantIdentity: "spectator-id",
+      displayName: "Test spectator",
+      role: "spectator",
+      sideIndex: null,
+      isCreator: false,
+      hostIdentity: null,
+      livekitUrl: "ws://localhost:7880",
+      token: "spectator-token",
+    };
+    render(
+      <MemoryRouter>
+        <DebateExperience join={join} />
+      </MemoryRouter>,
+    );
+    await screen.findByText("Hello room");
+    const viewport = screen.getByRole("region", { name: "Messages" });
+    let scrollHeight = 300;
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+      scrollTo: {
+        configurable: true,
+        value: ({ top }: { top: number }) => {
+          viewport.scrollTop = top;
+        },
+      },
+    });
+    viewport.scrollTop = 200;
+    fireEvent.scroll(viewport);
+    scrollHeight = 400;
+    act(() => {
+      roomState.chatCallback?.(
+        encodedChatMessage({
+          id: "340e81fa-c8b5-4275-876f-39130d5eaff5",
+          message: "Follow this message",
+        }),
+      );
+    });
+    await screen.findByText("Follow this message");
+    await waitFor(() => expect(viewport.scrollTop).toBe(300));
   });
 
   it("asks a spectator for a name before chat and restores their name and vote", async () => {
-    sendChat.mockResolvedValue({});
     setName.mockResolvedValue();
     setAttributes.mockResolvedValue();
     const join: JoinResult = {
@@ -424,7 +689,17 @@ describe("DebateExperience", () => {
       target: { value: "Hello" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(sendChat).toHaveBeenCalledWith("Hello"));
+    await waitFor(() =>
+      expect(sendChat).toHaveBeenCalledWith({
+        lobbyId: "dream-cheating",
+        message: "Hello",
+        token: "spectator-token",
+        topicId: "dream-cheating",
+      }),
+    );
+    act(() => {
+      for (const listener of roomState.metadataListeners) listener("VOTING");
+    });
     fireEvent.click(
       screen.getByRole("button", {
         name: /No: dreams are involuntary.*0/,
@@ -433,7 +708,6 @@ describe("DebateExperience", () => {
     await waitFor(() =>
       expect(roomPreferences(join.topicId)).toEqual({
         displayName: "Ada",
-        vote: "1",
       }),
     );
     view.unmount();
@@ -441,15 +715,17 @@ describe("DebateExperience", () => {
     setAttributes.mockClear();
     render(
       <MemoryRouter>
-        <DebateExperience join={join} />
+        <DebateExperience
+          join={{ ...join, state: "VOTING", voteEligible: true }}
+        />
       </MemoryRouter>,
     );
     expect(screen.getByRole("textbox", { name: "Message" })).toBeVisible();
     await waitFor(() => expect(setName).toHaveBeenCalledWith("Ada"));
-    expect(setAttributes).toHaveBeenCalledWith({ "debate.vote": "1" });
+    expect(setAttributes).not.toHaveBeenCalled();
   });
 
-  it("does not let a debater vote or send chat messages", () => {
+  it("does not let a debater vote or send chat messages", async () => {
     const join: JoinResult = {
       lobbyId: "dream-cheating",
       state: "WAITING",
@@ -472,6 +748,7 @@ describe("DebateExperience", () => {
         <DebateExperience join={join} />
       </MemoryRouter>,
     );
+    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
 
     const room = screen.getByTestId("livekit-room");
     expect(room).toHaveAttribute("data-video", "true");
@@ -491,7 +768,7 @@ describe("DebateExperience", () => {
         "Audience votes appear here as spectators choose the stronger argument.",
       ),
     ).toBeVisible();
-    expect(screen.getByText("1 spectator vote")).toBeVisible();
+    expect(await screen.findByText("1 spectator vote")).toBeVisible();
     expect(
       within(readOnlyVote)
         .getByText("Yes: intention still matters")
@@ -535,6 +812,7 @@ describe("DebateExperience", () => {
         <DebateExperience join={join} />
       </MemoryRouter>,
     );
+    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
 
     const copyButton = screen.getByRole("button", {
       name: "Copy lobby code ABCD23",
@@ -664,6 +942,35 @@ describe("DebateExperience", () => {
   });
 });
 
+describe("Round countdown", () => {
+  it("counts down from the server deadline, catches up after delays, and stops at zero", () => {
+    vi.useFakeTimers();
+    const now = new Date("2026-10-29T12:00:00Z");
+    vi.setSystemTime(now);
+    const view = render(
+      <RoundCountdown endsAt={new Date(now.getTime() + 65000).toISOString()} />,
+    );
+    expect(
+      screen.getByRole("timer", { name: "Round time remaining" }),
+    ).toHaveTextContent("1:05");
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(screen.getByRole("timer")).toHaveTextContent("1:04");
+    act(() => {
+      vi.setSystemTime(new Date(now.getTime() + 63000));
+      vi.advanceTimersByTime(1000);
+    });
+    expect(screen.getByRole("timer")).toHaveTextContent("0:01");
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(screen.getByRole("timer")).toHaveTextContent("0:00");
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
 describe("Participant roster", () => {
   const spectatorJoin: JoinResult = {
     lobbyId: "dream-cheating",
@@ -689,6 +996,113 @@ describe("Participant roster", () => {
     token: "debater-token",
   };
 
+  it("requires creator setup before connecting and keeps the timer choice for starting", async () => {
+    const creator = {
+      ...spectatorJoin,
+      isCreator: true,
+      hostIdentity: spectatorJoin.participantIdentity,
+    };
+    roomState.participants = [
+      ...defaultParticipants,
+      {
+        attributes: { "debate.side": "1" },
+        identity: "second-debater",
+        name: "Second",
+        permissions: { canPublish: true },
+      },
+    ];
+    startDebateRequest.mockResolvedValue({ state: "DEBATE_IN_PROGRESS" });
+    render(
+      <MemoryRouter>
+        <DebateExperience join={creator} />
+      </MemoryRouter>,
+    );
+    expect(
+      screen.getByRole("dialog", { name: "How should this round end?" }),
+    ).toBeVisible();
+    expect(screen.queryByTestId("livekit-room")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start Debate" })).toBeNull();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.getByRole("dialog")).toBeVisible();
+    fireEvent.change(screen.getByRole("combobox", { name: "End round by" }), {
+      target: { value: "timer" },
+    });
+    fireEvent.change(
+      screen.getByRole("spinbutton", { name: "Round duration in minutes" }),
+      { target: { value: "10" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByTestId("livekit-room")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Start Debate" }));
+    await waitFor(() =>
+      expect(startDebateRequest).toHaveBeenCalledWith(creator.topicId, {
+        lobbyId: creator.lobbyId,
+        token: creator.token,
+        durationSeconds: 600,
+      }),
+    );
+  });
+
+  it("ends a manual round once and shows submission feedback", async () => {
+    const creator = {
+      ...spectatorJoin,
+      state: "DEBATE_IN_PROGRESS" as const,
+      hostIdentity: spectatorJoin.participantIdentity,
+    };
+    getParticipants.mockResolvedValue({
+      hostIdentity: creator.hostIdentity,
+      state: creator.state,
+      roundEndsAt: null,
+      participants: [],
+    });
+    let finish!: (value: { state: "VOTING" }) => void;
+    endRoundRequest.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    render(
+      <MemoryRouter>
+        <DebateExperience join={creator} />
+      </MemoryRouter>,
+    );
+    const button = await screen.findByRole("button", { name: "End round" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(
+      screen.getByRole("button", { name: "Ending round…" }),
+    ).toBeDisabled();
+    expect(endRoundRequest).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      finish({ state: "VOTING" });
+    });
+    expect(screen.getByText("Audience voting is open")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "End round" })).toBeNull();
+  });
+
+  it.each([true, false])(
+    "hides manual ending for timed rounds and non-creators (%s)",
+    async (timed) => {
+      getParticipants.mockResolvedValue({
+        hostIdentity: timed ? spectatorJoin.participantIdentity : "other-host",
+        state: "DEBATE_IN_PROGRESS",
+        roundEndsAt: timed ? new Date(Date.now() + 60000).toISOString() : null,
+        participants: [],
+      });
+      render(
+        <MemoryRouter>
+          <DebateExperience
+            join={{ ...spectatorJoin, state: "DEBATE_IN_PROGRESS" }}
+          />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(getParticipants).toHaveBeenCalled());
+      expect(screen.queryByRole("button", { name: "End round" })).toBeNull();
+    },
+  );
+
   it("shows the waiting message beside the topic only while the lobby is waiting", () => {
     const { unmount } = render(
       <MemoryRouter>
@@ -712,7 +1126,7 @@ describe("Participant roster", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows the creator's start button immediately and enables it only when ready", async () => {
+  it("shows the creator's start button after round setup and enables it only when ready", async () => {
     const creator: JoinResult = {
       ...spectatorJoin,
       lobbyId: "private-lobby",
@@ -744,6 +1158,7 @@ describe("Participant roster", () => {
         <DebateExperience join={creator} />
       </MemoryRouter>,
     );
+    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
 
     const start = screen.getByRole("button", { name: "Start Debate" });
     expect(start).toBeDisabled();
@@ -795,6 +1210,320 @@ describe("Participant roster", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("moves connected participants to voting and ignores duplicate phase events", async () => {
+    getParticipants.mockResolvedValue({
+      hostIdentity: null,
+      state: "DEBATE_IN_PROGRESS",
+      participants: [],
+    });
+    render(
+      <MemoryRouter>
+        <DebateExperience
+          join={{ ...spectatorJoin, state: "DEBATE_IN_PROGRESS" }}
+        />
+        <DebateExperience
+          join={{ ...debaterJoin, state: "DEBATE_IN_PROGRESS" }}
+        />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(getParticipants).toHaveBeenCalledTimes(2));
+    expect(screen.getAllByText("Debate in progress ...")).toHaveLength(2);
+    const attributeWrites = setAttributes.mock.calls.length;
+    for (let delivery = 0; delivery < 2; delivery++) {
+      act(() => {
+        for (const listener of roomState.metadataListeners) listener("VOTING");
+      });
+      expect(screen.getAllByText("Audience voting is open")).toHaveLength(2);
+      expect(
+        screen.queryByText("Debate in progress ..."),
+      ).not.toBeInTheDocument();
+    }
+    expect(setAttributes).toHaveBeenCalledTimes(attributeWrites);
+  });
+
+  it("shows an accessible voting indicator but no voting controls for late spectators", () => {
+    render(
+      <MemoryRouter>
+        <DebateExperience
+          join={{ ...spectatorJoin, state: "VOTING", voteEligible: false }}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Voting is in progress",
+    );
+    expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
+    expect(
+      screen.queryByRole("button", { name: /Yes: intention still matters/ }),
+    ).toBeNull();
+    expect(
+      screen.getByTitle("You are not eligible to vote this round."),
+    ).toBeVisible();
+  });
+
+  it("disables votes at the deadline even while the phase is still VOTING", async () => {
+    vi.useFakeTimers();
+    const endsAt = new Date(Date.now() + 30_000).toISOString();
+    getParticipants.mockResolvedValue({
+      state: "VOTING",
+      hostIdentity: null,
+      participants: [],
+      votingEndsAt: endsAt,
+      voteCounts: [1, 0],
+      selectedVote: "0",
+    });
+    render(
+      <MemoryRouter>
+        <DebateExperience
+          join={{ ...spectatorJoin, state: "VOTING", voteEligible: true }}
+        />
+      </MemoryRouter>,
+    );
+    await act(async () => {});
+    const choice = screen.getByRole("button", {
+      name: /No: dreams are involuntary/,
+    });
+    expect(choice).toBeEnabled();
+    expect(
+      screen.getByRole("timer", { name: "Voting time remaining" }),
+    ).toHaveTextContent("0:30");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(
+      screen.getByRole("timer", { name: "Voting time remaining" }),
+    ).toHaveTextContent("0:20");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    expect(screen.getAllByText("Voting is closed")).toHaveLength(2);
+    expect(
+      screen.queryByRole("timer", { name: "Voting time remaining" }),
+    ).toBeNull();
+    expect(choice).toBeDisabled();
+    fireEvent.click(choice);
+    expect(submitVoteRequest).not.toHaveBeenCalled();
+    expect(screen.getByText("1 spectator vote")).toBeVisible();
+  });
+
+  it.each<{
+    counts: [number, number];
+    winningSide: 0 | 1 | null;
+    outcome: string;
+  }>([
+    { counts: [2, 1], winningSide: 0, outcome: "Ada wins the round." },
+    { counts: [0, 3], winningSide: 1, outcome: "Grace wins the round." },
+    { counts: [2, 2], winningSide: null, outcome: "The round is a tie." },
+    { counts: [0, 0], winningSide: null, outcome: "The round is a tie." },
+  ])(
+    "shows final named results to both clients for $counts",
+    async ({ counts, winningSide, outcome }) => {
+      const results: RoundResults = {
+        debaters: [
+          { name: "Ada", votes: counts[0] },
+          { name: "Grace", votes: counts[1] },
+        ],
+        winningSide,
+      };
+      getParticipants.mockResolvedValue({
+        state: "ENDED",
+        hostIdentity: null,
+        participants: [],
+        votingEndsAt: new Date(0).toISOString(),
+        voteCounts: counts,
+        selectedVote: null,
+        results,
+      });
+      render(
+        <MemoryRouter>
+          <DebateExperience join={{ ...spectatorJoin, state: "ENDED" }} />
+          <DebateExperience join={{ ...debaterJoin, state: "ENDED" }} />
+        </MemoryRouter>,
+      );
+      await act(async () => {});
+      for (const region of screen.getAllByRole("region", {
+        name: "Round results",
+      })) {
+        expect(within(region).getByText(outcome)).toBeVisible();
+        expect(within(region).getByText("Ada")).toBeVisible();
+        expect(within(region).getByText("Grace")).toBeVisible();
+        expect(
+          within(region)
+            .getAllByRole("definition")
+            .map((row) => row.textContent),
+        ).toEqual(
+          counts.map((count) => `${count} ${count === 1 ? "vote" : "votes"}`),
+        );
+      }
+      expect(
+        screen.getAllByRole("region", { name: "Round results" }),
+      ).toHaveLength(2);
+      expect(screen.getAllByText("Voting is closed")).toHaveLength(4);
+      expect(screen.queryByText("Audience voting is open")).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: /No: dreams are involuntary/ }),
+      ).toBeNull();
+      expect(submitVoteRequest).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps voting closed when the round transitions from VOTING to ENDED", async () => {
+    getParticipants.mockResolvedValue({
+      state: "VOTING",
+      hostIdentity: null,
+      participants: [],
+      votingEndsAt: new Date(0).toISOString(),
+      voteCounts: [0, 0],
+      selectedVote: null,
+    });
+    render(
+      <MemoryRouter>
+        <DebateExperience
+          join={{ ...spectatorJoin, state: "VOTING", voteEligible: true }}
+        />
+      </MemoryRouter>,
+    );
+    await act(async () => {});
+    expect(screen.getAllByText("Voting is closed")).toHaveLength(2);
+    act(() => {
+      for (const listener of roomState.metadataListeners) listener("ENDED");
+    });
+    expect(screen.getAllByText("Voting is closed")).toHaveLength(2);
+    expect(screen.queryByText("Voting opens when the round ends.")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /No: dreams are involuntary/ }),
+    ).toBeNull();
+  });
+
+  it("uses the new round eligibility for a spectator who joined during the previous vote", async () => {
+    getParticipants.mockResolvedValue({
+      state: "VOTING",
+      hostIdentity: null,
+      participants: [],
+      votingEndsAt: new Date(Date.now() + 30000).toISOString(),
+      voteCounts: [0, 0],
+      selectedVote: null,
+      voteEligible: true,
+    });
+    render(
+      <MemoryRouter>
+        <DebateExperience
+          join={{ ...spectatorJoin, state: "ENDED", voteEligible: false }}
+        />
+      </MemoryRouter>,
+    );
+    act(() => {
+      for (const listener of roomState.metadataListeners) listener("WAITING");
+    });
+    expect(screen.getByText("Waiting for others to join...")).toBeVisible();
+    await act(async () => {});
+    const choice = screen.getByRole("button", {
+      name: /No: dreams are involuntary/,
+    });
+    expect(choice).toBeEnabled();
+    fireEvent.click(choice);
+    await act(async () => {});
+    expect(submitVoteRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["accepted", "rejected", "network failure"])(
+    "shows pending feedback then handles a vote that is %s",
+    async (outcome) => {
+      getParticipants.mockResolvedValue({
+        state: "VOTING",
+        hostIdentity: null,
+        participants: [],
+        votingEndsAt: new Date(Date.now() + 30_000).toISOString(),
+        voteCounts: [0, 0],
+        selectedVote: null,
+      });
+      let resolve!: (
+        value: Awaited<ReturnType<typeof import("../api").submitVote>>,
+      ) => void;
+      let reject!: (error: Error) => void;
+      submitVoteRequest.mockImplementationOnce(
+        () =>
+          new Promise((accept, fail) => {
+            resolve = accept;
+            reject = fail;
+          }),
+      );
+      render(
+        <MemoryRouter>
+          <DebateExperience
+            join={{ ...spectatorJoin, state: "VOTING", voteEligible: true }}
+          />
+        </MemoryRouter>,
+      );
+      await act(async () => {});
+      const choice = screen.getByRole("button", {
+        name: /No: dreams are involuntary/,
+      });
+      fireEvent.click(choice);
+      expect(screen.getByText("Submitting vote…")).toBeVisible();
+      expect(choice).toBeDisabled();
+      fireEvent.click(choice);
+      expect(submitVoteRequest).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        if (outcome === "accepted")
+          resolve({
+            votingEndsAt: new Date(Date.now() + 30_000).toISOString(),
+            voteCounts: [0, 1],
+            selectedVote: "1",
+          });
+        else
+          reject(
+            outcome === "rejected"
+              ? new ApiError("Voting is closed", 409)
+              : new TypeError("Failed to fetch"),
+          );
+      });
+      expect(screen.queryByText("Your vote was received.") !== null).toBe(
+        outcome === "accepted",
+      );
+      expect(
+        screen.queryByText("Your vote could not be recorded.") !== null,
+      ).toBe(outcome !== "accepted");
+    },
+  );
+
+  it("loads the current voting phase after reconnecting with stale debate state", async () => {
+    const join = { ...spectatorJoin, state: "DEBATE_IN_PROGRESS" as const };
+    getParticipants.mockResolvedValue({
+      hostIdentity: null,
+      state: "DEBATE_IN_PROGRESS",
+      participants: [],
+    });
+    const view = render(
+      <MemoryRouter>
+        <DebateExperience join={join} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(getParticipants).toHaveBeenCalledTimes(1));
+    roomState.connection = "reconnecting";
+    view.rerender(
+      <MemoryRouter>
+        <DebateExperience join={join} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(getParticipants).toHaveBeenCalledTimes(2));
+    getParticipants.mockResolvedValue({
+      hostIdentity: null,
+      state: "VOTING",
+      participants: [],
+    });
+    roomState.connection = "connected";
+    view.rerender(
+      <MemoryRouter>
+        <DebateExperience join={join} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Audience voting is open")).toBeVisible();
+    expect(
+      screen.queryByText("Debate in progress ..."),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows the public start button to the current host and waiting text to other participants", () => {
     const publicHost: JoinResult = {
       ...spectatorJoin,
@@ -807,6 +1536,7 @@ describe("Participant roster", () => {
         <DebateExperience join={publicHost} />
       </MemoryRouter>,
     );
+    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
     expect(screen.getByRole("button", { name: "Start Debate" })).toBeDisabled();
 
     unmount();
@@ -859,6 +1589,7 @@ describe("Participant roster", () => {
       { initialEntries: ["/debates/dream-cheating"] },
     );
     render(<RouterProvider router={router} />);
+    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
     expect(
       screen.getByRole("button", { name: "Copy lobby code ABCD2345" }),
     ).toBeVisible();
@@ -972,6 +1703,7 @@ describe("Participant roster", () => {
         />
       </MemoryRouter>,
     );
+    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
     const rows = within(roster().spectators).getAllByRole("listitem");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toHaveTextContent("Spectator (you)Host");
@@ -1276,6 +2008,7 @@ describe("Participant roster", () => {
         <DebateExperience join={privateJoin} />
       </MemoryRouter>,
     );
+    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
     fireEvent.click(
       within(roster().debaters).getByRole("button", {
         name: /Debate.*No: dreams are involuntary/,
@@ -1318,6 +2051,7 @@ describe("Participant roster", () => {
         <DebateExperience join={privateJoin} />
       </MemoryRouter>,
     );
+    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
 
     fireEvent.click(
       within(roster().debaters).getByRole("button", {

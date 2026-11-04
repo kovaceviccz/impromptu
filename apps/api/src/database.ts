@@ -6,6 +6,7 @@ import { MikroORM } from "@mikro-orm/postgresql";
 import { AccountSchema, AccountSessionSchema } from "./accounts/entity.js";
 import { PrivateLobbySchema } from "./lobbies/entity.js";
 import { PublicLobbyStateSchema } from "./lobbies/public-state-entity.js";
+import { DebateResultSchema } from "./statistics/entity.js";
 
 /** Opens the PostgreSQL connection shared by every persistent feature. */
 export async function openDatabase(databaseUrl: string) {
@@ -28,6 +29,7 @@ export async function openDatabase(databaseUrl: string) {
       AccountSessionSchema,
       PrivateLobbySchema,
       PublicLobbyStateSchema,
+      DebateResultSchema,
     ],
     extensions: [Migrator],
     migrations: {
