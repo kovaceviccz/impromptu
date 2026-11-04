@@ -47,6 +47,7 @@ test("private codes, guests, registered users, reloads, membership recovery and 
     .getByRole("combobox", { name: "Join as", exact: true })
     .selectOption("spectator");
   await page.getByRole("button", { name: "Create and join" }).click();
+  await page.getByRole("button", { name: "Continue to lobby" }).click();
   const code = await page.locator("code").innerText();
   expect(code).toMatch(/^[A-HJ-NP-Z2-9]{8}$/);
   const hostRoster = await participants(page);
@@ -155,6 +156,7 @@ test("private codes, guests, registered users, reloads, membership recovery and 
 
     // A reload restores the same identity, code and host badge without duplicate membership.
     await page.reload();
+    await page.getByRole("button", { name: "Continue to lobby" }).click();
     await expect(
       page.getByRole("button", { name: `Copy lobby code ${code}` }),
     ).toBeVisible();

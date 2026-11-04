@@ -2,7 +2,10 @@ import {
   PRODUCT,
   joinBodySchema,
   joinResultSchema,
+  chatMessageSchema,
+  type ChatMessage,
   type LobbyState,
+  type RoundResults,
   type JoinInput,
   type JoinResult,
 } from "@impromptu/api/contracts";
@@ -10,13 +13,19 @@ import {
   LiveKitRoom,
   RoomAudioRenderer,
   VideoTrack,
-  useChat,
+  useDataChannel,
   useConnectionState,
   useParticipants,
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
-import { CopyIcon, LogOutIcon, SendIcon, SmileIcon } from "lucide-react";
+import {
+  ArrowDownIcon,
+  CopyIcon,
+  LogOutIcon,
+  SendIcon,
+  SmileIcon,
+} from "lucide-react";
 import {
   ConnectionState,
   RoomEvent,
@@ -81,9 +90,12 @@ import {
 import {
   ApiError,
   closeLobby,
+  endRound,
+  submitVote,
   getRoomParticipants,
   joinTopic,
   leaveTopic,
+  sendRoomChatMessage,
   startDebate as startDebateRequest,
 } from "../api";
 import {
@@ -94,7 +106,6 @@ import {
   updateRoomPreferences,
 } from "../room-session";
 
-const VOTE_ATTRIBUTE = "debate.vote";
 const SIDE_ATTRIBUTE = "debate.side";
 const VIDEO_CAPTURE_720P = { resolution: VideoPresets.h720.resolution };
 const chatTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -312,16 +323,21 @@ function DebateVideos({ join }: { join: JoinResult }) {
 function RoomChat({
   canSend,
   initialDisplayName,
+  lobbyId,
   participantIdentity,
+  token,
   topicId,
 }: {
   canSend: boolean;
   initialDisplayName?: string;
+  lobbyId: string;
   participantIdentity: string;
+  token: string;
   topicId: string;
 }) {
-  const { chatMessages, isSending, send } = useChat();
   const room = useRoomContext();
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [isSending, setIsSending] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string>();
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -330,6 +346,30 @@ function RoomChat({
   );
   const [isNaming, setIsNaming] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const receiveMessage = useCallback((data: { payload: Uint8Array }) => {
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(new TextDecoder().decode(data.payload));
+    } catch {
+      return;
+    }
+    const result = chatMessageSchema.safeParse(decoded);
+    if (!result.success) return;
+    setChatMessages((current) =>
+      current.some((message) => message.id === result.data.id)
+        ? current
+        : [...current, result.data],
+    );
+  }, []);
+  useDataChannel("impromptu.chat", receiveMessage);
+
+  function rememberMessage(message: ChatMessage) {
+    setChatMessages((current) =>
+      current.some((item) => item.id === message.id)
+        ? current
+        : [...current, message],
+    );
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -344,24 +384,35 @@ function RoomChat({
         updateRoomPreferences(topicId, { displayName: value });
         setHasDisplayName(true);
       } else {
-        await send(value);
+        setIsSending(true);
+        rememberMessage(
+          await sendRoomChatMessage({
+            lobbyId,
+            message: value,
+            token,
+            topicId,
+          }),
+        );
       }
       setDraft("");
       requestAnimationFrame(() => input.current?.focus());
-    } catch {
+    } catch (cause) {
       setError(
         hasDisplayName
-          ? "Message could not be sent."
+          ? cause instanceof ApiError
+            ? cause.message
+            : "Message could not be sent."
           : "Display name could not be saved.",
       );
     } finally {
       setIsNaming(false);
+      setIsSending(false);
     }
   }
 
   return (
     <section className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] bg-background">
-      <MessageScrollerProvider>
+      <MessageScrollerProvider autoScroll>
         <MessageScroller>
           <MessageScrollerViewport>
             <MessageScrollerContent className="gap-4 p-4">
@@ -373,9 +424,9 @@ function RoomChat({
                 </p>
               ) : (
                 chatMessages.map((message) => {
-                  const name = message.from?.name || "Participant";
+                  const name = message.senderName;
                   const isOwnMessage =
-                    message.from?.identity === participantIdentity;
+                    message.senderIdentity === participantIdentity;
                   const sentAt = new Date(message.timestamp);
 
                   return (
@@ -407,7 +458,10 @@ function RoomChat({
               )}
             </MessageScrollerContent>
           </MessageScrollerViewport>
-          <MessageScrollerButton />
+          <MessageScrollerButton className="gap-1.5 px-3" size="sm">
+            <ArrowDownIcon />
+            New Messages
+          </MessageScrollerButton>
         </MessageScroller>
       </MessageScrollerProvider>
 
@@ -483,6 +537,14 @@ function RoomChat({
   );
 }
 
+type VotingStatus = {
+  votingEndsAt?: string | null;
+  voteCounts?: [number, number];
+  selectedVote?: "0" | "1" | null;
+  results?: RoundResults | null;
+  voteEligible?: boolean;
+};
+
 function ParticipantStatus({
   join,
   onPrivateLobbyNotFound,
@@ -493,6 +555,12 @@ function ParticipantStatus({
   onStatus: (status: {
     hostIdentity: string | null;
     state: LobbyState;
+    roundEndsAt?: string | null;
+    votingEndsAt?: string | null;
+    voteCounts?: [number, number];
+    selectedVote?: "0" | "1" | null;
+    results?: RoundResults | null;
+    voteEligible?: boolean;
   }) => void;
 }) {
   const { topicId, lobbyId, token } = join;
@@ -567,8 +635,13 @@ function LobbyStatus({
 
   useEffect(() => {
     function updateState(metadata: string) {
-      if (metadata === "DEBATE_IN_PROGRESS") {
-        onStateChange("DEBATE_IN_PROGRESS");
+      if (
+        metadata === "DEBATE_IN_PROGRESS" ||
+        metadata === "VOTING" ||
+        metadata === "ENDED" ||
+        metadata === "WAITING"
+      ) {
+        onStateChange(metadata);
       }
     }
     room.on(RoomEvent.RoomMetadataChanged, updateState);
@@ -834,6 +907,9 @@ type AudienceTab = "vote" | "participants";
 function AudiencePanel({
   activeTab,
   canVote,
+  voting,
+  votingClosed,
+  onVote,
   join,
   onChangeRole,
   onPrivateLobbyNotFound,
@@ -841,6 +917,9 @@ function AudiencePanel({
 }: {
   activeTab: AudienceTab;
   canVote: boolean;
+  voting: VotingStatus;
+  votingClosed: boolean;
+  onVote: (status: VotingStatus) => void;
   join: JoinResult;
   onChangeRole: ChangeRole;
   onPrivateLobbyNotFound: (cause: unknown) => boolean;
@@ -848,41 +927,47 @@ function AudiencePanel({
 }) {
   const { participantIdentity, sides } = join;
   const participants = useRoomParticipants(join);
-  const room = useRoomContext();
   const [isVoting, setIsVoting] = useState(false);
+  const votePending = useRef(false);
+  const [voteFeedback, setVoteFeedback] = useState<string>();
   const [error, setError] = useState<string>();
   const debaterCount = assignDebaters(participants, join).size;
-  const spectators = participants.filter(
-    (participant) => !publishes(participant, join),
-  );
-  const rawVote = room.localParticipant.attributes[VOTE_ATTRIBUTE];
+  const spectators = participants.filter((p) => !publishes(p, join));
+  const rawVote = voting.selectedVote;
   const selectedVote =
     canVote && (rawVote === "0" || rawVote === "1") ? rawVote : undefined;
-  const voteCounts = sides.map(
-    (_, index) =>
-      spectators.filter(
-        (participant) =>
-          participant.attributes[VOTE_ATTRIBUTE] === String(index),
-      ).length,
-  );
+  const voteCounts = voting.voteCounts ?? [0, 0];
   const voteTotal = voteCounts.reduce((total, count) => total + count, 0);
 
   async function vote(value: readonly string[]) {
-    if (!canVote) return;
-    const choice = value[0] ?? "";
+    if (
+      !canVote ||
+      votingClosed ||
+      !voting.votingEndsAt ||
+      Date.now() >= Date.parse(voting.votingEndsAt) ||
+      votePending.current
+    )
+      return;
+    const choice = value[0] === "0" || value[0] === "1" ? value[0] : null;
+    votePending.current = true;
+    setVoteFeedback(undefined);
 
     setError(undefined);
     setIsVoting(true);
     try {
-      await room.localParticipant.setAttributes({
-        [VOTE_ATTRIBUTE]: choice,
+      const result = await submitVote(join.topicId, {
+        lobbyId: join.lobbyId,
+        token: join.token,
+        choice,
       });
-      updateRoomPreferences(join.topicId, {
-        vote: choice === "0" || choice === "1" ? choice : undefined,
-      });
+      onVote(result);
+      setVoteFeedback(
+        choice === null ? "Your vote was removed." : "Your vote was received.",
+      );
     } catch {
       setError("Your vote could not be recorded.");
     } finally {
+      votePending.current = false;
       setIsVoting(false);
     }
   }
@@ -967,7 +1052,7 @@ function AudiencePanel({
       </div>
       <div
         aria-labelledby={`audience-${activeTab}-tab`}
-        className="min-h-0 flex-1 overflow-y-auto px-4 py-3"
+        className="max-h-[40%] min-h-0 shrink-0 overflow-y-auto px-4 py-3"
         id="audience-tab-panel"
         role="tabpanel"
         tabIndex={0}
@@ -981,19 +1066,65 @@ function AudiencePanel({
         ) : (
           <section className="grid gap-3">
             <div>
-              <h2 className="font-editorial text-lg font-semibold">
-                Audience vote
-              </h2>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="font-editorial text-lg font-semibold">
+                  Audience vote
+                </h2>
+                {votingClosed ? (
+                  <span className="text-sm text-muted-foreground">
+                    Voting is closed
+                  </span>
+                ) : join.state === "VOTING" && voting.votingEndsAt ? (
+                  <RoundCountdown
+                    endsAt={voting.votingEndsAt}
+                    label="Voting time remaining"
+                  />
+                ) : null}
+              </div>
               <p className="text-sm text-muted-foreground">
-                {canVote
-                  ? "Vote for the debater who presented the stronger argument. Tap again to undo."
-                  : "Audience votes appear here as spectators choose the stronger argument."}
+                {votingClosed
+                  ? "Voting has ended. Results are final."
+                  : canVote
+                    ? "Vote for the debater who presented the stronger argument. Tap again to undo."
+                    : "Audience votes appear here as spectators choose the stronger argument."}
               </p>
             </div>
-            {canVote ? (
+            {votingClosed && voting.results ? (
+              <section
+                aria-label="Round results"
+                className="grid gap-3 rounded-lg border p-3"
+              >
+                <h3 className="font-editorial text-lg font-semibold">
+                  Round results
+                </h3>
+                <output className="font-medium" aria-live="polite">
+                  {voting.results.winningSide === null
+                    ? "The round is a tie."
+                    : `${voting.results.debaters[voting.results.winningSide].name} wins the round.`}
+                </output>
+                <dl className="grid gap-2">
+                  {voting.results.debaters.map((debater, index) => (
+                    <div
+                      className="flex items-center justify-between gap-3"
+                      key={index}
+                    >
+                      <dt>
+                        <span className="font-medium">{debater.name}</span>
+                        <span className="block text-xs text-muted-foreground">
+                          {sides[index]}
+                        </span>
+                      </dt>
+                      <dd className="tabular-nums">
+                        {debater.votes} {debater.votes === 1 ? "vote" : "votes"}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            ) : canVote ? (
               <ToggleGroup
                 className="flex w-full gap-2"
-                disabled={isVoting}
+                disabled={isVoting || votingClosed || !voting.votingEndsAt}
                 value={selectedVote ? [selectedVote] : []}
                 onValueChange={(value) => void vote(value)}
               >
@@ -1015,7 +1146,15 @@ function AudiencePanel({
             ) : (
               <dl
                 className="flex w-full gap-2 text-sm"
-                title="Only spectators can vote."
+                title={
+                  join.role === "debater"
+                    ? "Only spectators can vote."
+                    : votingClosed
+                      ? "Voting is closed"
+                      : join.state === "VOTING"
+                        ? "You are not eligible to vote this round."
+                        : "Voting opens when the round ends."
+                }
               >
                 {sides.map((side, index) => (
                   <div
@@ -1032,10 +1171,18 @@ function AudiencePanel({
                 ))}
               </dl>
             )}
+            {votingClosed && !voting.results ? (
+              <output aria-live="polite">Loading round results…</output>
+            ) : null}
             <p className="text-xs text-muted-foreground">
               {voteTotal}
               {voteTotal === 1 ? " spectator vote" : " spectator votes"}
             </p>
+            {(isVoting || voteFeedback) && (
+              <output aria-live="polite">
+                {isVoting ? "Submitting vote…" : voteFeedback}
+              </output>
+            )}
             {error ? (
               <Alert variant="destructive">
                 <AlertDescription>{error}</AlertDescription>
@@ -1045,15 +1192,48 @@ function AudiencePanel({
         )}
       </div>
       <RoomChat
-        canSend={canVote}
+        canSend={join.role === "spectator"}
         initialDisplayName={
           roomPreferences(join.topicId).displayName ??
           (join.displayName === "Spectator" ? undefined : join.displayName)
         }
+        lobbyId={join.lobbyId}
         participantIdentity={participantIdentity}
+        token={join.token}
         topicId={join.topicId}
       />
     </aside>
+  );
+}
+
+export function RoundCountdown({
+  endsAt,
+  label = "Round time remaining",
+}: {
+  endsAt: string;
+  label?: string;
+}) {
+  const [now, setNow] = useState(Date.now);
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const seconds = Math.max(0, Math.ceil((Date.parse(endsAt) - now) / 1000));
+  const remaining = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+
+  return (
+    <div
+      className="grid justify-items-center gap-0.5"
+      role="timer"
+      aria-label={label}
+    >
+      <span className="text-xs text-muted-foreground">Time remaining</span>
+      <span className="font-editorial text-2xl font-semibold tabular-nums sm:text-3xl">
+        {remaining}
+      </span>
+    </div>
   );
 }
 
@@ -1168,13 +1348,8 @@ function SessionRestorer({ join }: { join: JoinResult }) {
         if (preferences.displayName) {
           await room.localParticipant.setName(preferences.displayName);
         }
-        if (preferences.vote) {
-          await room.localParticipant.setAttributes({
-            [VOTE_ATTRIBUTE]: preferences.vote,
-          });
-        }
       } catch {
-        // The spectator can enter their name or vote again.
+        // The spectator can enter their name again.
       }
     })();
   }, [connection, join.role, join.topicId, room]);
@@ -1194,9 +1369,62 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
   const [mediaPermissionFailed, setMediaPermissionFailed] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
   const [startingDebate, setStartingDebate] = useState(false);
+  const [roundConfigured, setRoundConfigured] = useState(false);
+  const [endMode, setEndMode] = useState("manual");
+  const [durationMinutes, setDurationMinutes] = useState(5);
+  const [roundEndsAt, setRoundEndsAt] = useState<string | null>();
+  const [voting, setVoting] = useState<VotingStatus>({});
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!voting.votingEndsAt) return undefined;
+    const timer = setTimeout(
+      () => setNow(Date.now()),
+      Math.max(0, Date.parse(voting.votingEndsAt) - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [voting.votingEndsAt]);
+  const votingClosed =
+    join.state === "ENDED" ||
+    !!voting.results ||
+    (join.state === "VOTING" &&
+      (voting.votingEndsAt === null ||
+        (!!voting.votingEndsAt && now >= Date.parse(voting.votingEndsAt))));
+  const [endingRound, setEndingRound] = useState(false);
+  const endPending = useRef(false);
+  const startPending = useRef(false);
+  async function endActiveRound() {
+    if (
+      endPending.current ||
+      join.state !== "DEBATE_IN_PROGRESS" ||
+      roundEndsAt !== null
+    )
+      return;
+    endPending.current = true;
+    setEndingRound(true);
+    setRoomError(undefined);
+    try {
+      const result = await endRound(join.topicId, {
+        lobbyId: join.lobbyId,
+        token: join.token,
+      });
+      updateLobbyState(result.state);
+    } catch (cause) {
+      if (!onPrivateLobbyNotFound(cause))
+        setRoomError(
+          cause instanceof Error
+            ? cause.message
+            : "The round could not be ended. Try again.",
+        );
+    } finally {
+      endPending.current = false;
+      setEndingRound(false);
+    }
+  }
   // Kept outside the room, which remounts when a role change issues a new token.
   const [audienceTab, setAudienceTab] = useState<AudienceTab>("vote");
   const isDebater = join.role === "debater";
+  const [joinedBeforeVoting] = useState(() => join.state !== "VOTING");
+  const eligibleToVote = join.voteEligible ?? joinedBeforeVoting;
   const onPrivateLobbyNotFound = useCallback(
     (cause: unknown) => {
       if (!isPrivateLobbyNotFound(cause)) return false;
@@ -1212,12 +1440,25 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
     [join.isCreator, join.topicId, navigate],
   );
   const updateLobbyState = useCallback((state: LobbyState) => {
+    if (state === "DEBATE_IN_PROGRESS") setVoting({});
     setJoin((current) =>
       current.state === state ? current : { ...current, state },
     );
   }, []);
   const updateLobbyStatus = useCallback(
-    (status: { hostIdentity: string | null; state: LobbyState }) => {
+    (status: {
+      hostIdentity: string | null;
+      state: LobbyState;
+      roundEndsAt?: string | null;
+      votingEndsAt?: string | null;
+      voteCounts?: [number, number];
+      selectedVote?: "0" | "1" | null;
+      results?: RoundResults | null;
+      voteEligible?: boolean;
+    }) => {
+      setRoundEndsAt(status.roundEndsAt);
+      setVoting(status);
+      setNow(Date.now());
       setJoin((current) => ({
         ...current,
         hostIdentity: status.hostIdentity,
@@ -1228,10 +1469,24 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
   );
 
   async function startDebate() {
+    if (startPending.current) return;
+    if (
+      endMode === "timer" &&
+      (!Number.isInteger(durationMinutes) ||
+        durationMinutes < 1 ||
+        durationMinutes > 60)
+    ) {
+      setRoomError("Choose a whole number of minutes between 1 and 60.");
+      return;
+    }
+    startPending.current = true;
     setStartingDebate(true);
     setRoomError(undefined);
     try {
       const result = await startDebateRequest(join.topicId, {
+        ...(endMode === "timer"
+          ? { durationSeconds: durationMinutes * 60 }
+          : {}),
         lobbyId: join.lobbyId,
         token: join.token,
       });
@@ -1244,6 +1499,7 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
           : "The debate could not be started. Try again.",
       );
     } finally {
+      startPending.current = false;
       setStartingDebate(false);
     }
   }
@@ -1286,6 +1542,81 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
     }
   }
 
+  if (
+    join.state === "WAITING" &&
+    (join.isCreator || join.hostIdentity === join.participantIdentity) &&
+    !roundConfigured
+  ) {
+    return (
+      <main className="min-h-svh bg-muted/30">
+        <Dialog open>
+          <DialogContent showCloseButton={false}>
+            <DialogHeader>
+              <DialogTitle>How should this round end?</DialogTitle>
+              <DialogDescription>
+                Choose how to end the round before entering the lobby. The timer
+                starts when you start the debate.
+              </DialogDescription>
+            </DialogHeader>
+            <form
+              className="grid gap-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (
+                  endMode === "timer" &&
+                  (!Number.isInteger(durationMinutes) ||
+                    durationMinutes < 1 ||
+                    durationMinutes > 60)
+                )
+                  return;
+                setRoundConfigured(true);
+              }}
+            >
+              <label className="grid gap-2">
+                End round by
+                <select
+                  className="rounded-md border bg-background p-2"
+                  value={endMode}
+                  onChange={(event) => setEndMode(event.target.value)}
+                >
+                  <option value="manual">End round button</option>
+                  <option value="timer">Timer</option>
+                </select>
+              </label>
+              {endMode === "timer" ? (
+                <div className="grid gap-2">
+                  <label htmlFor="round-duration">
+                    Round duration in minutes
+                  </label>
+                  <Input
+                    id="round-duration"
+                    aria-describedby="round-duration-help"
+                    type="number"
+                    required
+                    min={1}
+                    max={60}
+                    step={1}
+                    value={durationMinutes}
+                    onChange={(event) =>
+                      setDurationMinutes(Number(event.target.value))
+                    }
+                  />
+                  <span
+                    id="round-duration-help"
+                    className="text-xs text-muted-foreground"
+                  >
+                    Choose between 1 and 60 minutes.
+                  </span>
+                </div>
+              ) : null}
+              <Button type="submit">Continue to lobby</Button>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </main>
+    );
+  }
+
   return (
     <main className="grid h-svh grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-muted/30">
       <LiveKitRoom
@@ -1321,7 +1652,14 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
             </Button>
           </DialogContent>
         </Dialog>
-        <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 bg-[#fbfcfe] px-4 py-2">
+        <header
+          className={
+            "grid items-center gap-3 bg-[#fbfcfe] px-4 py-2 " +
+            (join.state === "DEBATE_IN_PROGRESS" && roundEndsAt
+              ? "grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"
+              : "grid-cols-[minmax(0,1fr)_auto]")
+          }
+        >
           <div className="min-w-0">
             <p className="font-editorial text-base font-semibold text-primary">
               {PRODUCT.name}
@@ -1336,6 +1674,26 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
                     ? "Public lobby"
                     : "Private lobby"}
                 </span>
+              ) : null}
+              {join.state === "DEBATE_IN_PROGRESS" &&
+              join.hostIdentity === join.participantIdentity &&
+              roundEndsAt === null ? (
+                <Button
+                  disabled={endingRound}
+                  type="button"
+                  onClick={() => void endActiveRound()}
+                >
+                  {endingRound ? "Ending round…" : "End round"}
+                </Button>
+              ) : null}
+              {join.state === "VOTING" || join.state === "ENDED" ? (
+                <output aria-live="polite">
+                  {votingClosed
+                    ? "Voting is closed"
+                    : !isDebater && !eligibleToVote
+                      ? "Voting is in progress. You joined after voting opened and cannot vote this round."
+                      : "Audience voting is open"}
+                </output>
               ) : null}
               <LobbyStatus
                 join={join}
@@ -1366,13 +1724,18 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
               </Button>
             ) : null}
           </div>
-          <LeaveButton
-            join={join}
-            leaving={leaving}
-            onLeaving={setLeaving}
-            onError={setRoomError}
-            onPrivateLobbyNotFound={onPrivateLobbyNotFound}
-          />
+          {join.state === "DEBATE_IN_PROGRESS" && roundEndsAt ? (
+            <RoundCountdown endsAt={roundEndsAt} />
+          ) : null}
+          <div className="justify-self-end">
+            <LeaveButton
+              join={join}
+              leaving={leaving}
+              onLeaving={setLeaving}
+              onError={setRoomError}
+              onPrivateLobbyNotFound={onPrivateLobbyNotFound}
+            />
+          </div>
           <ParticipantStatus
             join={join}
             onPrivateLobbyNotFound={onPrivateLobbyNotFound}
@@ -1388,8 +1751,15 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
         <div className="grid min-h-0 grid-rows-[minmax(12rem,36svh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)] lg:grid-rows-1">
           <DebateVideos join={join} />
           <AudiencePanel
+            voting={voting}
+            votingClosed={votingClosed}
+            onVote={setVoting}
             activeTab={audienceTab}
-            canVote={!isDebater}
+            canVote={
+              !isDebater &&
+              (voting.voteEligible ?? eligibleToVote) &&
+              join.state === "VOTING"
+            }
             onTabChange={setAudienceTab}
             join={join}
             onChangeRole={changeRole}

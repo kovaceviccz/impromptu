@@ -1,9 +1,14 @@
+import {
+  createMemoryPublicLobbyStateStore,
+  type PublicLobbyStateStore,
+} from "../lobbies/public-state.js";
 import { TokenVerifier } from "livekit-server-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildApp } from "../app.js";
 import { apiContract } from "../contracts.js";
 import { createMemoryAccountStore } from "../accounts/store.js";
+import type { AccountStore } from "../accounts/store.js";
 import { hashLobbyCode } from "../lobbies/codes.js";
 import {
   createMemoryPrivateLobbyStore,
@@ -16,6 +21,11 @@ import {
   type LiveKitGateway,
   type RoomParticipant,
 } from "./livekit.js";
+import {
+  createMemoryDebateResultStore,
+  type DebateResultStore,
+} from "../statistics/store.js";
+import { SESSION_COOKIE } from "../accounts/routes.js";
 
 const apps: Awaited<ReturnType<typeof buildApp>>[] = [];
 const debaterInput = {
@@ -38,6 +48,8 @@ function fakeLiveKit(
   const issuedNames: string[] = [];
   const removed: { roomName: string; identity: string }[] = [];
   const roomMetadata = new Map<string, string>();
+  const broadcasts: { roomName: string; data: Uint8Array; topic: string }[] =
+    [];
 
   const gateway: LiveKitGateway = {
     async verifyParticipantToken(token) {
@@ -58,6 +70,9 @@ function fakeLiveKit(
     async updateRoomMetadata(roomName, metadata) {
       roomMetadata.set(roomName, metadata);
     },
+    async broadcastData(roomName, data, topic) {
+      broadcasts.push({ roomName, data, topic });
+    },
     async issueToken({ displayName, identity, role, roomName }) {
       issued.push(role);
       issuedRooms.push(roomName);
@@ -68,6 +83,7 @@ function fakeLiveKit(
 
   return {
     active,
+    broadcasts,
     gateway,
     issued,
     issuedNames,
@@ -80,9 +96,16 @@ function fakeLiveKit(
 async function testApp(
   livekit: LiveKitGateway,
   privateLobbies: PrivateLobbyStore = createMemoryPrivateLobbyStore(),
+  options: {
+    publicLobbyState?: PublicLobbyStateStore;
+    accounts?: AccountStore;
+    debateResults?: DebateResultStore;
+  } = {},
 ) {
   const app = await buildApp({
-    accounts: createMemoryAccountStore(),
+    publicLobbyState: options.publicLobbyState,
+    accounts: options.accounts ?? createMemoryAccountStore(),
+    debateResults: options.debateResults ?? createMemoryDebateResultStore(),
     livekit,
     privateLobbies,
     livekitPublicUrl: "ws://localhost:7880",
@@ -93,6 +116,144 @@ async function testApp(
 }
 
 describe("API contracts", () => {
+  it("uses the authenticated account as the participant identity", async () => {
+    const accounts = createMemoryAccountStore();
+    const created = await accounts.create({
+      username: "signed_in_debater",
+      email: "debater@example.com",
+      passwordHash: "test-only-hash",
+    });
+    if ("duplicates" in created) throw new Error("Account creation failed");
+    const session = await accounts.createSession(created.account.id);
+    const { gateway } = fakeLiveKit();
+    const app = await testApp(gateway, createMemoryPrivateLobbyStore(), {
+      accounts,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/join",
+      cookies: { [SESSION_COOKIE]: session.token },
+      payload: {
+        displayName: "Signed in debater",
+        intent: "debater",
+        sideIndex: 0,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().participantIdentity).toBe(created.account.id);
+  });
+
+  it("moderates authenticated spectator chat before broadcasting it", async () => {
+    const { active, broadcasts, gateway } = fakeLiveKit();
+    active.set("debate-dream-cheating", [
+      {
+        displayName: "Alice",
+        identity: "alice-id",
+        role: "spectator",
+        sideIndex: null,
+      },
+    ]);
+    const app = await testApp(gateway);
+    const contract = apiContract.sendChatMessage;
+    const url = contract.path.replace(":topicId", "dream-cheating");
+
+    const accepted = await app.inject({
+      method: contract.method,
+      url,
+      payload: {
+        lobbyId: "dream-cheating",
+        message: "A valid contribution",
+        token: "alice-id",
+      },
+    });
+    expect(accepted.statusCode).toBe(200);
+    const message = contract.response.parse(accepted.json());
+    expect(message).toMatchObject({
+      message: "A valid contribution",
+      senderIdentity: "alice-id",
+      senderName: "Alice",
+    });
+    expect(broadcasts).toHaveLength(1);
+    expect(broadcasts[0]).toMatchObject({
+      roomName: "debate-dream-cheating",
+      topic: "impromptu.chat",
+    });
+    expect(
+      contract.response.parse(
+        JSON.parse(new TextDecoder().decode(broadcasts[0]!.data)),
+      ),
+    ).toEqual(message);
+
+    const inappropriate = await app.inject({
+      method: contract.method,
+      url,
+      payload: {
+        lobbyId: "dream-cheating",
+        message: "f.u.c.k",
+        token: "alice-id",
+      },
+    });
+    expect(inappropriate.statusCode).toBe(400);
+    expect(inappropriate.json()).toMatchObject({
+      code: "INAPPROPRIATE_LANGUAGE",
+      message: expect.stringContaining("not allowed"),
+    });
+    expect(broadcasts).toHaveLength(1);
+  });
+
+  it("rejects duplicate chat and identities that are not active spectators", async () => {
+    const { active, broadcasts, gateway } = fakeLiveKit();
+    active.set("debate-dream-cheating", [
+      {
+        displayName: "Alice",
+        identity: "alice-id",
+        role: "spectator",
+        sideIndex: null,
+      },
+      {
+        displayName: "Debater",
+        identity: "debater-id",
+        role: "debater",
+        sideIndex: 0,
+      },
+    ]);
+    const app = await testApp(gateway);
+    const contract = apiContract.sendChatMessage;
+    const url = contract.path.replace(":topicId", "dream-cheating");
+    const payload = {
+      lobbyId: "dream-cheating",
+      message: "First thought",
+      token: "alice-id",
+    };
+
+    expect(
+      (await app.inject({ method: contract.method, url, payload })).statusCode,
+    ).toBe(200);
+    const duplicate = await app.inject({
+      method: contract.method,
+      url,
+      payload: { ...payload, message: " first thought! " },
+    });
+    expect(duplicate.statusCode).toBe(409);
+    expect(duplicate.json()).toMatchObject({ code: "DUPLICATE_MESSAGE" });
+
+    const debater = await app.inject({
+      method: contract.method,
+      url,
+      payload: { ...payload, message: "Debater bypass", token: "debater-id" },
+    });
+    expect(debater.statusCode).toBe(403);
+    const absent = await app.inject({
+      method: contract.method,
+      url,
+      payload: { ...payload, message: "Absent bypass", token: "absent-id" },
+    });
+    expect(absent.statusCode).toBe(403);
+    expect(broadcasts).toHaveLength(1);
+  });
+
   it("creates one lobby per new topic and keeps private topics out of public discovery", async () => {
     const { gateway } = fakeLiveKit();
     const store = createMemoryPrivateLobbyStore();
@@ -1090,33 +1251,573 @@ describe("LiveKit grants", () => {
     expect(claims.video?.roomJoin).toBe(true);
     expect(claims.video?.canSubscribe).toBe(true);
     expect(claims.video?.canPublish).toBe(false);
-    expect(claims.video?.canPublishData).toBe(true);
+    expect(claims.video?.canPublishData).toBe(false);
     expect(claims.video?.canUpdateOwnMetadata).toBe(true);
     expect(claims.name).toBe("Test spectator");
   });
 
-  it("prevents debaters from writing vote metadata", async () => {
-    const apiKey = "test-key";
-    const apiSecret = "a-test-secret-that-is-at-least-32-characters";
-    const gateway = createLiveKitGateway({
-      apiKey,
-      apiSecret,
-      apiUrl: "http://localhost:7880",
-      tokenTtlSeconds: 60,
-    });
+  it.each(["debater", "spectator"] as const)(
+    "prevents ineligible %s participants from writing vote metadata",
+    async (role) => {
+      const apiKey = "test-key";
+      const apiSecret = "a-test-secret-that-is-at-least-32-characters";
+      const gateway = createLiveKitGateway({
+        apiKey,
+        apiSecret,
+        apiUrl: "http://localhost:7880",
+        tokenTtlSeconds: 60,
+      });
 
-    const token = await gateway.issueToken({
-      displayName: "Test debater",
-      identity: "debater-id",
-      role: "debater",
-      roomName: "debate-dream-cheating",
-      sideIndex: 0,
-    });
-    const claims = await new TokenVerifier(apiKey, apiSecret).verify(token);
+      const token = await gateway.issueToken({
+        displayName: "Test debater",
+        identity: "debater-id",
+        role,
+        canVote: false,
+        roomName: "debate-dream-cheating",
+        sideIndex: role === "debater" ? 0 : null,
+      });
+      const claims = await new TokenVerifier(apiKey, apiSecret).verify(token);
 
-    expect(claims.video?.canPublish).toBe(true);
-    expect(claims.video?.canPublishData).toBe(false);
-    expect(claims.video?.canUpdateOwnMetadata).toBe(false);
-    expect(claims.attributes?.["debate.side"]).toBe("0");
+      expect(claims.video?.canPublish).toBe(role === "debater");
+      expect(claims.video?.canPublishData).toBe(false);
+      expect(claims.video?.canUpdateOwnMetadata).toBe(false);
+      expect(claims.attributes?.["debate.side"]).toBe(
+        role === "debater" ? "0" : undefined,
+      );
+    },
+  );
+});
+
+describe("ending rounds", () => {
+  const lobbyId = "a5ca122c-e3a2-4dc3-aa8a-8a3c9aac5215";
+  const creatorIdentity = "892203fc-0be5-43cb-a4ae-383bf226e947";
+  async function activeLobby(roundEndsAt: Date | null = null) {
+    const livekit = fakeLiveKit();
+    const store = createMemoryPrivateLobbyStore([
+      {
+        id: lobbyId,
+        topicId: "dream-cheating",
+        state: "DEBATE_IN_PROGRESS",
+        creatorIdentity,
+        codeHash: "test",
+        createdAt: new Date(),
+        expiresAt: null,
+        roundEndsAt,
+      },
+    ]);
+    const app = await testApp(livekit.gateway, store);
+    return { app, store, ...livekit };
+  }
+  it("persists the timer chosen when starting and prevents manual ending", async () => {
+    const { app, store, active } = await activeLobby();
+    await store.updateState(lobbyId, "DEBATE_IN_PROGRESS", "WAITING");
+    active.set(`debate-${lobbyId}`, [
+      {
+        identity: creatorIdentity,
+        displayName: "Creator",
+        role: "spectator",
+        sideIndex: null,
+      },
+      {
+        identity: "side-0",
+        displayName: "First",
+        role: "debater",
+        sideIndex: 0,
+      },
+      {
+        identity: "side-1",
+        displayName: "Second",
+        role: "debater",
+        sideIndex: 1,
+      },
+    ]);
+    const before = Date.now();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/start",
+      payload: { lobbyId, token: creatorIdentity, durationSeconds: 60 },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(
+      (await store.findById(lobbyId))?.roundEndsAt?.getTime(),
+    ).toBeGreaterThanOrEqual(before + 60_000);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/topics/dream-cheating/end-round",
+          payload: { lobbyId, token: creatorIdentity },
+        })
+      ).statusCode,
+    ).toBe(409);
+  });
+
+  it("allows only the creator and rejects concurrent and repeated requests", async () => {
+    const { app, store, roomMetadata } = await activeLobby();
+    const send = (token: string) =>
+      app.inject({
+        method: "POST",
+        url: "/api/topics/dream-cheating/end-round",
+        payload: { lobbyId, token },
+      });
+    expect((await send("someone-else")).statusCode).toBe(403);
+    expect((await store.findById(lobbyId))?.state).toBe("DEBATE_IN_PROGRESS");
+    const responses = await Promise.all([
+      send(creatorIdentity),
+      send(creatorIdentity),
+    ]);
+    expect(
+      responses.map((response) => response.statusCode).sort((a, b) => a - b),
+    ).toEqual([200, 409]);
+    expect((await send(creatorIdentity)).statusCode).toBe(409);
+    expect((await store.findById(lobbyId))?.state).toBe("VOTING");
+    expect(roomMetadata.get(`debate-${lobbyId}`)).toBe("VOTING");
+    const status = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/participants",
+      payload: { lobbyId, token: "reconnecting-participant" },
+    });
+    expect(status.statusCode).toBe(200);
+    expect(status.json().state).toBe("VOTING");
+  });
+  it("rejects manual ending for timed rounds and automatically ends expired deadlines", async () => {
+    const { app, store } = await activeLobby(new Date(Date.now() + 60_000));
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/end-round",
+      payload: { lobbyId, token: creatorIdentity },
+    });
+    expect(response.statusCode).toBe(409);
+    await store.updateState(
+      lobbyId,
+      "DEBATE_IN_PROGRESS",
+      "DEBATE_IN_PROGRESS",
+      new Date(0),
+    );
+    await vi.waitFor(
+      async () => expect((await store.findById(lobbyId))?.state).toBe("VOTING"),
+      { timeout: 2500 },
+    );
+  });
+
+  it("opens a 30-second voting window and rejects stale submissions after closing", async () => {
+    const { app, store, active } = await activeLobby();
+    active.set(`debate-${lobbyId}`, [
+      {
+        identity: "spectator",
+        displayName: "Viewer",
+        role: "spectator",
+        sideIndex: null,
+      },
+    ]);
+    const before = Date.now();
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/topics/dream-cheating/end-round",
+          payload: { lobbyId, token: creatorIdentity },
+        })
+      ).statusCode,
+    ).toBe(200);
+    const voting = (await store.findById(lobbyId))!.voting!;
+    expect(Date.parse(voting.endsAt)).toBeGreaterThanOrEqual(before + 30_000);
+    expect(Date.parse(voting.endsAt)).toBeLessThanOrEqual(Date.now() + 30_000);
+    const send = (choice: "0" | "1" | null, token = "spectator") =>
+      app.inject({
+        method: "POST",
+        url: "/api/topics/dream-cheating/vote",
+        payload: { lobbyId, token, choice },
+      });
+    expect((await send("0", creatorIdentity)).statusCode).toBe(409);
+    expect((await send("0")).json()).toMatchObject({
+      voteCounts: [1, 0],
+      selectedVote: "0",
+    });
+    await store.updateState(lobbyId, "VOTING", "VOTING", undefined, {
+      ...(await store.findById(lobbyId))!.voting!,
+      endsAt: new Date(0).toISOString(),
+    });
+    expect((await send("1")).statusCode).toBe(409);
+    expect((await send(null)).statusCode).toBe(409);
+    active.set(`debate-${lobbyId}`, []);
+    const status = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/participants",
+      payload: { lobbyId, token: "spectator" },
+    });
+    expect(status.json()).toMatchObject({
+      votingEndsAt: new Date(0).toISOString(),
+      voteCounts: [1, 0],
+      selectedVote: "0",
+    });
+  });
+
+  it.each<{
+    votes: Record<string, "0" | "1">;
+    counts: [number, number];
+    winningSide: 0 | 1 | null;
+    wins: [number, number];
+    losses: [number, number];
+  }>([
+    {
+      votes: { spectator: "0" },
+      counts: [1, 0],
+      winningSide: 0,
+      wins: [1, 0],
+      losses: [0, 1],
+    },
+    {
+      votes: { spectator: "1", other: "1" },
+      counts: [0, 2],
+      winningSide: 1,
+      wins: [0, 1],
+      losses: [1, 0],
+    },
+    {
+      votes: { spectator: "0", other: "1" },
+      counts: [1, 1],
+      winningSide: null,
+      wins: [0, 0],
+      losses: [0, 0],
+    },
+    {
+      votes: {},
+      counts: [0, 0],
+      winningSide: null,
+      wins: [0, 0],
+      losses: [0, 0],
+    },
+  ])(
+    "finalizes results consistently for both clients with totals $counts",
+    async ({ votes, counts, winningSide, wins, losses }) => {
+      const debateResults = createMemoryDebateResultStore();
+      const livekit = fakeLiveKit();
+      const store = createMemoryPrivateLobbyStore([
+        {
+          id: lobbyId,
+          topicId: "dream-cheating",
+          state: "DEBATE_IN_PROGRESS",
+          creatorIdentity,
+          codeHash: "test",
+          createdAt: new Date(),
+          expiresAt: null,
+          roundEndsAt: null,
+        },
+      ]);
+      livekit.active.set(`debate-${lobbyId}`, [
+        {
+          identity: "side-0-account",
+          displayName: "First",
+          role: "debater",
+          sideIndex: 0,
+        },
+        {
+          identity: "side-1-account",
+          displayName: "Second",
+          role: "debater",
+          sideIndex: 1,
+        },
+        {
+          identity: "spectator",
+          displayName: "Viewer",
+          role: "spectator",
+          sideIndex: null,
+        },
+      ]);
+      const app = await testApp(livekit.gateway, store, { debateResults });
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: "/api/topics/dream-cheating/end-round",
+            payload: { lobbyId, token: creatorIdentity },
+          })
+        ).statusCode,
+      ).toBe(200);
+      const voting = (await store.findById(lobbyId))!.voting!;
+      await store.updateState(lobbyId, "VOTING", "VOTING", undefined, {
+        ...voting,
+        endsAt: new Date(0).toISOString(),
+        votes,
+      });
+
+      await vi.waitFor(
+        async () =>
+          expect((await store.findById(lobbyId))?.state).toBe("ENDED"),
+        { timeout: 2500 },
+      );
+      await expect(
+        debateResults.statisticsFor("side-0-account"),
+      ).resolves.toMatchObject({
+        totalDebates: 1,
+        wins: wins[0],
+        losses: losses[0],
+      });
+      await expect(
+        debateResults.statisticsFor("side-1-account"),
+      ).resolves.toMatchObject({
+        totalDebates: 1,
+        wins: wins[1],
+        losses: losses[1],
+      });
+      expect(livekit.roomMetadata.get(`debate-${lobbyId}`)).toBe("ENDED");
+      livekit.active.set(`debate-${lobbyId}`, []);
+      for (const token of [creatorIdentity, "spectator"]) {
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/topics/dream-cheating/participants",
+          payload: { lobbyId, token },
+        });
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toMatchObject({
+          state: "ENDED",
+          results: {
+            debaters: [
+              { name: "First", votes: counts[0] },
+              { name: "Second", votes: counts[1] },
+            ],
+            winningSide,
+          },
+        });
+      }
+    },
+  );
+
+  it("marks spectators joining during voting ineligible and restricts their token", async () => {
+    const { store } = await activeLobby();
+    const lobby = (await store.findById(lobbyId))!;
+    const livekit = fakeLiveKit();
+    const issueToken = vi.spyOn(livekit.gateway, "issueToken");
+    const app = await testApp(
+      livekit.gateway,
+      createMemoryPrivateLobbyStore([
+        { ...lobby, state: "VOTING", visibility: "public" },
+      ]),
+    );
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/join",
+      payload: { lobbyId, intent: "spectator" },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      state: "VOTING",
+      voteEligible: false,
+    });
+    expect(issueToken).toHaveBeenCalledWith(
+      expect.objectContaining({ canVote: false }),
+    );
   });
 });
+
+describe.each(["starter", "created"] as const)(
+  "reopening %s public lobbies",
+  (kind) => {
+    async function completedLobby() {
+      const id =
+        kind === "starter"
+          ? "dream-cheating"
+          : "de442318-535a-4007-a26d-553652066baf";
+      const voting = {
+        roundId: "previous-round",
+        endsAt: new Date(0).toISOString(),
+        eligible: ["viewer"],
+        votes: { viewer: "0" as const },
+        debaterNames: { "0": "First", "1": "Second" },
+      };
+      const privateStore = createMemoryPrivateLobbyStore(
+        kind === "created"
+          ? [
+              {
+                id,
+                topicId: id,
+                name: "Reusable public topic",
+                side0: "Yes",
+                side1: "No",
+                visibility: "public",
+                state: "ENDED",
+                voting,
+                roundEndsAt: new Date(0),
+                creatorIdentity: "viewer",
+                codeHash: null,
+                createdAt: new Date(),
+                expiresAt: null,
+              },
+            ]
+          : [],
+      );
+      const publicStore = createMemoryPublicLobbyStateStore([
+        {
+          topicId: id,
+          hostIdentity: "viewer",
+          state: "ENDED",
+          voting,
+          roundEndsAt: new Date(0),
+        },
+      ]);
+      const livekit = fakeLiveKit();
+      const participants: RoomParticipant[] = [
+        {
+          identity: "a1000000-0000-4000-8000-000000000001",
+          displayName: "First",
+          role: "debater",
+          sideIndex: 0,
+        },
+        {
+          identity: "a1000000-0000-4000-8000-000000000002",
+          displayName: "Second",
+          role: "debater",
+          sideIndex: 1,
+        },
+        {
+          identity: "viewer",
+          displayName: "Viewer",
+          role: "spectator",
+          sideIndex: null,
+        },
+      ];
+      livekit.active.set(`debate-${id}`, participants);
+      const debateResults = createMemoryDebateResultStore();
+      const app = await testApp(livekit.gateway, privateStore, {
+        debateResults,
+        publicLobbyState: publicStore,
+      });
+      const read = () =>
+        kind === "starter" ? publicStore.find(id) : privateStore.findById(id);
+      const card = async () =>
+        (await app.inject({ method: "GET", url: "/api/topics" }))
+          .json()
+          .find((topic: { id: string }) => topic.id === id);
+      return {
+        id,
+        voting,
+        app,
+        livekit,
+        read,
+        card,
+        debateResults,
+        expire: async () => {
+          const current = (await read())!;
+          const store = kind === "starter" ? publicStore : privateStore;
+          await store.updateState(id, "VOTING", "VOTING", undefined, {
+            ...current.voting!,
+            endsAt: new Date(0).toISOString(),
+            votes: { viewer: "0" },
+          });
+        },
+      };
+    }
+
+    it("reopens after both debaters leave and starts the next round with fresh voting", async () => {
+      const { id, voting, app, livekit, read, card, debateResults, expire } =
+        await completedLobby();
+      await debateResults.recordResults(
+        voting.roundId,
+        [
+          { accountId: "a1000000-0000-4000-8000-000000000001", sideIndex: 0 },
+          { accountId: "a1000000-0000-4000-8000-000000000002", sideIndex: 1 },
+        ],
+        0,
+      );
+      expect((await card()).sideAvailability).toEqual([false, false]);
+      const leave = (token: string) =>
+        app.inject({
+          method: "POST",
+          url: `/api/topics/${id}/leave`,
+          payload: { lobbyId: id, token },
+        });
+      expect(
+        (await leave("a1000000-0000-4000-8000-000000000001")).statusCode,
+      ).toBe(200);
+      expect((await read())?.state).toBe("ENDED");
+      expect(
+        (await leave("a1000000-0000-4000-8000-000000000002")).statusCode,
+      ).toBe(200);
+      expect((await card()).sideAvailability).toEqual([true, true]);
+      expect(await read()).toMatchObject({
+        state: "WAITING",
+        roundEndsAt: null,
+        voting,
+      });
+      expect(livekit.roomMetadata.get(`debate-${id}`)).toBe("WAITING");
+      for (const sideIndex of [0, 1]) {
+        const response = await app.inject({
+          method: "POST",
+          url: `/api/topics/${id}/join`,
+          payload: {
+            lobbyId: id,
+            intent: "debater",
+            previousToken:
+              sideIndex === 0
+                ? "a1000000-0000-4000-8000-000000000001"
+                : "a1000000-0000-4000-8000-000000000002",
+            displayName: `Next ${sideIndex}`,
+            sideIndex,
+          },
+        });
+        expect(response.statusCode).toBe(200);
+        const join = response.json();
+        livekit.active.get(`debate-${id}`)!.push({
+          identity: join.participantIdentity,
+          displayName: join.displayName,
+          role: "debater",
+          sideIndex: join.sideIndex,
+        });
+      }
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: `/api/topics/${id}/start`,
+            payload: { lobbyId: id, token: "viewer" },
+          })
+        ).statusCode,
+      ).toBe(200);
+      expect((await read())?.voting).toBeNull();
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: `/api/topics/${id}/end-round`,
+            payload: { lobbyId: id, token: "viewer" },
+          })
+        ).statusCode,
+      ).toBe(200);
+      const next = (await read())!.voting!;
+      expect(next.roundId).not.toBe(voting.roundId);
+      expect(next.votes).toEqual({});
+      expect(next.eligible).toContain("viewer");
+      await expire();
+      await vi.waitFor(
+        async () => expect((await read())?.state).toBe("ENDED"),
+        { timeout: 2500 },
+      );
+      await expect(
+        debateResults.statisticsFor("a1000000-0000-4000-8000-000000000001"),
+      ).resolves.toMatchObject({ totalDebates: 2, wins: 2 });
+    });
+
+    it("recovers vacant positions after a disconnect without requiring a leave request", async () => {
+      const { id, app, livekit, card } = await completedLobby();
+      livekit.active.set(`debate-${id}`, [
+        {
+          identity: "viewer",
+          displayName: "Viewer",
+          role: "spectator",
+          sideIndex: null,
+        },
+      ]);
+      expect((await card()).sideAvailability).toEqual([true, true]);
+      const status = await app.inject({
+        method: "POST",
+        url: `/api/topics/${id}/participants`,
+        payload: { lobbyId: id, token: "viewer" },
+      });
+      expect(status.json()).toMatchObject({
+        state: "WAITING",
+        results: { winningSide: 0 },
+      });
+    });
+  },
+);

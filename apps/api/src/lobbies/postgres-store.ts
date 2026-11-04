@@ -31,7 +31,7 @@ export function createPostgresPrivateLobbyStore(
         .fork()
         .find(
           PrivateLobbyEntity,
-          { visibility: "public", state: { $ne: "ENDED" } },
+          { visibility: "public" },
           { orderBy: { createdAt: "DESC" } },
         );
       return entities.map(toRecord);
@@ -50,14 +50,16 @@ export function createPostgresPrivateLobbyStore(
       const entity = await orm.em.fork().findOne(PrivateLobbyEntity, { id });
       return entity ? toRecord(entity) : undefined;
     },
-    async updateState(id, expectedState, state) {
-      const updated = await orm.em
-        .fork()
-        .nativeUpdate(
-          PrivateLobbyEntity,
-          { id, state: expectedState },
-          { state },
-        );
+    async updateState(id, expectedState, state, roundEndsAt, voting) {
+      const updated = await orm.em.fork().nativeUpdate(
+        PrivateLobbyEntity,
+        { id, state: expectedState },
+        {
+          state,
+          ...(roundEndsAt !== undefined ? { roundEndsAt } : {}),
+          ...(voting !== undefined ? { voting } : {}),
+        },
+      );
       return updated > 0;
     },
     async delete(id) {
@@ -65,6 +67,34 @@ export function createPostgresPrivateLobbyStore(
       await em.nativeDelete(PrivateLobbyEntity, { id });
     },
     // The shared connection is closed by the process that opened it.
+    async dueRounds(now) {
+      return (
+        await orm.em.fork().find(PrivateLobbyEntity, {
+          state: "DEBATE_IN_PROGRESS",
+          roundEndsAt: { $lte: now },
+        })
+      ).map(toRecord);
+    },
+    async dueVotes(now) {
+      return (await orm.em.fork().find(PrivateLobbyEntity, { state: "VOTING" }))
+        .map(toRecord)
+        .filter(
+          (lobby) =>
+            lobby.voting && Date.parse(lobby.voting.endsAt) <= now.getTime(),
+        );
+    },
+    async submitVote(id, identity, choice) {
+      const rows: unknown[] = await orm.em
+        .fork()
+        .getConnection()
+        .execute(
+          `update "private_lobby" set voting = jsonb_set(voting, '{votes}', (voting->'votes') || jsonb_build_object(?::text, ?::text))
+         where "id" = ? and state = 'VOTING' and (voting->>'endsAt')::timestamptz > clock_timestamp()
+         and jsonb_exists(voting->'eligible', ?::text) returning "id"`,
+          [identity, choice, id, identity],
+        );
+      return rows.length > 0;
+    },
     async close() {},
   };
 }
@@ -80,6 +110,8 @@ function toRecord(entity: PrivateLobbyEntity): PrivateLobbyRecord {
     tags: entity.tags,
     visibility: entity.visibility,
     state: entity.state,
+    roundEndsAt: entity.roundEndsAt,
+    voting: entity.voting,
     codeHash: entity.codeHash,
     creatorIdentity: entity.creatorIdentity,
     createdAt: entity.createdAt,

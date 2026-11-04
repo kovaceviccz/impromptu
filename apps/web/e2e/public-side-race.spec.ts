@@ -44,6 +44,7 @@ test("a stale side choice returns home with a visible reason", async ({
         response.request().method() === "POST",
     );
     await page.getByRole("button", { name: "Create and join" }).click();
+    await page.getByRole("button", { name: "Continue to lobby" }).click();
     created = apiContract.createLobby.response.parse(
       await (await creation).json(),
     );

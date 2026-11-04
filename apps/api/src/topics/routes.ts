@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { FastifyPluginAsyncZod } from "@fastify/type-provider-zod";
+import type { FastifyRequest } from "fastify";
 import { UniqueConstraintViolationException } from "@mikro-orm/core";
 import { z } from "zod";
 
@@ -12,6 +13,7 @@ import {
   type PrivateLobbyStore,
 } from "../lobbies/store.js";
 import type { PublicLobbyStateStore } from "../lobbies/public-state.js";
+import type { ChatPolicy } from "../chat/policy.js";
 import { findTopic, topics } from "./data.js";
 import {
   createRoleAllocator,
@@ -19,15 +21,24 @@ import {
   type DebateSide,
   type LiveKitGateway,
 } from "./livekit.js";
+import { votingSummary } from "../lobbies/voting.js";
 import type { JoinResult, TopicCategory } from "./contract.js";
+import type { AccountStore } from "../accounts/store.js";
+import { SESSION_COOKIE } from "../accounts/routes.js";
+import type { DebateResultStore } from "../statistics/store.js";
 
 export type TopicRoutesOptions = {
+  accounts: AccountStore;
+  debateResults: DebateResultStore;
   livekit: LiveKitGateway;
   privateLobbies: PrivateLobbyStore;
   publicLobbyState: PublicLobbyStateStore;
   livekitPublicUrl: string;
   tokenTtlSeconds: number;
+  chatPolicy: ChatPolicy;
 };
+
+const CHAT_DATA_TOPIC = "impromptu.chat";
 
 type ResolvedTopic = {
   id: string;
@@ -60,7 +71,10 @@ function makeJoinResult(input: {
   livekitUrl: string;
   token: string;
 }): JoinResult {
-  return input;
+  return {
+    ...input,
+    voteEligible: input.role === "spectator" && input.state !== "VOTING",
+  };
 }
 
 export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
@@ -71,6 +85,13 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
     options.livekit,
     options.tokenTtlSeconds,
   );
+  async function newParticipantIdentity(request: FastifyRequest) {
+    const sessionToken = request.cookies[SESSION_COOKIE];
+    const account = sessionToken
+      ? await options.accounts.findSessionAccount(sessionToken)
+      : undefined;
+    return account?.id ?? randomUUID();
+  }
   function findLobby(id: string) {
     return z.uuid().safeParse(id).success
       ? options.privateLobbies.findById(id)
@@ -79,11 +100,12 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
   async function resolveTopic(id: string): Promise<ResolvedTopic | undefined> {
     const starter = findTopic(id);
     if (starter)
-      return {
+      return refreshPublicTopic({
         id: starter.id,
         title: starter.title,
         sides: [starter.sides[0], starter.sides[1]],
-      };
+        category: starter.category,
+      });
     const record = await findLobby(id);
     if (
       record?.topicId !== id ||
@@ -93,40 +115,81 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       (record.expiresAt && record.expiresAt <= new Date())
     )
       return undefined;
-    return {
+    return refreshPublicTopic({
       id,
       title: record.name,
       sides: [record.side0, record.side1],
       category: record.category ?? "Miscellaneous",
       record,
-    };
+    });
+  }
+  async function refreshPublicTopic(
+    topic: ResolvedTopic,
+  ): Promise<ResolvedTopic> {
+    if (topic.record && topic.record.visibility !== "public") return topic;
+    const lobby = topic.record
+      ? await findLobby(topic.id)
+      : await options.publicLobbyState.find(topic.id);
+    if (!lobby) return topic;
+    if ("id" in lobby) topic = { ...topic, record: lobby };
+    if (
+      ("visibility" in lobby && lobby.visibility !== "public") ||
+      lobby.state !== "ENDED"
+    )
+      return topic;
+    if ((await allocation.status(topic.id)).debaterCount !== 0) return topic;
+    const store = topic.record
+      ? options.privateLobbies
+      : options.publicLobbyState;
+    // Preserve the last results until a new round starts.
+    if (!(await store.updateState(topic.id, "ENDED", "WAITING", null))) {
+      const latest = topic.record ? await findLobby(topic.id) : undefined;
+      return latest ? { ...topic, record: latest } : topic;
+    }
+    publishPublicChange();
+    try {
+      await options.livekit.updateRoomMetadata(`debate-${topic.id}`, "WAITING");
+    } catch (err) {
+      app.log.error(
+        { err, lobbyId: topic.id },
+        "Could not broadcast reopened lobby",
+      );
+    }
+    return topic.record
+      ? {
+          ...topic,
+          record: { ...topic.record, state: "WAITING", roundEndsAt: null },
+        }
+      : topic;
   }
   async function publicTopics(): Promise<ResolvedTopic[]> {
     const created = await options.privateLobbies.listPublic();
-    return [
-      ...topics.map((topic) => ({
-        id: topic.id,
-        title: topic.title,
-        sides: [topic.sides[0], topic.sides[1]] as [string, string],
-        category: topic.category,
-      })),
-      ...created
-        .filter(
-          (record) =>
-            record.topicId === record.id &&
-            record.name &&
-            record.side0 &&
-            record.side1 &&
-            (!record.expiresAt || record.expiresAt > new Date()),
-        )
-        .map((record) => ({
-          id: record.id,
-          title: record.name!,
-          sides: [record.side0!, record.side1!] as [string, string],
-          category: record.category ?? "Miscellaneous",
-          record,
+    return Promise.all(
+      [
+        ...topics.map((topic) => ({
+          id: topic.id,
+          title: topic.title,
+          sides: [topic.sides[0], topic.sides[1]] as [string, string],
+          category: topic.category,
         })),
-    ];
+        ...created
+          .filter(
+            (record) =>
+              record.topicId === record.id &&
+              record.name &&
+              record.side0 &&
+              record.side1 &&
+              (!record.expiresAt || record.expiresAt > new Date()),
+          )
+          .map((record) => ({
+            id: record.id,
+            title: record.name!,
+            sides: [record.side0!, record.side1!] as [string, string],
+            category: record.category ?? "Miscellaneous",
+            record,
+          })),
+      ].map(refreshPublicTopic),
+    );
   }
   const publicListeners = new Set<import("node:http").ServerResponse>();
   let publicRevision = 0;
@@ -205,6 +268,222 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       return false;
     }
   }
+
+  async function finishRound(lobbyId: string, publicLobby: boolean) {
+    const store = publicLobby
+      ? options.publicLobbyState
+      : options.privateLobbies;
+    const participants = await options.livekit.listParticipants(
+      `debate-${lobbyId}`,
+    );
+    const updated = await store.updateState(
+      lobbyId,
+      "DEBATE_IN_PROGRESS",
+      "VOTING",
+      undefined,
+      {
+        roundId: randomUUID(),
+        endsAt: new Date(Date.now() + 30_000).toISOString(),
+        eligible: participants
+          .filter((p) => p.role === "spectator")
+          .map((p) => p.identity),
+        votes: {},
+        debaterNames: Object.fromEntries(
+          participants
+            .filter((p) => p.role === "debater" && p.sideIndex !== null)
+            .map((p) => [String(p.sideIndex), p.displayName]),
+        ),
+        debaters: Object.fromEntries(
+          participants
+            .filter(
+              (participant) =>
+                participant.role === "debater" &&
+                participant.sideIndex !== null,
+            )
+            .map((participant) => [
+              String(participant.sideIndex),
+              participant.identity,
+            ]),
+        ),
+      },
+    );
+    if (!updated) return false;
+    publishPublicChange();
+    try {
+      await options.livekit.updateRoomMetadata(`debate-${lobbyId}`, "VOTING");
+    } catch (cause) {
+      app.log.error(
+        { err: cause, lobbyId },
+        "Could not broadcast voting phase",
+      );
+    }
+    return true;
+  }
+
+  async function finalizeVoting(
+    lobbyId: string,
+    publicLobby: boolean,
+    voting: NonNullable<PrivateLobbyRecord["voting"]>,
+  ) {
+    const [side0Votes, side1Votes] = votingSummary(voting).voteCounts;
+    const winningSide =
+      side0Votes === side1Votes ? null : side0Votes > side1Votes ? 0 : 1;
+    await options.debateResults.recordResults(
+      voting.roundId ?? lobbyId,
+      Object.entries(voting.debaters ?? {}).flatMap(([side, accountId]) =>
+        accountId && (side === "0" || side === "1")
+          ? [{ accountId, sideIndex: side === "0" ? 0 : 1 }]
+          : [],
+      ),
+      winningSide,
+    );
+    const store = publicLobby
+      ? options.publicLobbyState
+      : options.privateLobbies;
+    if (!(await store.updateState(lobbyId, "VOTING", "ENDED"))) return false;
+    publishPublicChange();
+    try {
+      await options.livekit.updateRoomMetadata(`debate-${lobbyId}`, "ENDED");
+    } catch (cause) {
+      app.log.error(
+        { err: cause, lobbyId },
+        "Could not broadcast the completed debate",
+      );
+    }
+    return true;
+  }
+  let checkingTimers = false;
+  const roundTimer = setInterval(() => {
+    if (checkingTimers) return;
+    checkingTimers = true;
+    void (async () => {
+      for (const lobby of await options.privateLobbies.dueRounds(new Date()))
+        await finishRound(lobby.id, false);
+      for (const lobby of await options.publicLobbyState.dueRounds(new Date()))
+        await finishRound(lobby.topicId, true);
+      for (const lobby of await options.privateLobbies.dueVotes(new Date())) {
+        if (lobby.voting) await finalizeVoting(lobby.id, false, lobby.voting);
+      }
+      for (const lobby of await options.publicLobbyState.dueVotes(new Date())) {
+        if (lobby.voting)
+          await finalizeVoting(lobby.topicId, true, lobby.voting);
+      }
+    })()
+      .catch((err: unknown) =>
+        app.log.error({ err }, "Could not end timed rounds"),
+      )
+      .finally(() => {
+        checkingTimers = false;
+      });
+  }, 1000);
+  roundTimer.unref();
+  app.addHook("onClose", async () => {
+    clearInterval(roundTimer);
+  });
+
+  app.post(
+    topicContracts.submitVote.path,
+    {
+      schema: {
+        params: topicContracts.submitVote.params,
+        body: topicContracts.submitVote.body,
+        response: {
+          200: topicContracts.submitVote.response,
+          ...topicContracts.submitVote.errors,
+        },
+      },
+    },
+    async (request, reply) => {
+      const topic = await resolveTopic(request.params.topicId);
+      if (!topic) return reply.code(404).send({ message: "Topic not found" });
+      const { lobbyId, token, choice } = request.body;
+      const identity = await options.livekit.verifyParticipantToken(
+        token,
+        `debate-${lobbyId}`,
+      );
+      if (!identity)
+        return reply
+          .code(401)
+          .send({ message: "Your room session expired. Rejoin the lobby." });
+      const publicLobby = !topic.record && lobbyId === topic.id;
+      const store = publicLobby
+        ? options.publicLobbyState
+        : options.privateLobbies;
+      const lobby = publicLobby
+        ? await options.publicLobbyState.find(lobbyId)
+        : await findLobby(lobbyId);
+      if (
+        !lobby ||
+        ("topicId" in lobby && !publicLobby && lobby.topicId !== topic.id) ||
+        ("expiresAt" in lobby &&
+          lobby.expiresAt &&
+          lobby.expiresAt <= new Date())
+      )
+        return reply.code(404).send({ message: "Lobby not found" });
+      if (!(await store.submitVote(lobbyId, identity, choice)))
+        return reply.code(409).send({
+          message:
+            "Voting is closed or you are not eligible to vote this round.",
+        });
+      const current = publicLobby
+        ? await options.publicLobbyState.find(lobbyId)
+        : await findLobby(lobbyId);
+      return votingSummary(current?.voting, identity);
+    },
+  );
+
+  app.post(
+    topicContracts.endRound.path,
+    {
+      schema: {
+        params: topicContracts.endRound.params,
+        body: topicContracts.endRound.body,
+        response: {
+          200: topicContracts.endRound.response,
+          ...topicContracts.endRound.errors,
+        },
+      },
+    },
+    async (request, reply) => {
+      const topic = await resolveTopic(request.params.topicId);
+      if (!topic) return reply.code(404).send({ message: "Topic not found" });
+      const { lobbyId, token } = request.body;
+      const identity = await options.livekit.verifyParticipantToken(
+        token,
+        `debate-${lobbyId}`,
+      );
+      if (!identity)
+        return reply
+          .code(401)
+          .send({ message: "Your room session expired. Rejoin the lobby." });
+      const publicLobby = !topic.record && lobbyId === topic.id;
+      const lobby = publicLobby
+        ? await options.publicLobbyState.find(topic.id)
+        : await findLobby(lobbyId);
+      if (
+        !lobby ||
+        ("creatorIdentity" in lobby &&
+          (lobby.topicId !== topic.id ||
+            (lobby.expiresAt && lobby.expiresAt <= new Date())))
+      )
+        return reply.code(404).send({ message: "Lobby not found" });
+      const creator =
+        "creatorIdentity" in lobby ? lobby.creatorIdentity : lobby.hostIdentity;
+      if (identity !== creator)
+        return reply
+          .code(403)
+          .send({ message: "Only the lobby creator can end the round." });
+      if (lobby.roundEndsAt || lobby.state !== "DEBATE_IN_PROGRESS")
+        return reply
+          .code(409)
+          .send({ message: "This round cannot be ended manually." });
+      if (!(await finishRound(lobbyId, publicLobby)))
+        return reply
+          .code(409)
+          .send({ message: "This round has already ended." });
+      return { state: "VOTING" as const };
+    },
+  );
 
   app.post(
     topicContracts.startDebate.path,
@@ -316,16 +595,23 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         });
       }
 
+      const roundEndsAt = request.body.durationSeconds
+        ? new Date(Date.now() + request.body.durationSeconds * 1000)
+        : null;
       const updated = isPublicLobby
         ? await options.publicLobbyState.updateState(
             topic.id,
             "WAITING",
             "DEBATE_IN_PROGRESS",
+            roundEndsAt,
+            null,
           )
         : await options.privateLobbies.updateState(
             lobbyId,
             "WAITING",
             "DEBATE_IN_PROGRESS",
+            roundEndsAt,
+            null,
           );
       if (!updated) {
         const latestState = isPublicLobby
@@ -486,7 +772,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         });
       }
 
-      const participantIdentity = randomUUID();
+      const participantIdentity = await newParticipantIdentity(request);
       const role = request.body.intent satisfies DebateRole;
       const sideIndex =
         request.body.intent === "debater" ? request.body.sideIndex : null;
@@ -496,6 +782,8 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         role,
         request.body.displayName,
         sideIndex,
+        undefined,
+        lobby.state !== "VOTING",
       );
 
       if ("unavailable" in allocationResult) {
@@ -540,7 +828,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       },
     },
     async (request, reply) => {
-      const identity = randomUUID();
+      const identity = await newParticipantIdentity(request);
       const { name, sides, category, tags, visibility, displayName, intent } =
         request.body;
       if (
@@ -675,7 +963,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
           (await options.publicLobbyState.find(topic.id))?.state ?? "WAITING";
       }
 
-      let participantIdentity: string = randomUUID();
+      let participantIdentity = await newParticipantIdentity(request);
       if (request.body.previousToken) {
         const verifiedIdentity = await options.livekit.verifyParticipantToken(
           request.body.previousToken,
@@ -709,6 +997,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         displayName,
         request.body.intent === "debater" ? request.body.sideIndex : null,
         request.body.previousToken ? participantIdentity : undefined,
+        state !== "VOTING",
       );
       if ("unavailable" in allocationResult) {
         if (request.body.intent === "spectator") {
@@ -742,6 +1031,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         publishPublicChange();
 
       return {
+        voteEligible: request.body.intent === "spectator" && state !== "VOTING",
         lobbyId,
         lobbyName,
         visibility: joinedVisibility ?? "public",
@@ -810,8 +1100,20 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
           `debate-${lobbyId}`,
         );
         return {
+          ...votingSummary(
+            (lobbyId === topic.id && !topic.record
+              ? await options.publicLobbyState.find(topic.id)
+              : await findLobby(lobbyId)
+            )?.voting,
+            identity,
+          ),
           hostIdentity,
           state,
+          roundEndsAt:
+            (lobbyId === topic.id && !topic.record
+              ? (await options.publicLobbyState.find(topic.id))?.roundEndsAt
+              : (await findLobby(lobbyId))?.roundEndsAt
+            )?.toISOString() ?? null,
           participants: [
             ...new Map(
               participants.map((participant) => [
@@ -827,6 +1129,104 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
             "Participants could not be loaded. Your room connection is still available. Try again.",
         });
       }
+    },
+  );
+
+  app.post(
+    topicContracts.sendChatMessage.path,
+    {
+      schema: {
+        params: topicContracts.sendChatMessage.params,
+        body: topicContracts.sendChatMessage.body,
+        response: {
+          200: topicContracts.sendChatMessage.response,
+          400: topicContracts.sendChatMessage.errors[400],
+          401: topicContracts.sendChatMessage.errors[401],
+          403: topicContracts.sendChatMessage.errors[403],
+          404: topicContracts.sendChatMessage.errors[404],
+          409: topicContracts.sendChatMessage.errors[409],
+          429: topicContracts.sendChatMessage.errors[429],
+          503: topicContracts.sendChatMessage.errors[503],
+        },
+      },
+    },
+    async (request, reply) => {
+      const topic = await resolveTopic(request.params.topicId);
+      if (!topic) return reply.code(404).send({ message: "Topic not found" });
+
+      const { lobbyId, message, token } = request.body;
+      if (lobbyId !== topic.id) {
+        return reply.code(404).send({ message: "Lobby not found" });
+      }
+      const roomName = `debate-${lobbyId}`;
+      const identity = await options.livekit.verifyParticipantToken(
+        token,
+        roomName,
+      );
+      if (!identity) {
+        return reply.code(401).send({
+          message: "Your room session expired. Rejoin the lobby.",
+        });
+      }
+
+      let participant;
+      try {
+        participant = (await options.livekit.listParticipants(roomName)).find(
+          (candidate) => candidate.identity === identity,
+        );
+      } catch {
+        return reply.code(503).send({
+          message: "The message service is temporarily unavailable. Try again.",
+        });
+      }
+      if (!participant) {
+        return reply.code(403).send({
+          message: "You must be in this lobby to send a message.",
+        });
+      }
+      if (participant.role !== "spectator") {
+        return reply.code(403).send({
+          message: "Only spectators can send audience messages.",
+        });
+      }
+
+      const policy = options.chatPolicy.check(roomName, identity, message);
+      if (!policy.allowed) {
+        const payload = {
+          code: policy.code,
+          message: policy.message,
+          ...(policy.retryAfterSeconds === undefined
+            ? {}
+            : { retryAfterSeconds: policy.retryAfterSeconds }),
+        };
+        if (policy.code === "INAPPROPRIATE_LANGUAGE") {
+          return reply.code(400).send(payload);
+        }
+        if (policy.code === "DUPLICATE_MESSAGE") {
+          return reply.code(409).send(payload);
+        }
+        return reply.code(429).send(payload);
+      }
+
+      const chatMessage = {
+        id: randomUUID(),
+        message,
+        senderIdentity: identity,
+        senderName: participant.displayName,
+        timestamp: Date.now(),
+      };
+      try {
+        await options.livekit.broadcastData(
+          roomName,
+          new TextEncoder().encode(JSON.stringify(chatMessage)),
+          CHAT_DATA_TOPIC,
+        );
+      } catch {
+        return reply.code(503).send({
+          message: "Message could not be sent. Try again.",
+        });
+      }
+      return chatMessage;
     },
   );
 
@@ -943,6 +1343,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         }
         publishPublicChange();
       }
+      await refreshPublicTopic(topic);
       return { status: "ok" as const };
     },
   );
