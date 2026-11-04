@@ -45,7 +45,7 @@ export function createPostgresPublicLobbyStateStore(
         {
           state,
           ...(roundEndsAt !== undefined ? { roundEndsAt } : {}),
-          ...(voting ? { voting } : {}),
+          ...(voting !== undefined ? { voting } : {}),
         },
       );
       return updated > 0;

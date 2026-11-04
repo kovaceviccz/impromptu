@@ -29,6 +29,7 @@ export {
   type JoinInput,
   type JoinByCodeInput,
   type JoinResult,
+  type RoundResults,
   type LobbyCreateInput,
   type LobbyParticipant,
   type PublicLobby,

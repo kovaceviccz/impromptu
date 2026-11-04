@@ -268,8 +268,36 @@ test("spectators can vote during voting and chat while debaters have a read-only
     0,
   );
 
-  await spectator.getByRole("button", { name: "Leave lobby" }).click();
+  await noVote.click();
+  await expect(spectator.getByText("1 spectator vote")).toBeVisible();
+  // The names and final totals must survive a debater disconnecting.
   await opponent.getByRole("button", { name: "Leave lobby" }).click();
+  for (const viewer of [page, spectator]) {
+    const results = viewer.getByRole("region", { name: "Round results" });
+    await expect(results).toBeVisible({ timeout: 35_000 });
+    await expect(results.getByText("Opponent wins the round.")).toBeVisible();
+    await expect(
+      results.getByText("Debater Guest", { exact: true }),
+    ).toBeVisible();
+    await expect(results.getByText("Opponent", { exact: true })).toBeVisible();
+    await expect(results.getByRole("definition")).toHaveText([
+      "0 votes",
+      "1 vote",
+    ]);
+    await expect(
+      viewer.getByText("Voting is closed", { exact: true }),
+    ).toHaveCount(2);
+    await expect(
+      viewer.getByRole("button", { name: /No: dreams are involuntary.*vote/ }),
+    ).toHaveCount(0);
+  }
+  await spectator.reload();
+  await expect(
+    spectator
+      .getByRole("region", { name: "Round results" })
+      .getByText("Opponent wins the round."),
+  ).toBeVisible();
+  await spectator.getByRole("button", { name: "Leave lobby" }).click();
   await page.getByRole("button", { name: "Close lobby" }).click();
 });
 

@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 
 import type {
   JoinResult,
+  RoundResults,
   SideUnavailableError,
 } from "@impromptu/api/contracts";
 import {
@@ -1303,6 +1304,126 @@ describe("Participant roster", () => {
     fireEvent.click(choice);
     expect(submitVoteRequest).not.toHaveBeenCalled();
     expect(screen.getByText("1 spectator vote")).toBeVisible();
+  });
+
+  it.each<{
+    counts: [number, number];
+    winningSide: 0 | 1 | null;
+    outcome: string;
+  }>([
+    { counts: [2, 1], winningSide: 0, outcome: "Ada wins the round." },
+    { counts: [0, 3], winningSide: 1, outcome: "Grace wins the round." },
+    { counts: [2, 2], winningSide: null, outcome: "The round is a tie." },
+    { counts: [0, 0], winningSide: null, outcome: "The round is a tie." },
+  ])(
+    "shows final named results to both clients for $counts",
+    async ({ counts, winningSide, outcome }) => {
+      const results: RoundResults = {
+        debaters: [
+          { name: "Ada", votes: counts[0] },
+          { name: "Grace", votes: counts[1] },
+        ],
+        winningSide,
+      };
+      getParticipants.mockResolvedValue({
+        state: "ENDED",
+        hostIdentity: null,
+        participants: [],
+        votingEndsAt: new Date(0).toISOString(),
+        voteCounts: counts,
+        selectedVote: null,
+        results,
+      });
+      render(
+        <MemoryRouter>
+          <DebateExperience join={{ ...spectatorJoin, state: "ENDED" }} />
+          <DebateExperience join={{ ...debaterJoin, state: "ENDED" }} />
+        </MemoryRouter>,
+      );
+      await act(async () => {});
+      for (const region of screen.getAllByRole("region", {
+        name: "Round results",
+      })) {
+        expect(within(region).getByText(outcome)).toBeVisible();
+        expect(within(region).getByText("Ada")).toBeVisible();
+        expect(within(region).getByText("Grace")).toBeVisible();
+        expect(
+          within(region)
+            .getAllByRole("definition")
+            .map((row) => row.textContent),
+        ).toEqual(
+          counts.map((count) => `${count} ${count === 1 ? "vote" : "votes"}`),
+        );
+      }
+      expect(
+        screen.getAllByRole("region", { name: "Round results" }),
+      ).toHaveLength(2);
+      expect(screen.getAllByText("Voting is closed")).toHaveLength(4);
+      expect(screen.queryByText("Audience voting is open")).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: /No: dreams are involuntary/ }),
+      ).toBeNull();
+      expect(submitVoteRequest).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps voting closed when the round transitions from VOTING to ENDED", async () => {
+    getParticipants.mockResolvedValue({
+      state: "VOTING",
+      hostIdentity: null,
+      participants: [],
+      votingEndsAt: new Date(0).toISOString(),
+      voteCounts: [0, 0],
+      selectedVote: null,
+    });
+    render(
+      <MemoryRouter>
+        <DebateExperience
+          join={{ ...spectatorJoin, state: "VOTING", voteEligible: true }}
+        />
+      </MemoryRouter>,
+    );
+    await act(async () => {});
+    expect(screen.getAllByText("Voting is closed")).toHaveLength(2);
+    act(() => {
+      for (const listener of roomState.metadataListeners) listener("ENDED");
+    });
+    expect(screen.getAllByText("Voting is closed")).toHaveLength(2);
+    expect(screen.queryByText("Voting opens when the round ends.")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /No: dreams are involuntary/ }),
+    ).toBeNull();
+  });
+
+  it("uses the new round eligibility for a spectator who joined during the previous vote", async () => {
+    getParticipants.mockResolvedValue({
+      state: "VOTING",
+      hostIdentity: null,
+      participants: [],
+      votingEndsAt: new Date(Date.now() + 30000).toISOString(),
+      voteCounts: [0, 0],
+      selectedVote: null,
+      voteEligible: true,
+    });
+    render(
+      <MemoryRouter>
+        <DebateExperience
+          join={{ ...spectatorJoin, state: "ENDED", voteEligible: false }}
+        />
+      </MemoryRouter>,
+    );
+    act(() => {
+      for (const listener of roomState.metadataListeners) listener("WAITING");
+    });
+    expect(screen.getByText("Waiting for others to join...")).toBeVisible();
+    await act(async () => {});
+    const choice = screen.getByRole("button", {
+      name: /No: dreams are involuntary/,
+    });
+    expect(choice).toBeEnabled();
+    fireEvent.click(choice);
+    await act(async () => {});
+    expect(submitVoteRequest).toHaveBeenCalledTimes(1);
   });
 
   it.each(["accepted", "rejected", "network failure"])(
