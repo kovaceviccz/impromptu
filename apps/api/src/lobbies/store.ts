@@ -1,4 +1,5 @@
 import type { LobbyState } from "./contract.js";
+import type { LobbyTag, TopicCategory } from "../topics/contract.js";
 
 export class DuplicateLobbyCodeError extends Error {}
 export class DuplicateTopicNameError extends Error {}
@@ -9,6 +10,8 @@ export type PrivateLobbyRecord = {
   name?: string;
   side0?: string | null;
   side1?: string | null;
+  category?: TopicCategory;
+  tags?: LobbyTag[];
   visibility?: "public" | "private";
   state: LobbyState;
   codeHash: string | null;

@@ -101,8 +101,9 @@ for attempt in 1 2; do
     --env MIGRATION_DATABASE_URL=postgresql://impromptu:impromptu@127.0.0.1:5432/migration_check \
     impromptu:ci node apps/api/dist/migrate.js
 done
+expected_migrations=$(ls apps/api/src/migrations/Migration*.ts | wc -l | tr -d ' ')
 test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
-  -Atc 'select count(*) from mikro_orm_migrations')" = 6
+  -Atc 'select count(*) from mikro_orm_migrations')" = "$expected_migrations"
 for table in account account_session private_lobby public_lobby_state; do
   test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
     -Atc "select to_regclass('public.$table')")" = "$table"

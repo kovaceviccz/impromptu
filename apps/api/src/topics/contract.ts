@@ -3,9 +3,35 @@ import { z } from "zod";
 import { healthSchema } from "../health/contract.js";
 import { lobbyStateSchema } from "../lobbies/contract.js";
 
+export { topicPresets, type TopicPreset } from "./data.js";
+
 export const debateSideSchema = z.union([z.literal(0), z.literal(1)]);
 export const debateRoleSchema = z.enum(["debater", "spectator"]);
 export const topicVisibilitySchema = z.enum(["public", "private"]);
+export const topicCategories = [
+  "Philosophy",
+  "Society",
+  "Sports",
+  "Music",
+  "Entertainment",
+  "Miscellaneous",
+] as const;
+export type TopicCategory = (typeof topicCategories)[number];
+export const topicCategorySchema = z.enum(topicCategories);
+export const lobbyTags = [
+  "Casual",
+  "Serious",
+  "Beginner-friendly",
+  "Competitive",
+  "Educational",
+  "Open-minded",
+] as const;
+export type LobbyTag = (typeof lobbyTags)[number];
+export const lobbyTagSchema = z.enum(lobbyTags);
+export const lobbyTagsSchema = z
+  .array(lobbyTagSchema)
+  .max(lobbyTags.length)
+  .refine((tags) => new Set(tags).size === tags.length);
 
 export const lobbyParticipantSchema = z.strictObject({
   displayName: z.string().min(1),
@@ -17,6 +43,8 @@ export const topicStatusSchema = z.strictObject({
   id: z.string().min(1),
   title: z.string().min(1),
   sides: z.tuple([z.string().min(1), z.string().min(1)]),
+  category: topicCategorySchema.optional(),
+  tags: lobbyTagsSchema.optional(),
   sideAvailability: z.tuple([z.boolean(), z.boolean()]),
   debaterCount: z.number().int().min(0).max(2),
   spectatorCount: z.number().int().min(0),
@@ -26,6 +54,7 @@ export const topicStatusSchema = z.strictObject({
 export const privateLobbyPreviewSchema = topicStatusSchema.extend({
   lobbyId: z.string().min(1),
   state: lobbyStateSchema,
+  tags: lobbyTagsSchema.optional(),
 });
 
 export const topicsSchema = z.array(topicStatusSchema);
@@ -36,7 +65,9 @@ export const publicLobbySchema = z.strictObject({
   name: z.string().min(1),
   topicTitle: z.string().min(1),
   sides: z.tuple([z.string().min(1), z.string().min(1)]),
+  category: topicCategorySchema.optional(),
   state: lobbyStateSchema,
+  tags: lobbyTagsSchema.optional(),
   debaterCount: z.number().int().min(0).max(2),
   spectatorCount: z.number().int().min(0),
   sideAvailability: z.tuple([z.boolean(), z.boolean()]),
@@ -73,6 +104,8 @@ export const lobbyCreateBodySchema = z.discriminatedUnion("intent", [
       z.string().trim().min(1).max(120),
       z.string().trim().min(1).max(120),
     ]),
+    category: topicCategorySchema,
+    tags: lobbyTagsSchema.default([]),
     visibility: topicVisibilitySchema,
     displayName: z.string().trim().min(1).max(40),
     intent: z.literal("debater"),
@@ -84,6 +117,8 @@ export const lobbyCreateBodySchema = z.discriminatedUnion("intent", [
       z.string().trim().min(1).max(120),
       z.string().trim().min(1).max(120),
     ]),
+    category: topicCategorySchema,
+    tags: lobbyTagsSchema.default([]),
     visibility: topicVisibilitySchema,
     displayName: z.string().trim().min(1).max(40),
     intent: z.literal("spectator"),
