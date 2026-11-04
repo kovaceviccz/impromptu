@@ -197,7 +197,18 @@ export const startDebateResultSchema = z.strictObject({
   state: lobbyStateSchema,
 });
 
+export const roundResultsSchema = z.strictObject({
+  debaters: z.tuple([
+    z.strictObject({ name: z.string(), votes: z.number().int().nonnegative() }),
+    z.strictObject({ name: z.string(), votes: z.number().int().nonnegative() }),
+  ]),
+  winningSide: z.union([z.literal(0), z.literal(1)]).nullable(),
+});
+export type RoundResults = z.output<typeof roundResultsSchema>;
+
 export const votingSummarySchema = z.strictObject({
+  voteEligible: z.boolean().optional(),
+  results: roundResultsSchema.nullable().optional(),
   votingEndsAt: z.string().nullable(),
   voteCounts: z.tuple([
     z.number().int().nonnegative(),

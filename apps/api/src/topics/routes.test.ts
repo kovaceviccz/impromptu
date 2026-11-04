@@ -1,3 +1,7 @@
+import {
+  createMemoryPublicLobbyStateStore,
+  type PublicLobbyStateStore,
+} from "../lobbies/public-state.js";
 import { TokenVerifier } from "livekit-server-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -92,11 +96,13 @@ async function testApp(
   livekit: LiveKitGateway,
   privateLobbies: PrivateLobbyStore = createMemoryPrivateLobbyStore(),
   options: {
+    publicLobbyState?: PublicLobbyStateStore;
     accounts?: AccountStore;
     debateResults?: DebateResultStore;
   } = {},
 ) {
   const app = await buildApp({
+    publicLobbyState: options.publicLobbyState,
     accounts: options.accounts ?? createMemoryAccountStore(),
     debateResults: options.debateResults ?? createMemoryDebateResultStore(),
     livekit,
@@ -1375,70 +1381,136 @@ describe("ending rounds", () => {
     });
   });
 
-  it("finalizes expired voting and records the winning and losing debaters once", async () => {
-    const debateResults = createMemoryDebateResultStore();
-    const livekit = fakeLiveKit();
-    const store = createMemoryPrivateLobbyStore([
-      {
-        id: lobbyId,
-        topicId: "dream-cheating",
-        state: "DEBATE_IN_PROGRESS",
-        creatorIdentity,
-        codeHash: "test",
-        createdAt: new Date(),
-        expiresAt: null,
-        roundEndsAt: null,
-      },
-    ]);
-    livekit.active.set(`debate-${lobbyId}`, [
-      {
-        identity: "side-0-account",
-        displayName: "First",
-        role: "debater",
-        sideIndex: 0,
-      },
-      {
-        identity: "side-1-account",
-        displayName: "Second",
-        role: "debater",
-        sideIndex: 1,
-      },
-      {
-        identity: "spectator",
-        displayName: "Viewer",
-        role: "spectator",
-        sideIndex: null,
-      },
-    ]);
-    const app = await testApp(livekit.gateway, store, { debateResults });
-    expect(
-      (
-        await app.inject({
-          method: "POST",
-          url: "/api/topics/dream-cheating/end-round",
-          payload: { lobbyId, token: creatorIdentity },
-        })
-      ).statusCode,
-    ).toBe(200);
-    const voting = (await store.findById(lobbyId))!.voting!;
-    await store.updateState(lobbyId, "VOTING", "VOTING", undefined, {
-      ...voting,
-      endsAt: new Date(0).toISOString(),
+  it.each<{
+    votes: Record<string, "0" | "1">;
+    counts: [number, number];
+    winningSide: 0 | 1 | null;
+    wins: [number, number];
+    losses: [number, number];
+  }>([
+    {
       votes: { spectator: "0" },
-    });
+      counts: [1, 0],
+      winningSide: 0,
+      wins: [1, 0],
+      losses: [0, 1],
+    },
+    {
+      votes: { spectator: "1", other: "1" },
+      counts: [0, 2],
+      winningSide: 1,
+      wins: [0, 1],
+      losses: [1, 0],
+    },
+    {
+      votes: { spectator: "0", other: "1" },
+      counts: [1, 1],
+      winningSide: null,
+      wins: [0, 0],
+      losses: [0, 0],
+    },
+    {
+      votes: {},
+      counts: [0, 0],
+      winningSide: null,
+      wins: [0, 0],
+      losses: [0, 0],
+    },
+  ])(
+    "finalizes results consistently for both clients with totals $counts",
+    async ({ votes, counts, winningSide, wins, losses }) => {
+      const debateResults = createMemoryDebateResultStore();
+      const livekit = fakeLiveKit();
+      const store = createMemoryPrivateLobbyStore([
+        {
+          id: lobbyId,
+          topicId: "dream-cheating",
+          state: "DEBATE_IN_PROGRESS",
+          creatorIdentity,
+          codeHash: "test",
+          createdAt: new Date(),
+          expiresAt: null,
+          roundEndsAt: null,
+        },
+      ]);
+      livekit.active.set(`debate-${lobbyId}`, [
+        {
+          identity: "side-0-account",
+          displayName: "First",
+          role: "debater",
+          sideIndex: 0,
+        },
+        {
+          identity: "side-1-account",
+          displayName: "Second",
+          role: "debater",
+          sideIndex: 1,
+        },
+        {
+          identity: "spectator",
+          displayName: "Viewer",
+          role: "spectator",
+          sideIndex: null,
+        },
+      ]);
+      const app = await testApp(livekit.gateway, store, { debateResults });
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: "/api/topics/dream-cheating/end-round",
+            payload: { lobbyId, token: creatorIdentity },
+          })
+        ).statusCode,
+      ).toBe(200);
+      const voting = (await store.findById(lobbyId))!.voting!;
+      await store.updateState(lobbyId, "VOTING", "VOTING", undefined, {
+        ...voting,
+        endsAt: new Date(0).toISOString(),
+        votes,
+      });
 
-    await vi.waitFor(
-      async () => expect((await store.findById(lobbyId))?.state).toBe("ENDED"),
-      { timeout: 2500 },
-    );
-    await expect(
-      debateResults.statisticsFor("side-0-account"),
-    ).resolves.toMatchObject({ totalDebates: 1, wins: 1, losses: 0 });
-    await expect(
-      debateResults.statisticsFor("side-1-account"),
-    ).resolves.toMatchObject({ totalDebates: 1, wins: 0, losses: 1 });
-    expect(livekit.roomMetadata.get(`debate-${lobbyId}`)).toBe("ENDED");
-  });
+      await vi.waitFor(
+        async () =>
+          expect((await store.findById(lobbyId))?.state).toBe("ENDED"),
+        { timeout: 2500 },
+      );
+      await expect(
+        debateResults.statisticsFor("side-0-account"),
+      ).resolves.toMatchObject({
+        totalDebates: 1,
+        wins: wins[0],
+        losses: losses[0],
+      });
+      await expect(
+        debateResults.statisticsFor("side-1-account"),
+      ).resolves.toMatchObject({
+        totalDebates: 1,
+        wins: wins[1],
+        losses: losses[1],
+      });
+      expect(livekit.roomMetadata.get(`debate-${lobbyId}`)).toBe("ENDED");
+      livekit.active.set(`debate-${lobbyId}`, []);
+      for (const token of [creatorIdentity, "spectator"]) {
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/topics/dream-cheating/participants",
+          payload: { lobbyId, token },
+        });
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toMatchObject({
+          state: "ENDED",
+          results: {
+            debaters: [
+              { name: "First", votes: counts[0] },
+              { name: "Second", votes: counts[1] },
+            ],
+            winningSide,
+          },
+        });
+      }
+    },
+  );
 
   it("marks spectators joining during voting ineligible and restricts their token", async () => {
     const { store } = await activeLobby();
@@ -1466,3 +1538,214 @@ describe("ending rounds", () => {
     );
   });
 });
+
+describe.each(["starter", "created"] as const)(
+  "reopening %s public lobbies",
+  (kind) => {
+    async function completedLobby() {
+      const id =
+        kind === "starter"
+          ? "dream-cheating"
+          : "de442318-535a-4007-a26d-553652066baf";
+      const voting = {
+        roundId: "previous-round",
+        endsAt: new Date(0).toISOString(),
+        eligible: ["viewer"],
+        votes: { viewer: "0" as const },
+        debaterNames: { "0": "First", "1": "Second" },
+      };
+      const privateStore = createMemoryPrivateLobbyStore(
+        kind === "created"
+          ? [
+              {
+                id,
+                topicId: id,
+                name: "Reusable public topic",
+                side0: "Yes",
+                side1: "No",
+                visibility: "public",
+                state: "ENDED",
+                voting,
+                roundEndsAt: new Date(0),
+                creatorIdentity: "viewer",
+                codeHash: null,
+                createdAt: new Date(),
+                expiresAt: null,
+              },
+            ]
+          : [],
+      );
+      const publicStore = createMemoryPublicLobbyStateStore([
+        {
+          topicId: id,
+          hostIdentity: "viewer",
+          state: "ENDED",
+          voting,
+          roundEndsAt: new Date(0),
+        },
+      ]);
+      const livekit = fakeLiveKit();
+      const participants: RoomParticipant[] = [
+        {
+          identity: "a1000000-0000-4000-8000-000000000001",
+          displayName: "First",
+          role: "debater",
+          sideIndex: 0,
+        },
+        {
+          identity: "a1000000-0000-4000-8000-000000000002",
+          displayName: "Second",
+          role: "debater",
+          sideIndex: 1,
+        },
+        {
+          identity: "viewer",
+          displayName: "Viewer",
+          role: "spectator",
+          sideIndex: null,
+        },
+      ];
+      livekit.active.set(`debate-${id}`, participants);
+      const debateResults = createMemoryDebateResultStore();
+      const app = await testApp(livekit.gateway, privateStore, {
+        debateResults,
+        publicLobbyState: publicStore,
+      });
+      const read = () =>
+        kind === "starter" ? publicStore.find(id) : privateStore.findById(id);
+      const card = async () =>
+        (await app.inject({ method: "GET", url: "/api/topics" }))
+          .json()
+          .find((topic: { id: string }) => topic.id === id);
+      return {
+        id,
+        voting,
+        app,
+        livekit,
+        read,
+        card,
+        debateResults,
+        expire: async () => {
+          const current = (await read())!;
+          const store = kind === "starter" ? publicStore : privateStore;
+          await store.updateState(id, "VOTING", "VOTING", undefined, {
+            ...current.voting!,
+            endsAt: new Date(0).toISOString(),
+            votes: { viewer: "0" },
+          });
+        },
+      };
+    }
+
+    it("reopens after both debaters leave and starts the next round with fresh voting", async () => {
+      const { id, voting, app, livekit, read, card, debateResults, expire } =
+        await completedLobby();
+      await debateResults.recordResults(
+        voting.roundId,
+        [
+          { accountId: "a1000000-0000-4000-8000-000000000001", sideIndex: 0 },
+          { accountId: "a1000000-0000-4000-8000-000000000002", sideIndex: 1 },
+        ],
+        0,
+      );
+      expect((await card()).sideAvailability).toEqual([false, false]);
+      const leave = (token: string) =>
+        app.inject({
+          method: "POST",
+          url: `/api/topics/${id}/leave`,
+          payload: { lobbyId: id, token },
+        });
+      expect(
+        (await leave("a1000000-0000-4000-8000-000000000001")).statusCode,
+      ).toBe(200);
+      expect((await read())?.state).toBe("ENDED");
+      expect(
+        (await leave("a1000000-0000-4000-8000-000000000002")).statusCode,
+      ).toBe(200);
+      expect((await card()).sideAvailability).toEqual([true, true]);
+      expect(await read()).toMatchObject({
+        state: "WAITING",
+        roundEndsAt: null,
+        voting,
+      });
+      expect(livekit.roomMetadata.get(`debate-${id}`)).toBe("WAITING");
+      for (const sideIndex of [0, 1]) {
+        const response = await app.inject({
+          method: "POST",
+          url: `/api/topics/${id}/join`,
+          payload: {
+            lobbyId: id,
+            intent: "debater",
+            previousToken:
+              sideIndex === 0
+                ? "a1000000-0000-4000-8000-000000000001"
+                : "a1000000-0000-4000-8000-000000000002",
+            displayName: `Next ${sideIndex}`,
+            sideIndex,
+          },
+        });
+        expect(response.statusCode).toBe(200);
+        const join = response.json();
+        livekit.active.get(`debate-${id}`)!.push({
+          identity: join.participantIdentity,
+          displayName: join.displayName,
+          role: "debater",
+          sideIndex: join.sideIndex,
+        });
+      }
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: `/api/topics/${id}/start`,
+            payload: { lobbyId: id, token: "viewer" },
+          })
+        ).statusCode,
+      ).toBe(200);
+      expect((await read())?.voting).toBeNull();
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: `/api/topics/${id}/end-round`,
+            payload: { lobbyId: id, token: "viewer" },
+          })
+        ).statusCode,
+      ).toBe(200);
+      const next = (await read())!.voting!;
+      expect(next.roundId).not.toBe(voting.roundId);
+      expect(next.votes).toEqual({});
+      expect(next.eligible).toContain("viewer");
+      await expire();
+      await vi.waitFor(
+        async () => expect((await read())?.state).toBe("ENDED"),
+        { timeout: 2500 },
+      );
+      await expect(
+        debateResults.statisticsFor("a1000000-0000-4000-8000-000000000001"),
+      ).resolves.toMatchObject({ totalDebates: 2, wins: 2 });
+    });
+
+    it("recovers vacant positions after a disconnect without requiring a leave request", async () => {
+      const { id, app, livekit, card } = await completedLobby();
+      livekit.active.set(`debate-${id}`, [
+        {
+          identity: "viewer",
+          displayName: "Viewer",
+          role: "spectator",
+          sideIndex: null,
+        },
+      ]);
+      expect((await card()).sideAvailability).toEqual([true, true]);
+      const status = await app.inject({
+        method: "POST",
+        url: `/api/topics/${id}/participants`,
+        payload: { lobbyId: id, token: "viewer" },
+      });
+      expect(status.json()).toMatchObject({
+        state: "WAITING",
+        results: { winningSide: 0 },
+      });
+    });
+  },
+);

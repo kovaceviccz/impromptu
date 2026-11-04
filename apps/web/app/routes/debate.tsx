@@ -5,6 +5,7 @@ import {
   chatMessageSchema,
   type ChatMessage,
   type LobbyState,
+  type RoundResults,
   type JoinInput,
   type JoinResult,
 } from "@impromptu/api/contracts";
@@ -540,6 +541,8 @@ type VotingStatus = {
   votingEndsAt?: string | null;
   voteCounts?: [number, number];
   selectedVote?: "0" | "1" | null;
+  results?: RoundResults | null;
+  voteEligible?: boolean;
 };
 
 function ParticipantStatus({
@@ -556,6 +559,8 @@ function ParticipantStatus({
     votingEndsAt?: string | null;
     voteCounts?: [number, number];
     selectedVote?: "0" | "1" | null;
+    results?: RoundResults | null;
+    voteEligible?: boolean;
   }) => void;
 }) {
   const { topicId, lobbyId, token } = join;
@@ -630,7 +635,12 @@ function LobbyStatus({
 
   useEffect(() => {
     function updateState(metadata: string) {
-      if (metadata === "DEBATE_IN_PROGRESS" || metadata === "VOTING") {
+      if (
+        metadata === "DEBATE_IN_PROGRESS" ||
+        metadata === "VOTING" ||
+        metadata === "ENDED" ||
+        metadata === "WAITING"
+      ) {
         onStateChange(metadata);
       }
     }
@@ -1060,26 +1070,58 @@ function AudiencePanel({
                 <h2 className="font-editorial text-lg font-semibold">
                   Audience vote
                 </h2>
-                {join.state === "VOTING" && voting.votingEndsAt ? (
-                  votingClosed ? (
-                    <span className="text-sm text-muted-foreground">
-                      Voting is closed
-                    </span>
-                  ) : (
-                    <RoundCountdown
-                      endsAt={voting.votingEndsAt}
-                      label="Voting time remaining"
-                    />
-                  )
+                {votingClosed ? (
+                  <span className="text-sm text-muted-foreground">
+                    Voting is closed
+                  </span>
+                ) : join.state === "VOTING" && voting.votingEndsAt ? (
+                  <RoundCountdown
+                    endsAt={voting.votingEndsAt}
+                    label="Voting time remaining"
+                  />
                 ) : null}
               </div>
               <p className="text-sm text-muted-foreground">
-                {canVote
-                  ? "Vote for the debater who presented the stronger argument. Tap again to undo."
-                  : "Audience votes appear here as spectators choose the stronger argument."}
+                {votingClosed
+                  ? "Voting has ended. Results are final."
+                  : canVote
+                    ? "Vote for the debater who presented the stronger argument. Tap again to undo."
+                    : "Audience votes appear here as spectators choose the stronger argument."}
               </p>
             </div>
-            {canVote ? (
+            {votingClosed && voting.results ? (
+              <section
+                aria-label="Round results"
+                className="grid gap-3 rounded-lg border p-3"
+              >
+                <h3 className="font-editorial text-lg font-semibold">
+                  Round results
+                </h3>
+                <output className="font-medium" aria-live="polite">
+                  {voting.results.winningSide === null
+                    ? "The round is a tie."
+                    : `${voting.results.debaters[voting.results.winningSide].name} wins the round.`}
+                </output>
+                <dl className="grid gap-2">
+                  {voting.results.debaters.map((debater, index) => (
+                    <div
+                      className="flex items-center justify-between gap-3"
+                      key={index}
+                    >
+                      <dt>
+                        <span className="font-medium">{debater.name}</span>
+                        <span className="block text-xs text-muted-foreground">
+                          {sides[index]}
+                        </span>
+                      </dt>
+                      <dd className="tabular-nums">
+                        {debater.votes} {debater.votes === 1 ? "vote" : "votes"}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            ) : canVote ? (
               <ToggleGroup
                 className="flex w-full gap-2"
                 disabled={isVoting || votingClosed || !voting.votingEndsAt}
@@ -1107,9 +1149,11 @@ function AudiencePanel({
                 title={
                   join.role === "debater"
                     ? "Only spectators can vote."
-                    : join.state === "VOTING"
-                      ? "You are not eligible to vote this round."
-                      : "Voting opens when the round ends."
+                    : votingClosed
+                      ? "Voting is closed"
+                      : join.state === "VOTING"
+                        ? "You are not eligible to vote this round."
+                        : "Voting opens when the round ends."
                 }
               >
                 {sides.map((side, index) => (
@@ -1127,6 +1171,9 @@ function AudiencePanel({
                 ))}
               </dl>
             )}
+            {votingClosed && !voting.results ? (
+              <output aria-live="polite">Loading round results…</output>
+            ) : null}
             <p className="text-xs text-muted-foreground">
               {voteTotal}
               {voteTotal === 1 ? " spectator vote" : " spectator votes"}
@@ -1337,9 +1384,11 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
     return () => clearTimeout(timer);
   }, [voting.votingEndsAt]);
   const votingClosed =
-    join.state === "VOTING" &&
-    (voting.votingEndsAt === null ||
-      (!!voting.votingEndsAt && now >= Date.parse(voting.votingEndsAt)));
+    join.state === "ENDED" ||
+    !!voting.results ||
+    (join.state === "VOTING" &&
+      (voting.votingEndsAt === null ||
+        (!!voting.votingEndsAt && now >= Date.parse(voting.votingEndsAt))));
   const [endingRound, setEndingRound] = useState(false);
   const endPending = useRef(false);
   const startPending = useRef(false);
@@ -1391,6 +1440,7 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
     [join.isCreator, join.topicId, navigate],
   );
   const updateLobbyState = useCallback((state: LobbyState) => {
+    if (state === "DEBATE_IN_PROGRESS") setVoting({});
     setJoin((current) =>
       current.state === state ? current : { ...current, state },
     );
@@ -1403,6 +1453,8 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
       votingEndsAt?: string | null;
       voteCounts?: [number, number];
       selectedVote?: "0" | "1" | null;
+      results?: RoundResults | null;
+      voteEligible?: boolean;
     }) => {
       setRoundEndsAt(status.roundEndsAt);
       setVoting(status);
@@ -1634,7 +1686,7 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
                   {endingRound ? "Ending round…" : "End round"}
                 </Button>
               ) : null}
-              {join.state === "VOTING" ? (
+              {join.state === "VOTING" || join.state === "ENDED" ? (
                 <output aria-live="polite">
                   {votingClosed
                     ? "Voting is closed"
@@ -1703,7 +1755,11 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
             votingClosed={votingClosed}
             onVote={setVoting}
             activeTab={audienceTab}
-            canVote={!isDebater && eligibleToVote && join.state === "VOTING"}
+            canVote={
+              !isDebater &&
+              (voting.voteEligible ?? eligibleToVote) &&
+              join.state === "VOTING"
+            }
             onTabChange={setAudienceTab}
             join={join}
             onChangeRole={changeRole}

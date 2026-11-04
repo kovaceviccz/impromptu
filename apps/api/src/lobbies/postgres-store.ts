@@ -29,7 +29,7 @@ export function createPostgresPrivateLobbyStore(
         .fork()
         .find(
           PrivateLobbyEntity,
-          { visibility: "public", state: { $ne: "ENDED" } },
+          { visibility: "public" },
           { orderBy: { createdAt: "DESC" } },
         );
       return entities.map(toRecord);
@@ -55,7 +55,7 @@ export function createPostgresPrivateLobbyStore(
         {
           state,
           ...(roundEndsAt !== undefined ? { roundEndsAt } : {}),
-          ...(voting ? { voting } : {}),
+          ...(voting !== undefined ? { voting } : {}),
         },
       );
       return updated > 0;

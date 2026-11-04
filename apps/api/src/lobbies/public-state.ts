@@ -22,7 +22,7 @@ export interface PublicLobbyStateStore {
     expectedState: LobbyState,
     state: LobbyState,
     roundEndsAt?: Date | null,
-    voting?: Voting,
+    voting?: Voting | null,
   ): Promise<boolean>;
   dueRounds(now: Date): Promise<PublicLobbyState[]>;
   dueVotes(now: Date): Promise<PublicLobbyState[]>;
@@ -69,7 +69,7 @@ export function createMemoryPublicLobbyStateStore(
         ...current,
         state,
         ...(roundEndsAt !== undefined ? { roundEndsAt } : {}),
-        ...(voting ? { voting } : {}),
+        ...(voting !== undefined ? { voting } : {}),
       });
       return true;
     },

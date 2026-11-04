@@ -31,7 +31,7 @@ export interface PrivateLobbyStore {
     expectedState: LobbyState,
     state: LobbyState,
     roundEndsAt?: Date | null,
-    voting?: Voting,
+    voting?: Voting | null,
   ): Promise<boolean>;
   delete(id: string): Promise<void>;
   dueRounds(now: Date): Promise<PrivateLobbyRecord[]>;
@@ -77,9 +77,7 @@ export function createMemoryPrivateLobbyStore(
     },
     async listPublic() {
       return [...lobbies.values()]
-        .filter(
-          (lobby) => lobby.visibility === "public" && lobby.state !== "ENDED",
-        )
+        .filter((lobby) => lobby.visibility === "public")
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     },
     async hasCreatedName(name) {
@@ -99,7 +97,7 @@ export function createMemoryPrivateLobbyStore(
         ...lobby,
         state,
         ...(roundEndsAt !== undefined ? { roundEndsAt } : {}),
-        ...(voting ? { voting } : {}),
+        ...(voting !== undefined ? { voting } : {}),
       });
       return true;
     },

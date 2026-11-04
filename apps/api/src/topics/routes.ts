@@ -99,11 +99,11 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
   async function resolveTopic(id: string): Promise<ResolvedTopic | undefined> {
     const starter = findTopic(id);
     if (starter)
-      return {
+      return refreshPublicTopic({
         id: starter.id,
         title: starter.title,
         sides: [starter.sides[0], starter.sides[1]],
-      };
+      });
     const record = await findLobby(id);
     if (
       record?.topicId !== id ||
@@ -113,37 +113,78 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       (record.expiresAt && record.expiresAt <= new Date())
     )
       return undefined;
-    return {
+    return refreshPublicTopic({
       id,
       title: record.name,
       sides: [record.side0, record.side1],
       record,
-    };
+    });
+  }
+  async function refreshPublicTopic(
+    topic: ResolvedTopic,
+  ): Promise<ResolvedTopic> {
+    if (topic.record && topic.record.visibility !== "public") return topic;
+    const lobby = topic.record
+      ? await findLobby(topic.id)
+      : await options.publicLobbyState.find(topic.id);
+    if (!lobby) return topic;
+    if ("id" in lobby) topic = { ...topic, record: lobby };
+    if (
+      ("visibility" in lobby && lobby.visibility !== "public") ||
+      lobby.state !== "ENDED"
+    )
+      return topic;
+    if ((await allocation.status(topic.id)).debaterCount !== 0) return topic;
+    const store = topic.record
+      ? options.privateLobbies
+      : options.publicLobbyState;
+    // Preserve the last results until a new round starts.
+    if (!(await store.updateState(topic.id, "ENDED", "WAITING", null))) {
+      const latest = topic.record ? await findLobby(topic.id) : undefined;
+      return latest ? { ...topic, record: latest } : topic;
+    }
+    publishPublicChange();
+    try {
+      await options.livekit.updateRoomMetadata(`debate-${topic.id}`, "WAITING");
+    } catch (err) {
+      app.log.error(
+        { err, lobbyId: topic.id },
+        "Could not broadcast reopened lobby",
+      );
+    }
+    return topic.record
+      ? {
+          ...topic,
+          record: { ...topic.record, state: "WAITING", roundEndsAt: null },
+        }
+      : topic;
   }
   async function publicTopics(): Promise<ResolvedTopic[]> {
     const created = await options.privateLobbies.listPublic();
-    return [
-      ...topics.map((topic) => ({
-        id: topic.id,
-        title: topic.title,
-        sides: [topic.sides[0], topic.sides[1]] as [string, string],
-      })),
-      ...created
-        .filter(
-          (record) =>
-            record.topicId === record.id &&
-            record.name &&
-            record.side0 &&
-            record.side1 &&
-            (!record.expiresAt || record.expiresAt > new Date()),
-        )
-        .map((record) => ({
-          id: record.id,
-          title: record.name!,
-          sides: [record.side0!, record.side1!] as [string, string],
-          record,
+    return Promise.all(
+      [
+        ...topics.map((topic) => ({
+          id: topic.id,
+          title: topic.title,
+          sides: [topic.sides[0], topic.sides[1]] as [string, string],
         })),
-    ];
+        ...created
+          .filter(
+            (record) =>
+              record.topicId === record.id &&
+              record.name &&
+              record.side0 &&
+              record.side1 &&
+              (!record.expiresAt || record.expiresAt > new Date()),
+          )
+          .map((record) => ({
+            id: record.id,
+            title: record.name!,
+            sides: [record.side0!, record.side1!] as [string, string],
+            record,
+          })),
+      ].map(refreshPublicTopic),
+    );
   }
   const publicListeners = new Set<import("node:http").ServerResponse>();
   let publicRevision = 0;
@@ -234,11 +275,17 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       "VOTING",
       undefined,
       {
+        roundId: randomUUID(),
         endsAt: new Date(Date.now() + 30_000).toISOString(),
         eligible: participants
           .filter((p) => p.role === "spectator")
           .map((p) => p.identity),
         votes: {},
+        debaterNames: Object.fromEntries(
+          participants
+            .filter((p) => p.role === "debater" && p.sideIndex !== null)
+            .map((p) => [String(p.sideIndex), p.displayName]),
+        ),
         debaters: Object.fromEntries(
           participants
             .filter(
@@ -275,7 +322,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
     const winningSide =
       side0Votes === side1Votes ? null : side0Votes > side1Votes ? 0 : 1;
     await options.debateResults.recordResults(
-      lobbyId,
+      voting.roundId ?? lobbyId,
       Object.entries(voting.debaters ?? {}).flatMap(([side, accountId]) =>
         accountId && (side === "0" || side === "1")
           ? [{ accountId, sideIndex: side === "0" ? 0 : 1 }]
@@ -550,12 +597,14 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
             "WAITING",
             "DEBATE_IN_PROGRESS",
             roundEndsAt,
+            null,
           )
         : await options.privateLobbies.updateState(
             lobbyId,
             "WAITING",
             "DEBATE_IN_PROGRESS",
             roundEndsAt,
+            null,
           );
       if (!updated) {
         const latestState = isPublicLobby
@@ -1280,6 +1329,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         }
         publishPublicChange();
       }
+      await refreshPublicTopic(topic);
       return { status: "ok" as const };
     },
   );
