@@ -1,4 +1,5 @@
 import { expect, test } from "./lobby-fixture";
+import { apiContract } from "@impromptu/api/contracts";
 
 test("the starter topic card reflects its live room", async ({
   page,
@@ -31,6 +32,9 @@ test("creating a public topic creates its only lobby and closing it removes the 
 }) => {
   test.setTimeout(90_000);
   const title = `Can machines dream ${Date.now()}?`;
+  const initialCount = apiContract.topics.response.parse(
+    await (await page.request.get("/api/topics")).json(),
+  ).length;
   const viewerContext = await browser.newContext();
   const viewer = await viewerContext.newPage();
   try {
@@ -39,7 +43,9 @@ test("creating a public topic creates its only lobby and closing it removes the 
       viewer.getByRole("heading", { name: "Can you cheat in a dream?" }),
     ).toBeVisible();
     await viewerContext.setOffline(true);
-    await page.getByRole("button", { name: "Create or join a topic" }).click();
+    await page.getByRole("button", { name: "Create or Join" }).click();
+    await page.getByText("Write your own", { exact: true }).click();
+    await page.getByText("Miscellaneous", { exact: true }).click();
     await page.getByLabel("Topic question").fill(title);
     await page.getByLabel("Affirmative position").fill("Yes, they can");
     await page.getByLabel("Opposing position").fill("No, they cannot");
@@ -50,12 +56,18 @@ test("creating a public topic creates its only lobby and closing it removes the 
     await page.getByRole("button", { name: "Continue to lobby" }).click();
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
     await viewerContext.setOffline(false);
-    await expect(viewer.getByText("1 of 4")).toBeVisible({ timeout: 20_000 });
-    for (let index = 0; index < 3; index += 1) {
+    await expect(viewer.getByText(`1 of ${initialCount + 1}`)).toBeVisible({
+      timeout: 20_000,
+    });
+    const topicHeading = viewer.getByRole("heading", { name: title });
+    for (
+      let index = 0;
+      index < initialCount && (await topicHeading.count()) === 0;
+      index += 1
+    ) {
       await viewer.getByRole("button", { name: "Next topic" }).click();
     }
-    await expect(viewer.getByRole("heading", { name: title })).toBeVisible();
-    await expect(viewer.getByText("4 of 4")).toBeVisible();
+    await expect(topicHeading).toBeVisible();
     await expect(viewer.getByText("1 person watching")).toBeVisible();
     await viewer.getByRole("button", { name: "Watch live" }).click();
     await expect(viewer.getByRole("heading", { name: title })).toBeVisible();
@@ -77,8 +89,13 @@ test("public positions reopen after the completed round's debaters leave", async
 }) => {
   test.setTimeout(90_000);
   const title = `Reusable public lobby ${Date.now()}`;
+  const initialCount = apiContract.topics.response.parse(
+    await (await page.request.get("/api/topics")).json(),
+  ).length;
   await page.goto("/");
-  await page.getByRole("button", { name: "Create or join a topic" }).click();
+  await page.getByRole("button", { name: "Create or Join" }).click();
+  await page.getByText("Write your own", { exact: true }).click();
+  await page.getByText("Miscellaneous", { exact: true }).click();
   await page.getByLabel("Topic question").fill(title);
   await page.getByLabel("Affirmative position").fill("Yes, reuse it");
   await page.getByLabel("Opposing position").fill("No, close it");
@@ -92,7 +109,12 @@ test("public positions reopen after the completed round's debaters leave", async
     const guest = await page.context().newPage();
     guests.push(guest);
     await guest.goto("/");
-    for (let index = 0; index < 3; index++)
+    for (
+      let index = 0;
+      index < initialCount &&
+      (await guest.getByRole("heading", { name: title }).count()) === 0;
+      index++
+    )
       await guest.getByRole("button", { name: "Next topic" }).click();
     await expect(guest.getByRole("heading", { name: title })).toBeVisible();
     await guest
@@ -113,7 +135,12 @@ test("public positions reopen after the completed round's debaters leave", async
   for (const guest of guests)
     await guest.getByRole("button", { name: "Leave lobby" }).click();
   for (const guest of guests) {
-    for (let index = 0; index < 3; index++)
+    for (
+      let index = 0;
+      index < initialCount &&
+      (await guest.getByRole("heading", { name: title }).count()) === 0;
+      index++
+    )
       await guest.getByRole("button", { name: "Next topic" }).click();
     await expect(guest.getByRole("heading", { name: title })).toBeVisible();
     await expect(guest.getByText("Both sides open")).toBeVisible();

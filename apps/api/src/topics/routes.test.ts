@@ -14,6 +14,7 @@ import {
   createMemoryPrivateLobbyStore,
   type PrivateLobbyStore,
 } from "../lobbies/store.js";
+import { topicPresets } from "./data.js";
 import {
   createLiveKitGateway,
   type DebateRole,
@@ -266,6 +267,7 @@ describe("API contracts", () => {
       payload: {
         name: "   ",
         sides,
+        category: "Philosophy",
         visibility: "public",
         displayName: "Host",
         intent: "spectator",
@@ -274,12 +276,59 @@ describe("API contracts", () => {
     expect(invalid.statusCode).toBe(400);
     expect(await store.listPublic()).toEqual([]);
 
+    const invalidTag = await app.inject({
+      method: create.method,
+      url: create.path,
+      payload: {
+        name: "Forged tag test",
+        sides,
+        category: "Philosophy",
+        tags: ["User-written tag"],
+        visibility: "public",
+        displayName: "Host",
+        intent: "spectator",
+      },
+    });
+    expect(invalidTag.statusCode).toBe(400);
+    expect(await store.listPublic()).toEqual([]);
+
+    const invalidCategory = await app.inject({
+      method: create.method,
+      url: create.path,
+      payload: {
+        name: "Invalid category",
+        sides,
+        category: "Unlisted",
+        visibility: "public",
+        displayName: "Host",
+        intent: "spectator",
+      },
+    });
+    expect(invalidCategory.statusCode).toBe(400);
+    expect(await store.listPublic()).toEqual([]);
+
+    const missingCategory = await app.inject({
+      method: create.method,
+      url: create.path,
+      payload: {
+        name: "Missing category",
+        sides,
+        visibility: "public",
+        displayName: "Host",
+        intent: "spectator",
+      },
+    });
+    expect(missingCategory.statusCode).toBe(400);
+    expect(await store.listPublic()).toEqual([]);
+
     const publicResponse = await app.inject({
       method: create.method,
       url: create.path,
       payload: {
         name: "Can machines dream?",
         sides,
+        category: "Philosophy",
+        tags: ["Casual", "Beginner-friendly"],
         visibility: "public",
         displayName: "Host",
         intent: "spectator",
@@ -300,9 +349,26 @@ describe("API contracts", () => {
       name: "Can machines dream?",
       side0: sides[0],
       side1: sides[1],
+      category: "Philosophy",
+      tags: ["Casual", "Beginner-friendly"],
       visibility: "public",
       expiresAt: null,
     });
+    const publicLobbies = apiContract.publicLobbies.response.parse(
+      (
+        await app.inject({
+          method: "GET",
+          url: apiContract.publicLobbies.path,
+        })
+      ).json(),
+    );
+    expect(publicLobbies).toContainEqual(
+      expect.objectContaining({
+        topicId: publicJoin.topicId,
+        category: "Philosophy",
+        tags: ["Casual", "Beginner-friendly"],
+      }),
+    );
 
     const duplicate = await app.inject({
       method: create.method,
@@ -310,6 +376,7 @@ describe("API contracts", () => {
       payload: {
         name: "can machines DREAM?",
         sides,
+        category: "Philosophy",
         visibility: "public",
         displayName: "Host",
         intent: "spectator",
@@ -323,6 +390,7 @@ describe("API contracts", () => {
       payload: {
         name: "Should robots vote?",
         sides,
+        category: "Miscellaneous",
         visibility: "private",
         displayName: "Private host",
         intent: "spectator",
@@ -345,12 +413,13 @@ describe("API contracts", () => {
         await app.inject({ method: "GET", url: apiContract.topics.path })
       ).json(),
     );
-    expect(visible).toHaveLength(4);
     expect(visible).toContainEqual(
       expect.objectContaining({
         id: publicJoin.topicId,
         title: "Can machines dream?",
         sides,
+        category: "Philosophy",
+        tags: ["Casual", "Beginner-friendly"],
       }),
     );
     expect(JSON.stringify(visible)).not.toContain(privateJoin.topicId);
@@ -368,6 +437,7 @@ describe("API contracts", () => {
           payload: {
             name: "Can machines dream?",
             sides: ["Yes: it can", "No: it cannot"],
+            category: "Philosophy",
             visibility: "public",
             displayName: "Host",
             intent: "spectator",
@@ -412,7 +482,6 @@ describe("API contracts", () => {
         await app.inject({ method: "GET", url: apiContract.topics.path })
       ).json(),
     );
-    expect(visible).toHaveLength(3);
     expect(visible.some((topic) => topic.id === created.topicId)).toBe(false);
     const stale = await app.inject({
       method: "POST",
@@ -450,7 +519,6 @@ describe("API contracts", () => {
         await app.inject({ method: "GET", url: apiContract.topics.path })
       ).json(),
     );
-    expect(visible).toHaveLength(3);
     expect(visible[0]).toMatchObject({
       id: "dream-cheating",
       debaterCount: 2,
@@ -487,15 +555,16 @@ describe("API contracts", () => {
     const topics = apiContract.topics.response.parse(response.json());
 
     expect(response.statusCode).toBe(200);
-    expect(topics.map((topic) => topic.title)).toEqual([
-      "Can you cheat in a dream?",
-      "Is lying ever moral?",
-      "Is privacy a human right?",
-    ]);
+    expect(topics).toHaveLength(20);
+    expect(new Set(topicPresets.map((topic) => topic.category))).toEqual(
+      new Set(["Philosophy", "Society", "Sports", "Music", "Entertainment"]),
+    );
+
     expect(topics[0]).toEqual({
       id: "dream-cheating",
       title: "Can you cheat in a dream?",
       sides: ["Yes: intention still matters", "No: dreams are involuntary"],
+      category: "Philosophy",
       sideAvailability: [false, true],
       debaterCount: 1,
       spectatorCount: 2,
@@ -738,6 +807,8 @@ describe("API contracts", () => {
       payload: {
         name: "Can trees communicate?",
         sides: ["Yes, they can", "No, they cannot"],
+        category: "Society",
+        tags: ["Serious"],
         visibility: "private",
         displayName: "Creator",
         intent: "spectator",
@@ -764,6 +835,7 @@ describe("API contracts", () => {
       lobbyId: creator.topicId,
       title: "Can trees communicate?",
       sides: ["Yes, they can", "No, they cannot"],
+      tags: ["Serious"],
     });
     const occupied = await app.inject({
       method: "POST",

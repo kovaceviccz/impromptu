@@ -161,7 +161,9 @@ test("spectators can vote during voting and chat while debaters have a read-only
 }) => {
   test.setTimeout(90_000);
   await page.goto("/");
-  await page.getByRole("button", { name: "Create or join a topic" }).click();
+  await page.getByRole("button", { name: "Create or Join" }).click();
+  await page.getByText("Write your own", { exact: true }).click();
+  await page.getByText("Miscellaneous", { exact: true }).click();
   await page
     .getByLabel("Topic question")
     .fill(`Voting acceptance ${Date.now()}`);
@@ -179,9 +181,8 @@ test("spectators can vote during voting and chat while debaters have a read-only
 
   const spectator = await page.context().newPage();
   await spectator.goto("/");
-  await spectator
-    .getByRole("button", { name: "Create or join a topic" })
-    .click();
+  await spectator.getByRole("button", { name: "Create or Join" }).click();
+  await spectator.getByRole("tab", { name: "Join", exact: true }).click();
   await spectator.getByLabel("Lobby code", { exact: true }).fill(code);
   await spectator.getByRole("button", { name: "Find lobby" }).click();
   await spectator
@@ -208,9 +209,8 @@ test("spectators can vote during voting and chat while debaters have a read-only
 
   const opponent = await page.context().newPage();
   await opponent.goto("/");
-  await opponent
-    .getByRole("button", { name: "Create or join a topic" })
-    .click();
+  await opponent.getByRole("button", { name: "Create or Join" }).click();
+  await opponent.getByRole("tab", { name: "Join", exact: true }).click();
   await opponent.getByLabel("Lobby code", { exact: true }).fill(code);
   await opponent.getByRole("button", { name: "Find lobby" }).click();
   await opponent
