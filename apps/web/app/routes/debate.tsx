@@ -13,8 +13,10 @@ import {
   LiveKitRoom,
   RoomAudioRenderer,
   VideoTrack,
+  type TrackReference,
   useDataChannel,
   useConnectionState,
+  useLocalParticipant,
   useParticipants,
   useRoomContext,
   useTracks,
@@ -22,9 +24,14 @@ import {
 import {
   ArrowDownIcon,
   CopyIcon,
+  EyeIcon,
   LogOutIcon,
+  MicIcon,
+  MicOffIcon,
   SendIcon,
   SmileIcon,
+  VideoIcon,
+  VideoOffIcon,
 } from "lucide-react";
 import {
   ConnectionState,
@@ -59,7 +66,9 @@ import {
   EmojiPickerFooter,
   EmojiPickerSearch,
 } from "~/components/ui/emoji-picker";
+import { DevicePreview } from "~/components/device-preview";
 import { Input } from "~/components/ui/input";
+import { Spinner } from "~/components/ui/spinner";
 import {
   Message,
   MessageContent,
@@ -244,11 +253,147 @@ function assignDebaters(participants: RoomParticipant[], viewer: JoinResult) {
   return debatersBySide;
 }
 
+/** A publication that exists but is muted is a deliberate "off", not a delay. */
+function isSourceOff(participant: RoomParticipant, source: Track.Source) {
+  return participant.getTrackPublication(source)?.isMuted === true;
+}
+
+function ConnectingIndicator() {
+  return (
+    <output className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-neutral-950 text-sm text-neutral-300">
+      <Spinner className="size-6" />
+      Connecting…
+    </output>
+  );
+}
+
+/** Keeps "Connecting…" over the tile until the first frame actually plays. */
+function LiveVideo({ track }: { track: TrackReference }) {
+  const [playing, setPlaying] = useState(false);
+  return (
+    <>
+      <VideoTrack
+        trackRef={track}
+        onLoadedData={() => setPlaying(true)}
+        onPlaying={() => setPlaying(true)}
+        style={{
+          height: "100%",
+          objectFit: "cover",
+          transform: "scaleX(-1)",
+          transformOrigin: "center",
+          width: "100%",
+        }}
+      />
+      {playing ? null : <ConnectingIndicator />}
+    </>
+  );
+}
+
+function CameraOffPlaceholder({ name }: { name: string }) {
+  return (
+    <div className="flex flex-col items-center gap-3 px-3 text-center">
+      <span className="flex size-20 items-center justify-center rounded-full bg-neutral-800 font-editorial text-3xl font-semibold text-neutral-100">
+        {name.trim().charAt(0).toUpperCase() || "?"}
+      </span>
+      <p className="max-w-full truncate text-base font-medium text-neutral-100">
+        {name}
+      </p>
+      <p className="flex items-center gap-1.5 text-xs text-neutral-400">
+        <VideoOffIcon aria-hidden="true" className="size-3.5" />
+        Camera off
+      </p>
+    </div>
+  );
+}
+
+function MediaControls() {
+  const {
+    cameraTrack,
+    isCameraEnabled,
+    isMicrophoneEnabled,
+    localParticipant,
+    microphoneTrack,
+  } = useLocalParticipant();
+  const [pending, setPending] = useState<"camera" | "microphone">();
+  const [error, setError] = useState<string>();
+
+  async function toggle(device: "camera" | "microphone") {
+    setPending(device);
+    setError(undefined);
+    try {
+      if (device === "microphone") {
+        await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
+      } else {
+        await localParticipant.setCameraEnabled(
+          !isCameraEnabled,
+          VIDEO_CAPTURE_720P,
+        );
+      }
+    } catch {
+      setError(
+        device === "microphone"
+          ? "Your microphone could not be changed."
+          : "Your camera could not be changed.",
+      );
+    } finally {
+      setPending(undefined);
+    }
+  }
+
+  const micLabel = isMicrophoneEnabled
+    ? "Mute microphone"
+    : "Unmute microphone";
+  const cameraLabel = isCameraEnabled ? "Turn camera off" : "Turn camera on";
+
+  return (
+    <div className="absolute inset-x-0 bottom-3 z-10 flex flex-col items-center gap-2">
+      {error ? (
+        <p
+          className="rounded-md bg-destructive px-2 py-1 text-xs text-white"
+          role="alert"
+        >
+          {error}
+        </p>
+      ) : null}
+      <fieldset className="m-0 flex gap-2 border-0 p-0">
+        <legend className="sr-only">Your camera and microphone</legend>
+        <Button
+          aria-label={micLabel}
+          aria-pressed={!isMicrophoneEnabled}
+          className="rounded-full"
+          disabled={pending !== undefined || !microphoneTrack}
+          size="icon-lg"
+          title={micLabel}
+          type="button"
+          variant={isMicrophoneEnabled ? "secondary" : "destructive"}
+          onClick={() => void toggle("microphone")}
+        >
+          {isMicrophoneEnabled ? <MicIcon /> : <MicOffIcon />}
+        </Button>
+        <Button
+          aria-label={cameraLabel}
+          aria-pressed={!isCameraEnabled}
+          className="rounded-full"
+          disabled={pending !== undefined || !cameraTrack}
+          size="icon-lg"
+          title={cameraLabel}
+          type="button"
+          variant={isCameraEnabled ? "secondary" : "destructive"}
+          onClick={() => void toggle("camera")}
+        >
+          {isCameraEnabled ? <VideoIcon /> : <VideoOffIcon />}
+        </Button>
+      </fieldset>
+    </div>
+  );
+}
+
 function DebateVideos({ join }: { join: JoinResult }) {
   const { sides } = join;
   const participants = useRoomParticipants(join);
   const cameraTracks = useTracks([Track.Source.Camera]);
   const debatersBySide = assignDebaters(participants, join);
+  const connection = useConnectionState();
 
   return (
     <section className="grid min-h-0 grid-cols-2 bg-background">
@@ -259,6 +404,14 @@ function DebateVideos({ join }: { join: JoinResult }) {
             candidate.participant.identity === participant?.identity,
         );
         const label = participant && displayNameOf(participant, join);
+        const isOwnTile =
+          participant !== undefined && isViewer(participant, join);
+        const cameraOff =
+          participant !== undefined &&
+          isSourceOff(participant, Track.Source.Camera);
+        const micMuted =
+          participant !== undefined &&
+          isSourceOff(participant, Track.Source.Microphone);
 
         return (
           <article
@@ -282,7 +435,7 @@ function DebateVideos({ join }: { join: JoinResult }) {
             </header>
             <figure className="relative m-0 min-h-0 overflow-hidden bg-neutral-950 text-white">
               {label ? (
-                <figcaption className="absolute top-3 left-3 z-10">
+                <figcaption className="absolute top-3 left-3 z-20 flex items-center gap-1.5">
                   <Badge
                     className={
                       slot === 0
@@ -292,26 +445,42 @@ function DebateVideos({ join }: { join: JoinResult }) {
                   >
                     {label}
                   </Badge>
+                  {micMuted ? (
+                    <Badge
+                      className="bg-neutral-900/80 text-white"
+                      title="Microphone muted"
+                    >
+                      <MicOffIcon aria-hidden="true" />
+                      <span className="sr-only">Microphone muted</span>
+                    </Badge>
+                  ) : null}
+                  {cameraOff ? (
+                    <Badge
+                      className="bg-neutral-900/80 text-white"
+                      title="Camera off"
+                    >
+                      <VideoOffIcon aria-hidden="true" />
+                      <span className="sr-only">Camera off</span>
+                    </Badge>
+                  ) : null}
                 </figcaption>
               ) : null}
-              <div className="flex size-full items-center justify-center">
-                {track ? (
-                  <VideoTrack
-                    trackRef={track}
-                    style={{
-                      height: "100%",
-                      objectFit: "cover",
-                      transform: "scaleX(-1)",
-                      transformOrigin: "center",
-                      width: "100%",
-                    }}
-                  />
-                ) : (
+              <div className="relative flex size-full items-center justify-center">
+                {!participant ? (
                   <p className="px-3 text-center text-sm text-neutral-300">
-                    {participant ? "Camera unavailable" : "Side available"}
+                    Side available
                   </p>
+                ) : cameraOff ? (
+                  <CameraOffPlaceholder
+                    name={label || (isOwnTile ? join.displayName : "Debater")}
+                  />
+                ) : track && connection === ConnectionState.Connected ? (
+                  <LiveVideo key={participant.identity} track={track} />
+                ) : (
+                  <ConnectingIndicator />
                 )}
               </div>
+              {isOwnTile && join.role === "debater" ? <MediaControls /> : null}
             </figure>
           </article>
         );
@@ -751,10 +920,13 @@ function ParticipantRoster({
       <div className="grid grid-cols-2 gap-6">
         <section aria-labelledby="debaters-heading" className="min-w-0">
           <h2
-            className="flex items-baseline justify-between gap-2 text-xs text-muted-foreground"
+            className="flex items-center justify-between gap-2 text-xs text-muted-foreground"
             id="debaters-heading"
           >
-            Debaters{" "}
+            <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 font-medium text-violet-900">
+              <MicIcon aria-hidden="true" className="size-3" />
+              Debaters
+            </span>{" "}
             <span className="tabular-nums">{debatersBySide.size} of 2</span>
           </h2>
           <ul className="mt-2 grid gap-1.5">
@@ -809,20 +981,24 @@ function ParticipantRoster({
         </section>
         <section aria-labelledby="spectators-heading" className="min-w-0">
           <h2
-            className="flex items-baseline justify-between gap-2 text-xs text-muted-foreground"
+            className="flex items-center justify-between gap-2 text-xs text-muted-foreground"
             id="spectators-heading"
           >
-            Spectators <span className="tabular-nums">{spectators.length}</span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 font-medium text-sky-900">
+              <EyeIcon aria-hidden="true" className="size-3" />
+              Spectators
+            </span>{" "}
+            <span className="tabular-nums">{spectators.length}</span>
           </h2>
           {spectators.length === 0 ? (
             <p className="mt-2 text-sm text-muted-foreground">
               No spectators yet.
             </p>
           ) : (
-            <ul className="mt-2 grid max-h-24 gap-1 overflow-y-auto text-sm">
+            <ul className="mt-2 grid max-h-28 gap-1 overflow-y-auto text-sm">
               {spectators.map((participant) => (
                 <li
-                  className="flex min-w-0 items-center gap-2"
+                  className="flex min-w-0 items-center gap-2 rounded-md bg-sky-50 px-2 py-1 text-sky-950"
                   key={participant.identity}
                 >
                   <span className="truncate">{nameOf(participant)}</span>
@@ -1727,7 +1903,8 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
           {join.state === "DEBATE_IN_PROGRESS" && roundEndsAt ? (
             <RoundCountdown endsAt={roundEndsAt} />
           ) : null}
-          <div className="justify-self-end">
+          <div className="flex items-center gap-2 justify-self-end">
+            {join.state === "WAITING" ? <DevicePreview /> : null}
             <LeaveButton
               join={join}
               leaving={leaving}

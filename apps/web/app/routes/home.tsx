@@ -45,7 +45,7 @@ import {
 } from "../api";
 
 export const MEDIA_PERMISSION_MESSAGE =
-  "Video and audio permissions must be given. Try again.";
+  "Camera and microphone access was blocked. Click the camera or lock icon in your browser's address bar, set both to Allow, then join again.";
 
 export function meta() {
   return [

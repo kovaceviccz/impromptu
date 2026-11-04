@@ -38,6 +38,7 @@ type MockParticipant = {
   isLocal?: boolean;
   name: string;
   permissions: { canPublish: boolean };
+  publications?: Partial<Record<string, { isMuted: boolean }>>;
 };
 
 const defaultParticipants: MockParticipant[] = [
@@ -86,6 +87,7 @@ const {
   submitVoteRequest,
   setAttributes,
   setName,
+  localMedia,
 } = vi.hoisted(() => ({
   submitVoteRequest: vi.fn<typeof import("../api").submitVote>(),
   endRoundRequest: vi.fn<typeof import("../api").endRound>(),
@@ -133,6 +135,12 @@ const {
     >(),
   setAttributes: vi.fn<(attributes: Record<string, string>) => Promise<void>>(),
   setName: vi.fn<(name: string) => Promise<void>>(),
+  localMedia: {
+    camera: true,
+    microphone: true,
+    setCameraEnabled: vi.fn<(enabled: boolean) => Promise<void>>(),
+    setMicrophoneEnabled: vi.fn<(enabled: boolean) => Promise<void>>(),
+  },
 }));
 
 beforeEach(() => {
@@ -144,6 +152,10 @@ beforeEach(() => {
   roomState.participants = defaultParticipants;
   roomState.connection = "connected";
   roomState.metadataListeners.clear();
+  localMedia.camera = true;
+  localMedia.microphone = true;
+  localMedia.setCameraEnabled.mockResolvedValue();
+  localMedia.setMicrophoneEnabled.mockResolvedValue();
   roomState.chatCallback = undefined;
   getParticipants.mockResolvedValue({
     hostIdentity: null,
@@ -212,8 +224,16 @@ vi.mock("@livekit/components-react", async () => {
       </div>
     ),
     RoomAudioRenderer: () => null,
-    VideoTrack: ({ style }: { style?: CSSProperties }) => (
-      <div data-testid="video-track" style={style} />
+    VideoTrack: ({
+      onPlaying,
+      style,
+    }: {
+      onPlaying?: () => void;
+      style?: CSSProperties;
+    }) => (
+      <video data-testid="video-track" style={style} onPlaying={onPlaying}>
+        <track kind="captions" />
+      </video>
     ),
     useDataChannel: (
       _topic: string,
@@ -244,7 +264,22 @@ vi.mock("@livekit/components-react", async () => {
         send: vi.fn<(payload: Uint8Array) => Promise<void>>(),
       };
     },
-    useParticipants: () => roomState.participants,
+    useParticipants: () =>
+      roomState.participants.map((participant) => ({
+        ...participant,
+        getTrackPublication: (source: string) =>
+          participant.publications?.[source],
+      })),
+    useLocalParticipant: () => ({
+      cameraTrack: {},
+      isCameraEnabled: localMedia.camera,
+      isMicrophoneEnabled: localMedia.microphone,
+      localParticipant: {
+        setCameraEnabled: localMedia.setCameraEnabled,
+        setMicrophoneEnabled: localMedia.setMicrophoneEnabled,
+      },
+      microphoneTrack: {},
+    }),
     useConnectionState: () => roomState.connection,
     useRoomContext: () => ({
       disconnect: disconnectRoom,
@@ -1249,10 +1284,11 @@ describe("Participant roster", () => {
         />
       </MemoryRouter>,
     );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Voting is in progress",
-    );
-    expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
+    const votingStatus = screen
+      .getAllByRole("status")
+      .find((status) => status.textContent?.includes("Voting is in progress"));
+    expect(votingStatus).toBeDefined();
+    expect(votingStatus).toHaveAttribute("aria-live", "polite");
     expect(
       screen.queryByRole("button", { name: /Yes: intention still matters/ }),
     ).toBeNull();
@@ -2082,5 +2118,254 @@ describe("Participant roster", () => {
     expect(
       screen.getByRole("button", { name: "Copy lobby code ABCD2345" }),
     ).toBeVisible();
+  });
+});
+
+describe("Debate media", () => {
+  const debaterJoin: JoinResult = {
+    lobbyId: "dream-cheating",
+    state: "WAITING",
+    topicId: "dream-cheating",
+    topicTitle: "Can you cheat in a dream?",
+    sides: ["Yes: intention still matters", "No: dreams are involuntary"],
+    participantIdentity: "debater-id",
+    displayName: "Debater guest",
+    role: "debater",
+    sideIndex: 0,
+    isCreator: false,
+    hostIdentity: null,
+    livekitUrl: "ws://localhost:7880",
+    token: "debater-token",
+  };
+
+  function firstTile() {
+    return screen
+      .getByRole("heading", { name: "Yes: intention still matters" })
+      .closest("article")!;
+  }
+
+  it("shows Connecting… until the video plays, then the live video", () => {
+    render(
+      <MemoryRouter>
+        <DebateExperience join={debaterJoin} />
+      </MemoryRouter>,
+    );
+    const tile = within(firstTile());
+    expect(tile.getByRole("status")).toHaveTextContent("Connecting…");
+    fireEvent.playing(tile.getByTestId("video-track"));
+    expect(tile.queryByText("Connecting…")).toBeNull();
+    expect(tile.getByTestId("video-track")).toBeVisible();
+  });
+
+  it("shows Connecting… while the room has not connected yet", () => {
+    roomState.connection = "connecting";
+    render(
+      <MemoryRouter>
+        <DebateExperience join={debaterJoin} />
+      </MemoryRouter>,
+    );
+    const tile = within(firstTile());
+    expect(tile.getByText("Connecting…")).toBeVisible();
+    expect(tile.queryByTestId("video-track")).toBeNull();
+  });
+
+  it("replaces a debater's video with their name and shows muted icons", () => {
+    roomState.participants = [
+      defaultParticipants[0]!,
+      {
+        ...defaultParticipants[1]!,
+        publications: {
+          camera: { isMuted: true },
+          microphone: { isMuted: true },
+        },
+      },
+    ];
+    render(
+      <MemoryRouter>
+        <DebateExperience
+          join={{
+            ...debaterJoin,
+            participantIdentity: "spectator-id",
+            role: "spectator",
+            sideIndex: null,
+          }}
+        />
+      </MemoryRouter>,
+    );
+    const tile = within(firstTile());
+    expect(tile.queryByTestId("video-track")).toBeNull();
+    expect(tile.getAllByText("Debater guest")).toHaveLength(2);
+    expect(tile.getAllByText("Camera off").length).toBeGreaterThan(0);
+    expect(tile.getByText("Microphone muted")).toBeInTheDocument();
+    // Spectators get no media controls.
+    expect(tile.queryByRole("button", { name: /microphone/ })).toBeNull();
+  });
+
+  it("lets a debater mute their microphone and turn their camera off", async () => {
+    render(
+      <MemoryRouter>
+        <DebateExperience join={debaterJoin} />
+      </MemoryRouter>,
+    );
+    const tile = within(firstTile());
+    const mic = tile.getByRole("button", { name: "Mute microphone" });
+    expect(mic).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(mic);
+    await waitFor(() =>
+      expect(localMedia.setMicrophoneEnabled).toHaveBeenCalledWith(false),
+    );
+    fireEvent.click(tile.getByRole("button", { name: "Turn camera off" }));
+    await waitFor(() =>
+      expect(localMedia.setCameraEnabled).toHaveBeenCalledWith(
+        false,
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("labels the controls to match muted state", () => {
+    localMedia.microphone = false;
+    localMedia.camera = false;
+    render(
+      <MemoryRouter>
+        <DebateExperience join={debaterJoin} />
+      </MemoryRouter>,
+    );
+    const tile = within(firstTile());
+    expect(
+      tile.getByRole("button", { name: "Unmute microphone" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(tile.getByRole("button", { name: "Turn camera on" })).toBeVisible();
+  });
+});
+
+describe("Camera and microphone preview", () => {
+  const join: JoinResult = {
+    lobbyId: "dream-cheating",
+    state: "WAITING",
+    topicId: "dream-cheating",
+    topicTitle: "Can you cheat in a dream?",
+    sides: ["Yes: intention still matters", "No: dreams are involuntary"],
+    participantIdentity: "spectator-id",
+    displayName: "Spectator",
+    role: "spectator",
+    sideIndex: null,
+    isCreator: false,
+    hostIdentity: null,
+    livekitUrl: "ws://localhost:7880",
+    token: "spectator-token",
+  };
+  const getUserMedia =
+    vi.fn<(constraints: MediaStreamConstraints) => Promise<unknown>>();
+  const stopTrack = vi.fn<() => void>();
+  const stream = {
+    getAudioTracks: () => [],
+    getTracks: () => [{ stop: stopTrack }],
+  };
+
+  beforeEach(() => {
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+  });
+
+  it("requests access, shows a live preview, and stops it on close", async () => {
+    getUserMedia.mockResolvedValue(stream);
+    render(
+      <MemoryRouter>
+        <DebateExperience join={join} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Check Camera & Mic" }));
+    expect(getUserMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ audio: true, video: expect.anything() }),
+    );
+    expect(await screen.findByLabelText("Your camera preview")).toBeVisible();
+    expect(
+      screen.getByRole("meter", { name: "Microphone level" }),
+    ).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close preview" }));
+    expect(stopTrack).toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Your camera preview")).toBeNull(),
+    );
+  });
+
+  it("explains blocked access and retries when asked", async () => {
+    getUserMedia.mockRejectedValueOnce(
+      new DOMException("Permission denied", "NotAllowedError"),
+    );
+    render(
+      <MemoryRouter>
+        <DebateExperience join={join} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Check Camera & Mic" }));
+    expect(
+      await screen.findByText("Camera and microphone access was blocked"),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/Set Camera and Microphone to Allow/),
+    ).toBeVisible();
+
+    getUserMedia.mockResolvedValueOnce(stream);
+    fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
+    expect(await screen.findByLabelText("Your camera preview")).toBeVisible();
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+  });
+
+  it("is only offered while the lobby is waiting", () => {
+    render(
+      <MemoryRouter>
+        <DebateExperience join={{ ...join, state: "DEBATE_IN_PROGRESS" }} />
+      </MemoryRouter>,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Check Camera & Mic" }),
+    ).toBeNull();
+  });
+});
+
+describe("Participant roles", () => {
+  it("gives debaters and spectators distinct labels and colors", () => {
+    render(
+      <MemoryRouter>
+        <DebateExperience
+          join={{
+            lobbyId: "dream-cheating",
+            state: "WAITING",
+            topicId: "dream-cheating",
+            topicTitle: "Can you cheat in a dream?",
+            sides: [
+              "Yes: intention still matters",
+              "No: dreams are involuntary",
+            ],
+            participantIdentity: "spectator-id",
+            displayName: "Test spectator",
+            role: "spectator",
+            sideIndex: null,
+            isCreator: false,
+            hostIdentity: null,
+            livekitUrl: "ws://localhost:7880",
+            token: "spectator-token",
+          }}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /Participants/ }));
+    const debaters = screen.getByRole("region", { name: /^Debaters/ });
+    const spectators = screen.getByRole("region", { name: /^Spectators/ });
+    expect(within(debaters).getByText("Debaters")).toHaveClass("bg-violet-100");
+    expect(within(spectators).getByText("Spectators")).toHaveClass(
+      "bg-sky-100",
+    );
+    expect(
+      within(debaters).getByText("Debater guest").closest("li"),
+    ).toHaveClass("bg-emerald-50");
+    expect(
+      within(spectators).getByText("Test spectator (you)").closest("li"),
+    ).toHaveClass("bg-sky-50");
   });
 });
