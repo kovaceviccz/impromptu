@@ -52,6 +52,7 @@ describe("TopicList", () => {
         id: "dream-cheating",
         title: "Can you cheat in a dream?",
         sides: ["Yes: intention still matters", "No: dreams are involuntary"],
+        tags: ["Casual", "Beginner-friendly"],
         sideAvailability: [true, false],
         debaterCount: 1,
         spectatorCount: 3,
@@ -99,6 +100,16 @@ describe("TopicList", () => {
     expect(dreamTopic).not.toBeNull();
 
     expect(within(dreamTopic!).getByText("One side open")).toBeVisible();
+    expect(within(dreamTopic!).getByLabelText("Lobby tags")).toHaveTextContent(
+      "CasualBeginner-friendly",
+    );
+    expect(
+      within(dreamTopic!)
+        .getByLabelText("Lobby tags")
+        .compareDocumentPosition(
+          within(dreamTopic!).getByText("One side open"),
+        ),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(within(dreamTopic!).getByText("3 people watching")).toBeVisible();
     expect(
       within(dreamTopic!).getByText("Yes: intention still matters"),
@@ -151,6 +162,103 @@ describe("TopicList", () => {
       expect(spectate).toHaveBeenCalledWith({ intent: "spectator" }),
     );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("filters public lobbies by tags, spectator count, and open sides", () => {
+    const topics: TopicStatus[] = [
+      {
+        id: "casual-open",
+        title: "Casual lobby with an open side",
+        sides: ["Yes", "No"],
+        category: "Philosophy",
+        tags: ["Casual"],
+        sideAvailability: [true, false],
+        debaterCount: 1,
+        spectatorCount: 3,
+        participants: [],
+      },
+      {
+        id: "casual-full",
+        title: "Casual lobby with full sides",
+        sides: ["Yes", "No"],
+        category: "Society",
+        tags: ["Casual"],
+        sideAvailability: [false, false],
+        debaterCount: 2,
+        spectatorCount: 3,
+        participants: [],
+      },
+      {
+        id: "serious-open",
+        title: "Serious lobby with an open side",
+        sides: ["Yes", "No"],
+        category: "Entertainment",
+        tags: ["Serious"],
+        sideAvailability: [false, true],
+        debaterCount: 1,
+        spectatorCount: 5,
+        participants: [],
+      },
+      {
+        id: "society-open",
+        title: "Society lobby with an open side",
+        sides: ["Yes", "No"],
+        category: "Society",
+        tags: ["Casual"],
+        sideAvailability: [true, false],
+        debaterCount: 1,
+        spectatorCount: 4,
+        participants: [],
+      },
+    ];
+    const router = createMemoryRouter([
+      {
+        path: "/",
+        element: <TopicList topics={topics} />,
+      },
+    ]);
+
+    render(<RouterProvider router={router} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByLabelText("Philosophy"));
+    fireEvent.click(within(dialog).getByLabelText("Society"));
+    fireEvent.click(within(dialog).getByLabelText("Casual"));
+    fireEvent.change(within(dialog).getByLabelText("Minimum"), {
+      target: { value: "2" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Maximum"), {
+      target: { value: "4" },
+    });
+    fireEvent.click(
+      within(dialog).getByLabelText("At least one debate side is open"),
+    );
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Apply filters" }),
+    );
+
+    expect(screen.getByText("1 of 2")).toBeVisible();
+    expect(screen.getByText("Casual lobby with an open side")).toBeVisible();
+    expect(
+      screen.queryByText("Casual lobby with full sides"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Serious lobby with an open side"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next topic" }));
+    expect(screen.getByText("2 of 2")).toBeVisible();
+    expect(screen.getByText("Society lobby with an open side")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+    const reopenedDialog = screen.getByRole("dialog");
+    fireEvent.click(
+      within(reopenedDialog).getByRole("button", { name: "Clear filters" }),
+    );
+    fireEvent.click(
+      within(reopenedDialog).getByRole("button", { name: "Apply filters" }),
+    );
+    expect(screen.getByText("2 of 4")).toBeVisible();
   });
 
   it("explains why a debater was returned home", async () => {
@@ -263,9 +371,52 @@ describe("TopicList", () => {
 
     render(<RouterProvider router={router} />);
 
+    fireEvent.click(screen.getByRole("button", { name: "Create or Join" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "Create or join a topic" }),
+      screen.getByRole("button", { name: "Select prewritten topic" }),
     );
+    expect(screen.getByLabelText("Topic question")).toBeDisabled();
+    expect(screen.getByLabelText("Affirmative position")).toBeDisabled();
+    expect(screen.getByLabelText("Opposing position")).toBeDisabled();
+    expect(
+      screen.getByText("Create and join").closest("button"),
+    ).toBeDisabled();
+    const topicBrowser = screen.getByRole("dialog", { name: "Browse topics" });
+    expect(topicBrowser).toBeVisible();
+    const entertainmentCategory = within(topicBrowser)
+      .getByRole("checkbox", {
+        name: "Entertainment",
+      })
+      .closest("label");
+    expect(entertainmentCategory).toHaveClass("bg-pink-100");
+    expect(screen.queryByLabelText("Prewritten topic")).not.toBeInTheDocument();
+    fireEvent.click(
+      within(topicBrowser).getByRole("checkbox", { name: "Entertainment" }),
+    );
+    const animeTopic = within(topicBrowser).getByRole("button", {
+      name: "What is better, anime or manga?",
+    });
+    expect(animeTopic).toHaveClass("bg-pink-100");
+    fireEvent.click(animeTopic);
+    expect(screen.getByLabelText("Topic question")).toBeEnabled();
+    expect(screen.getByLabelText("Affirmative position")).toBeEnabled();
+    expect(screen.getByLabelText("Opposing position")).toBeEnabled();
+    fireEvent.click(screen.getByRole("radio", { name: "Write your own" }));
+    expect(screen.getByLabelText("Topic question")).toHaveValue("");
+    expect(
+      screen.getByRole("button", { name: "Create and join" }),
+    ).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Select prewritten topic" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Choose a topic" }));
+    expect(screen.getByLabelText("Affirmative position")).toHaveValue(
+      "Anime: visual and audio experience",
+    );
+    expect(screen.getByLabelText("Opposing position")).toHaveValue(
+      "Manga: the author's original intent",
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "Write your own" }));
     fireEvent.change(screen.getByLabelText("Topic question"), {
       target: { value: "Dream debate" },
     });
@@ -275,15 +426,44 @@ describe("TopicList", () => {
     fireEvent.change(screen.getByLabelText("Opposing position"), {
       target: { value: "No: dreams are involuntary" },
     });
+    expect(
+      screen.getByRole("button", { name: "Create and join" }),
+    ).toBeDisabled();
+    const categoryGroup = screen.getByRole("radiogroup", { name: "Category" });
+    expect(within(categoryGroup).getAllByRole("radio")).toHaveLength(6);
+    fireEvent.click(
+      within(categoryGroup).getByRole("radio", { name: "Miscellaneous" }),
+    );
+    expect(
+      within(categoryGroup).getByRole("radio", { name: "Miscellaneous" }),
+    ).toBeChecked();
+    expect(
+      within(categoryGroup).getByRole("radio", { name: "Philosophy" }),
+    ).not.toBeChecked();
+    expect(
+      screen.getByRole("button", { name: "Create and join" }),
+    ).toBeEnabled();
     fireEvent.change(screen.getByLabelText("Creator display name"), {
       target: { value: "Sam" },
     });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Casual" }));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Beginner-friendly" }),
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "Casual" }).closest("label"),
+    ).toHaveClass("bg-emerald-50");
+    expect(
+      screen.getByRole("checkbox", { name: "Serious" }).closest("label"),
+    ).toHaveClass("bg-red-50");
     fireEvent.click(screen.getByRole("button", { name: "Create and join" }));
 
     expect(await screen.findByText("Connected to private lobby")).toBeVisible();
     expect(createLobbyMock).toHaveBeenCalledWith({
       name: "Dream debate",
       sides: ["Yes: dreams are vivid", "No: dreams are involuntary"],
+      category: "Miscellaneous",
+      tags: ["Casual", "Beginner-friendly"],
       visibility: "private",
       displayName: "Sam",
       intent: "debater",
@@ -340,9 +520,8 @@ describe("TopicList", () => {
     expect(
       screen.getByText("No debates are available right now."),
     ).toBeVisible();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Create or join a topic" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Create or Join" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Join" }));
     fireEvent.change(screen.getByLabelText("Lobby code"), {
       target: { value: "abcd23" },
     });
@@ -410,9 +589,8 @@ describe("TopicList", () => {
     expect(
       screen.getByText("No debates are available right now."),
     ).toBeVisible();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Create or join a topic" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Create or Join" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Join" }));
     fireEvent.change(screen.getByLabelText("Lobby code"), {
       target: { value: "ABCD23" },
     });
