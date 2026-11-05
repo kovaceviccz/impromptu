@@ -4,6 +4,7 @@ import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 import { accountContracts } from "./contract.js";
 import { hashPassword, verifyPassword } from "./passwords.js";
 import type { AccountStore } from "./store.js";
+import type { DebateResultStore } from "../statistics/store.js";
 
 export const SESSION_COOKIE = "impromptu_session";
 
@@ -14,12 +15,13 @@ const duplicateMessages = {
 
 export type AccountRoutesOptions = {
   accounts: AccountStore;
+  debateResults: DebateResultStore;
   secureCookies: boolean;
 };
 
 export const accountRoutes: FastifyPluginAsyncZod<
   AccountRoutesOptions
-> = async (app, { accounts, secureCookies }) => {
+> = async (app, { accounts, debateResults, secureCookies }) => {
   // Compared against when no account matches, so a missing account and a
   // wrong password take similar time.
   const unmatchedPasswordHash = hashPassword("unmatched-account-password");
@@ -154,6 +156,25 @@ export const accountRoutes: FastifyPluginAsyncZod<
         return reply.code(401).send({ message: "Log in to continue." });
       }
       return { account };
+    },
+  );
+
+  app.get(
+    accountContracts.accountStatistics.path,
+    {
+      schema: {
+        response: {
+          200: accountContracts.accountStatistics.response,
+          401: accountContracts.accountStatistics.errors[401],
+        },
+      },
+    },
+    async (request, reply) => {
+      const account = await currentAccount(request);
+      if (!account) {
+        return reply.code(401).send({ message: "Log in to continue." });
+      }
+      return debateResults.statisticsFor(account.id);
     },
   );
 

@@ -10,10 +10,11 @@ async function findPrivate(page: Page, code: string, name: string) {
   await page.goto("/");
   await page
     .getByRole("button", {
-      name: "Create or join a topic",
+      name: "Create or Join",
       exact: true,
     })
     .click();
+  await page.getByRole("tab", { name: "Join" }).click();
   await page.getByLabel("Lobby code", { exact: true }).fill(code);
   await page.getByRole("button", { name: "Find lobby" }).click();
   await page.getByLabel("Your display name", { exact: true }).fill(name);
@@ -24,16 +25,17 @@ test("private codes, guests, registered users, reloads, membership recovery and 
   browser,
 }) => {
   test.setTimeout(90_000);
+  const title = `Acceptance lobby ${Date.now()}`;
   await page.goto("/");
   await page
     .getByRole("button", {
-      name: "Create or join a topic",
+      name: "Create or Join",
       exact: true,
     })
     .click();
-  await page
-    .getByLabel("Topic question", { exact: true })
-    .fill("Acceptance lobby");
+  await page.getByText("Write your own", { exact: true }).click();
+  await page.getByText("Miscellaneous", { exact: true }).click();
+  await page.getByLabel("Topic question", { exact: true }).fill(title);
   await page
     .getByLabel("Affirmative position")
     .fill("Yes: intention still matters");
@@ -45,6 +47,7 @@ test("private codes, guests, registered users, reloads, membership recovery and 
     .getByRole("combobox", { name: "Join as", exact: true })
     .selectOption("spectator");
   await page.getByRole("button", { name: "Create and join" }).click();
+  await page.getByRole("button", { name: "Continue to lobby" }).click();
   const code = await page.locator("code").innerText();
   expect(code).toMatch(/^[A-HJ-NP-Z2-9]{8}$/);
   const hostRoster = await participants(page);
@@ -60,10 +63,11 @@ test("private codes, guests, registered users, reloads, membership recovery and 
     await guest.goto("/");
     await guest
       .getByRole("button", {
-        name: "Create or join a topic",
+        name: "Create or Join",
         exact: true,
       })
       .click();
+    await guest.getByRole("tab", { name: "Join" }).click();
     await guest.getByLabel("Lobby code", { exact: true }).fill("ABC");
     await guest.getByRole("button", { name: "Find lobby" }).click();
     await expect(guest.getByRole("alert")).toHaveText(
@@ -152,6 +156,7 @@ test("private codes, guests, registered users, reloads, membership recovery and 
 
     // A reload restores the same identity, code and host badge without duplicate membership.
     await page.reload();
+    await page.getByRole("button", { name: "Continue to lobby" }).click();
     await expect(
       page.getByRole("button", { name: `Copy lobby code ${code}` }),
     ).toBeVisible();
@@ -262,6 +267,7 @@ test("a valid private topic code rejects an occupied position", async ({
     data: {
       name: `Can machines dream ${Date.now()}?`,
       sides: ["Yes, they can", "No, they cannot"],
+      category: "Miscellaneous",
       visibility: "private",
       displayName: "Reservation host",
       intent: "spectator",

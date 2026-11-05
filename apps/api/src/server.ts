@@ -5,6 +5,7 @@ import { openDatabase } from "./database.js";
 import { createPostgresPrivateLobbyStore } from "./lobbies/postgres-store.js";
 import { createPostgresPublicLobbyStateStore } from "./lobbies/public-state-postgres-store.js";
 import { createLiveKitGateway } from "./topics/livekit.js";
+import { createPostgresDebateResultStore } from "./statistics/postgres-store.js";
 
 const config = loadConfig();
 const production = process.env.NODE_ENV === "production";
@@ -23,6 +24,7 @@ if (config.DEV_DATABASE_RESET === "true") {
 }
 const app = await buildApp({
   accounts: createPostgresAccountStore(orm),
+  debateResults: createPostgresDebateResultStore(orm),
   privateLobbies: createPostgresPrivateLobbyStore(orm),
   publicLobbyState: createPostgresPublicLobbyStateStore(orm),
   livekit: createLiveKitGateway({

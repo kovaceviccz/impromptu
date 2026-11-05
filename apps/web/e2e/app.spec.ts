@@ -1,7 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./lobby-fixture";
 import { apiContract } from "@impromptu/api/contracts";
 
-test("loads backend topics and enters a debate", async ({ page }) => {
+test("loads backend topics and enters a debate", async ({
+  page,
+  trackLobby,
+}) => {
   let joinRequests = 0;
   let leaveRequests = 0;
   page.on("request", (request) => {
@@ -50,6 +53,7 @@ test("loads backend topics and enters a debate", async ({ page }) => {
   ).toHaveCount(0);
   await preJoin.getByPlaceholder("Display name").fill("Playwright Guest");
   await preJoin.getByRole("button", { name: "Debate" }).click();
+  await page.getByRole("button", { name: "Continue to lobby" }).click();
 
   await expect(
     page.getByRole("heading", {
@@ -95,7 +99,9 @@ test("loads backend topics and enters a debate", async ({ page }) => {
           },
         );
         expect(response.ok()).toBe(true);
-        return apiContract.join.response.parse(await response.json());
+        const join = apiContract.join.response.parse(await response.json());
+        trackLobby(join);
+        return join;
       },
     ),
   );
@@ -131,8 +137,9 @@ test("loads backend topics and enters a debate", async ({ page }) => {
 
   await expect(dreamTopic.getByText("Both sides open")).toBeVisible();
   await dreamTopic.getByRole("button", { name: "Watch live" }).click();
+  await page.getByRole("button", { name: "Continue to lobby" }).click();
   await expect(
-    page.getByRole("textbox", { name: "Display name" }),
+    page.getByRole("textbox", { name: "Display name", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Leave lobby" }).click();
   await expect(dreamTopic.getByText("Both sides open")).toBeVisible();
@@ -149,42 +156,46 @@ test("loads backend topics and enters a debate", async ({ page }) => {
   expect(joinRequests).toBe(2);
 });
 
-test("spectators can chat while debaters have a read-only view", async ({
+test("spectators can vote during voting and chat while debaters have a read-only view", async ({
   page,
 }) => {
+  test.setTimeout(90_000);
   await page.goto("/");
-  const dreamTopic = page.locator('[data-slot="card"]').filter({
-    has: page.getByRole("heading", { name: "Can you cheat in a dream?" }),
-  });
-  await dreamTopic
-    .getByRole("button", {
-      name: /Debate.*Yes: intention still matters/,
-    })
-    .click();
+  await page.getByRole("button", { name: "Create or Join" }).click();
+  await page.getByText("Write your own", { exact: true }).click();
+  await page.getByText("Miscellaneous", { exact: true }).click();
   await page
-    .getByRole("dialog")
-    .getByPlaceholder("Display name")
-    .fill("Debater Guest");
+    .getByLabel("Topic question")
+    .fill(`Voting acceptance ${Date.now()}`);
   await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Debate" })
-    .click();
+    .getByLabel("Affirmative position")
+    .fill("Yes: intention still matters");
+  await page.getByLabel("Opposing position").fill("No: dreams are involuntary");
+  await page.getByLabel("Creator display name").fill("Debater Guest");
+  await page.getByLabel("Join as").selectOption("0");
+  await page.getByRole("button", { name: "Create and join" }).click();
+  await page.getByRole("button", { name: "Continue to lobby" }).click();
+  const code = await page.locator("code").innerText();
   await expect(page.getByText("Sides filled", { exact: true })).toBeVisible();
   await expect(page.getByRole("textbox")).toHaveCount(0);
 
   const spectator = await page.context().newPage();
   await spectator.goto("/");
+  await spectator.getByRole("button", { name: "Create or Join" }).click();
+  await spectator.getByRole("tab", { name: "Join", exact: true }).click();
+  await spectator.getByLabel("Lobby code", { exact: true }).fill(code);
+  await spectator.getByRole("button", { name: "Find lobby" }).click();
   await spectator
-    .locator('[data-slot="card"]')
-    .filter({
-      has: spectator.getByRole("heading", {
-        name: "Can you cheat in a dream?",
-      }),
-    })
-    .getByRole("button", { name: "Watch live" })
+    .getByLabel("Your display name", { exact: true })
+    .fill("Spectator");
+  await spectator
+    .getByRole("combobox", { name: "Position", exact: true })
+    .selectOption("spectator");
+  await spectator
+    .getByRole("button", { name: "Join private lobby", exact: true })
     .click();
   await expect(
-    spectator.getByRole("textbox", { name: "Display name" }),
+    spectator.getByRole("textbox", { name: "Display name", exact: true }),
   ).toBeVisible();
   await expect(
     spectator
@@ -196,10 +207,36 @@ test("spectators can chat while debaters have a read-only view", async ({
     page.getByText("Spectators").locator("..").getByText("1", { exact: true }),
   ).toBeVisible({ timeout: 15_000 });
 
+  const opponent = await page.context().newPage();
+  await opponent.goto("/");
+  await opponent.getByRole("button", { name: "Create or Join" }).click();
+  await opponent.getByRole("tab", { name: "Join", exact: true }).click();
+  await opponent.getByLabel("Lobby code", { exact: true }).fill(code);
+  await opponent.getByRole("button", { name: "Find lobby" }).click();
+  await opponent
+    .getByLabel("Your display name", { exact: true })
+    .fill("Opponent");
+  await opponent
+    .getByRole("combobox", { name: "Position", exact: true })
+    .selectOption("1");
+  await opponent
+    .getByRole("button", { name: "Join private lobby", exact: true })
+    .click();
+  await expect(
+    spectator.getByRole("button", { name: /No: dreams are involuntary.*vote/ }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Start Debate", exact: true }).click();
+  await expect(spectator.getByText("Debate in progress ...")).toBeVisible();
+  await page.getByRole("button", { name: "End round", exact: true }).click();
+  await expect(
+    spectator.getByRole("timer", { name: "Voting time remaining" }),
+  ).toBeVisible();
+
   const noVote = spectator.getByRole("button", {
     name: /No: dreams are involuntary.*vote/,
   });
   await noVote.click();
+  await expect(spectator.getByText("Your vote was received.")).toBeVisible();
   await expect(spectator.getByText("1 spectator vote")).toBeVisible();
   await expect(page.getByText("1 vote", { exact: true })).toBeVisible();
   await expect(page.getByTitle("Only spectators can vote.")).toBeVisible();
@@ -211,7 +248,7 @@ test("spectators can chat while debaters have a read-only view", async ({
   await expect(spectator.getByText("0 spectator votes")).toBeVisible();
 
   await spectator
-    .getByRole("textbox", { name: "Display name" })
+    .getByRole("textbox", { name: "Display name", exact: true })
     .fill("Audience Guest");
   await spectator.getByRole("button", { name: "Continue" }).click();
   await expect(
@@ -231,8 +268,37 @@ test("spectators can chat while debaters have a read-only view", async ({
     0,
   );
 
+  await noVote.click();
+  await expect(spectator.getByText("1 spectator vote")).toBeVisible();
+  // The names and final totals must survive a debater disconnecting.
+  await opponent.getByRole("button", { name: "Leave lobby" }).click();
+  for (const viewer of [page, spectator]) {
+    const results = viewer.getByRole("region", { name: "Round results" });
+    await expect(results).toBeVisible({ timeout: 35_000 });
+    await expect(results.getByText("Opponent wins the round.")).toBeVisible();
+    await expect(
+      results.getByText("Debater Guest", { exact: true }),
+    ).toBeVisible();
+    await expect(results.getByText("Opponent", { exact: true })).toBeVisible();
+    await expect(results.getByRole("definition")).toHaveText([
+      "0 votes",
+      "1 vote",
+    ]);
+    await expect(
+      viewer.getByText("Voting is closed", { exact: true }),
+    ).toHaveCount(2);
+    await expect(
+      viewer.getByRole("button", { name: /No: dreams are involuntary.*vote/ }),
+    ).toHaveCount(0);
+  }
+  await spectator.reload();
+  await expect(
+    spectator
+      .getByRole("region", { name: "Round results" })
+      .getByText("Opponent wins the round."),
+  ).toBeVisible();
   await spectator.getByRole("button", { name: "Leave lobby" }).click();
-  await page.getByRole("button", { name: "Leave lobby" }).click();
+  await page.getByRole("button", { name: "Close lobby" }).click();
 });
 
 test("participants switch between spectating and debating in the room", async ({
@@ -243,6 +309,7 @@ test("participants switch between spectating and debating in the room", async ({
     has: page.getByRole("heading", { name: "Can you cheat in a dream?" }),
   });
   await topic.getByRole("button", { name: "Watch live" }).click();
+  await page.getByRole("button", { name: "Continue to lobby" }).click();
   await page.getByRole("tab", { name: /Participants/ }).click();
 
   const participants = page.getByRole("region", { name: "Participants" });

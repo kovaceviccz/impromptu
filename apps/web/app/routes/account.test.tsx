@@ -22,6 +22,12 @@ const account = {
   email: "ada@example.com",
   createdAt: "2026-09-01T12:00:00.000Z",
 };
+const statistics = {
+  totalDebates: 3,
+  wins: 2,
+  losses: 1,
+  winPercentage: 66.67,
+};
 
 beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
@@ -38,6 +44,22 @@ function jsonResponse(status: number, body: unknown) {
     status,
     headers: { "content-type": "application/json" },
   });
+}
+
+function loadedAccountResponse(
+  input: string | URL | Request,
+  currentAccount = account,
+  currentStatistics = statistics,
+) {
+  const url =
+    typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url;
+  return url === "/api/account/statistics"
+    ? jsonResponse(200, currentStatistics)
+    : jsonResponse(200, { account: currentAccount });
 }
 
 function renderAccount() {
@@ -72,7 +94,7 @@ describe("Account page", () => {
   });
 
   it("shows the signed-in account on every visit while the session lasts", async () => {
-    fetchMock.mockImplementation(async () => jsonResponse(200, { account }));
+    fetchMock.mockImplementation(async (input) => loadedAccountResponse(input));
 
     const router = renderAccount();
 
@@ -90,15 +112,53 @@ describe("Account page", () => {
     expect(
       await screen.findByRole("heading", { name: "Your account" }),
     ).toBeVisible();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    for (const [url] of fetchMock.mock.calls) expect(url).toBe("/api/account");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/account",
+      "/api/account/statistics",
+      "/api/account",
+      "/api/account/statistics",
+    ]);
+  });
+
+  it("shows zero history and refreshes statistics on a later visit", async () => {
+    let currentStatistics = {
+      totalDebates: 0,
+      wins: 0,
+      losses: 0,
+      winPercentage: 0,
+    };
+    fetchMock.mockImplementation(async (input) =>
+      loadedAccountResponse(input, account, currentStatistics),
+    );
+    const router = renderAccount();
+
+    expect(
+      (await screen.findByText("Total debates")).parentElement,
+    ).toHaveTextContent("0");
+    expect(screen.getByText("Win percentage").parentElement).toHaveTextContent(
+      "0%",
+    );
+
+    currentStatistics = statistics;
+    await router.revalidate();
+    await waitFor(() => {
+      expect(screen.getByText("Total debates").parentElement).toHaveTextContent(
+        "3",
+      );
+      expect(screen.getByText("Wins").parentElement).toHaveTextContent("2");
+      expect(screen.getByText("Losses").parentElement).toHaveTextContent("1");
+      expect(
+        screen.getByText("Win percentage").parentElement,
+      ).toHaveTextContent("66.67%");
+    });
   });
 
   it("logs out and returns home", async () => {
     fetchMock.mockImplementation(async (input) =>
       input === "/api/auth/logout"
         ? jsonResponse(200, { status: "ok" })
-        : jsonResponse(200, { account }),
+        : loadedAccountResponse(input),
     );
     const router = renderAccount();
 
@@ -125,7 +185,7 @@ describe("Account page", () => {
         currentAccount = updatedAccount;
         return jsonResponse(200, { account: updatedAccount });
       }
-      return jsonResponse(200, { account: currentAccount });
+      return loadedAccountResponse(input, currentAccount);
     });
     renderAccount();
 
@@ -168,7 +228,7 @@ describe("Account page", () => {
           fieldErrors: { username: "This username is already taken." },
         });
       }
-      return jsonResponse(200, { account });
+      return loadedAccountResponse(input);
     });
     renderAccount();
 
@@ -191,7 +251,7 @@ describe("Account page", () => {
       if (input === "/api/account" && init?.method === "DELETE") {
         return jsonResponse(200, { status: "ok" });
       }
-      return jsonResponse(200, { account });
+      return loadedAccountResponse(input);
     });
     const router = renderAccount();
 

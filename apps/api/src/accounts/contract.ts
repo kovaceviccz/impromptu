@@ -65,6 +65,13 @@ export const accountSchema = z.strictObject({
 
 export const accountResponseSchema = z.strictObject({ account: accountSchema });
 
+export const accountStatisticsSchema = z.strictObject({
+  totalDebates: z.number().int().nonnegative(),
+  wins: z.number().int().nonnegative(),
+  losses: z.number().int().nonnegative(),
+  winPercentage: z.number().min(0).max(100),
+});
+
 export const sessionResponseSchema = z.strictObject({
   account: accountSchema.nullable(),
 });
@@ -117,6 +124,12 @@ export const accountContracts = {
     response: accountResponseSchema,
     errors: { 401: errorSchema },
   },
+  accountStatistics: {
+    method: "GET",
+    path: "/api/account/statistics",
+    response: accountStatisticsSchema,
+    errors: { 401: errorSchema },
+  },
   updateAccount: {
     method: "PATCH",
     path: "/api/account",
@@ -137,6 +150,7 @@ export const accountContracts = {
 } as const;
 
 export type Account = z.output<typeof accountSchema>;
+export type AccountStatistics = z.output<typeof accountStatisticsSchema>;
 export type RegisterInput = z.output<typeof registerBodySchema>;
 export type LoginInput = z.output<typeof loginBodySchema>;
 export type UpdateAccountInput = z.output<typeof updateAccountBodySchema>;

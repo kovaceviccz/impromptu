@@ -2,6 +2,7 @@ import { createHash, randomInt, randomUUID } from "node:crypto";
 
 import { UniqueConstraintViolationException } from "@mikro-orm/core";
 
+import type { LobbyTag, TopicCategory } from "../topics/contract.js";
 import {
   DuplicateLobbyCodeError,
   type PrivateLobbyRecord,
@@ -89,6 +90,8 @@ export async function createTopicLobby(
   input: {
     name: string;
     sides: [string, string];
+    category: TopicCategory;
+    tags?: LobbyTag[];
     visibility: "public" | "private";
     creatorIdentity: string;
   },
@@ -102,6 +105,8 @@ export async function createTopicLobby(
       name: input.name,
       side0: input.sides[0],
       side1: input.sides[1],
+      category: input.category,
+      tags: input.tags ?? [],
       visibility: input.visibility,
       state: "WAITING",
       codeHash: code ? hashLobbyCode(code) : null,
