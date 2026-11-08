@@ -1,5 +1,6 @@
 import {
   apiContract,
+  chatMessageSchema,
   errorSchema,
   formErrorSchema,
   type JoinByCodeInput,
@@ -106,6 +107,17 @@ export async function joinTopic(topicId: string, input: JoinInput) {
   return readResponse(response, apiContract.join.response);
 }
 
+export async function endRound(
+  topicId: string,
+  input: { lobbyId: string; token: string },
+) {
+  const response = await postJson(
+    apiContract.endRound.path.replace(":topicId", encodeURIComponent(topicId)),
+    input,
+  );
+  return readResponse(response, apiContract.endRound.response);
+}
+
 export async function startDebate(topicId: string, input: StartDebateInput) {
   const path = apiContract.startDebate.path.replace(
     ":topicId",
@@ -170,6 +182,13 @@ export async function getAccount() {
   return readResponse(response, apiContract.account.response);
 }
 
+export async function getAccountStatistics() {
+  const response = await fetch(apiContract.accountStatistics.path, {
+    headers: { accept: "application/json" },
+  });
+  return readResponse(response, apiContract.accountStatistics.response);
+}
+
 export async function updateAccount(input: UpdateAccountInput) {
   const response = await fetch(apiContract.updateAccount.path, {
     method: apiContract.updateAccount.method,
@@ -204,4 +223,51 @@ export async function getRoomParticipants(join: {
     token: join.token,
   });
   return readResponse(response, apiContract.roomParticipants.response);
+}
+
+export async function sendRoomChatMessage(input: {
+  topicId: string;
+  lobbyId: string;
+  token: string;
+  message: string;
+}) {
+  const path = apiContract.sendChatMessage.path.replace(
+    ":topicId",
+    encodeURIComponent(input.topicId),
+  );
+  const response = await postJson(path, {
+    lobbyId: input.lobbyId,
+    token: input.token,
+    message: input.message,
+  });
+  if (!response.ok) {
+    const payload: unknown = await response.json().catch(() => null);
+    const moderationError =
+      apiContract.sendChatMessage.errors[400].safeParse(payload);
+    if (moderationError.success) {
+      throw new ApiError(moderationError.data.message, response.status);
+    }
+    const error = errorSchema.safeParse(payload);
+    throw new ApiError(
+      error.success ? error.data.message : "Message could not be sent.",
+      response.status,
+    );
+  }
+  return chatMessageSchema.parse(await response.json());
+}
+
+export async function submitVote(
+  topicId: string,
+  input: { lobbyId: string; token: string; choice: "0" | "1" | null },
+) {
+  return readResponse(
+    await postJson(
+      apiContract.submitVote.path.replace(
+        ":topicId",
+        encodeURIComponent(topicId),
+      ),
+      input,
+    ),
+    apiContract.submitVote.response,
+  );
 }

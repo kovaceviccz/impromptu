@@ -73,7 +73,9 @@ test("live public topic creation, discovery, joining, and closure show no errors
     await expect(
       page.getByRole("heading", { name: "Can you cheat in a dream?" }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Create or join a topic" }).click();
+    await page.getByRole("button", { name: "Create or Join" }).click();
+    await page.getByText("Write your own", { exact: true }).click();
+    await page.getByText("Miscellaneous", { exact: true }).click();
     await page.getByLabel("Topic question").fill(title);
     await page
       .getByLabel("Affirmative position")
@@ -90,6 +92,7 @@ test("live public topic creation, discovery, joining, and closure show no errors
         response.request().method() === "POST",
     );
     await page.getByRole("button", { name: "Create and join" }).click();
+    await page.getByRole("button", { name: "Continue to lobby" }).click();
     created = apiContract.createLobby.response.parse(
       await (await creation).json(),
     );
@@ -186,7 +189,9 @@ test("live private topic code and malformed topic IDs behave safely", async ({
     const initialCount = apiContract.topics.response.parse(
       await (await guest.request.get("/api/topics")).json(),
     ).length;
-    await page.getByRole("button", { name: "Create or join a topic" }).click();
+    await page.getByRole("button", { name: "Create or Join" }).click();
+    await page.getByText("Write your own", { exact: true }).click();
+    await page.getByText("Miscellaneous", { exact: true }).click();
     await page.getByLabel("Topic question").fill(title);
     await page
       .getByLabel("Affirmative position")
@@ -202,13 +207,15 @@ test("live private topic code and malformed topic IDs behave safely", async ({
         response.request().method() === "POST",
     );
     await page.getByRole("button", { name: "Create and join" }).click();
+    await page.getByRole("button", { name: "Continue to lobby" }).click();
     created = apiContract.createLobby.response.parse(
       await (await creation).json(),
     );
     const code = created.joinCode!;
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
     await expect(guest.getByText(`1 of ${initialCount}`)).toBeVisible();
-    await guest.getByRole("button", { name: "Create or join a topic" }).click();
+    await guest.getByRole("button", { name: "Create or Join" }).click();
+    await guest.getByRole("tab", { name: "Join" }).click();
     await guest.getByLabel("Lobby code").fill(code);
     await guest.getByRole("button", { name: "Find lobby" }).click();
     await expect(guest.getByText(title)).toBeVisible();

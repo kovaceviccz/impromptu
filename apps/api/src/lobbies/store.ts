@@ -1,4 +1,6 @@
+import { recordVote, type Voting } from "./voting.js";
 import type { LobbyState } from "./contract.js";
+import type { LobbyTag, TopicCategory } from "../topics/contract.js";
 
 export class DuplicateLobbyCodeError extends Error {}
 export class DuplicateTopicNameError extends Error {}
@@ -9,8 +11,12 @@ export type PrivateLobbyRecord = {
   name?: string;
   side0?: string | null;
   side1?: string | null;
+  category?: TopicCategory;
+  tags?: LobbyTag[];
   visibility?: "public" | "private";
   state: LobbyState;
+  roundEndsAt?: Date | null;
+  voting?: Voting | null;
   codeHash: string | null;
   creatorIdentity: string;
   createdAt: Date;
@@ -27,8 +33,17 @@ export interface PrivateLobbyStore {
     id: string,
     expectedState: LobbyState,
     state: LobbyState,
+    roundEndsAt?: Date | null,
+    voting?: Voting | null,
   ): Promise<boolean>;
   delete(id: string): Promise<void>;
+  dueRounds(now: Date): Promise<PrivateLobbyRecord[]>;
+  dueVotes(now: Date): Promise<PrivateLobbyRecord[]>;
+  submitVote(
+    id: string,
+    identity: string,
+    choice: "0" | "1" | null,
+  ): Promise<boolean>;
   close(): Promise<void>;
 }
 
@@ -65,9 +80,7 @@ export function createMemoryPrivateLobbyStore(
     },
     async listPublic() {
       return [...lobbies.values()]
-        .filter(
-          (lobby) => lobby.visibility === "public" && lobby.state !== "ENDED",
-        )
+        .filter((lobby) => lobby.visibility === "public")
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     },
     async hasCreatedName(name) {
@@ -80,14 +93,43 @@ export function createMemoryPrivateLobbyStore(
     async findById(id) {
       return lobbies.get(id);
     },
-    async updateState(id, expectedState, state) {
+    async updateState(id, expectedState, state, roundEndsAt, voting) {
       const lobby = lobbies.get(id);
       if (!lobby || lobby.state !== expectedState) return false;
-      lobbies.set(id, { ...lobby, state });
+      lobbies.set(id, {
+        ...lobby,
+        state,
+        ...(roundEndsAt !== undefined ? { roundEndsAt } : {}),
+        ...(voting !== undefined ? { voting } : {}),
+      });
       return true;
     },
     async delete(id) {
       lobbies.delete(id);
+    },
+    async dueRounds(now) {
+      return [...lobbies.values()].filter(
+        (lobby) =>
+          lobby.state === "DEBATE_IN_PROGRESS" &&
+          lobby.roundEndsAt &&
+          lobby.roundEndsAt <= now,
+      );
+    },
+    async dueVotes(now) {
+      return [...lobbies.values()].filter(
+        (lobby) =>
+          lobby.state === "VOTING" &&
+          lobby.voting &&
+          Date.parse(lobby.voting.endsAt) <= now.getTime(),
+      );
+    },
+    async submitVote(id, identity, choice) {
+      const current = lobbies.get(id);
+      if (!current || current.state !== "VOTING") return false;
+      const voting = recordVote(current.voting, identity, choice, new Date());
+      if (!voting) return false;
+      lobbies.set(id, { ...current, voting });
+      return true;
     },
     async close() {},
   };

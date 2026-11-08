@@ -1,5 +1,7 @@
+import type { Voting } from "./voting.js";
 import { EntitySchema } from "@mikro-orm/core";
 
+import type { LobbyTag, TopicCategory } from "../topics/contract.js";
 import type { LobbyState } from "./contract.js";
 
 export class PrivateLobbyEntity {
@@ -8,8 +10,12 @@ export class PrivateLobbyEntity {
   name!: string;
   side0!: string | null;
   side1!: string | null;
+  category!: TopicCategory;
+  tags!: LobbyTag[];
   visibility!: "public" | "private";
   state!: LobbyState;
+  roundEndsAt!: Date | null;
+  voting!: Voting | null;
   codeHash!: string | null;
   creatorIdentity!: string;
   createdAt!: Date;
@@ -33,6 +39,14 @@ export const PrivateLobbySchema = new EntitySchema<PrivateLobbyEntity>({
       name: "private_lobby_code_visibility_check",
       expression:
         "(visibility = 'private' and code_hash is not null) or (visibility = 'public' and code_hash is null)",
+    },
+    {
+      name: "private_lobby_tags_check",
+      expression: `tags <@ array['Casual', 'Serious', 'Beginner-friendly', 'Competitive', 'Educational', 'Open-minded']::text[]`,
+    },
+    {
+      name: "private_lobby_category_check",
+      expression: `category in ('Philosophy', 'Society', 'Sports', 'Music', 'Entertainment', 'Miscellaneous')`,
     },
   ],
   indexes: [
@@ -65,7 +79,20 @@ export const PrivateLobbySchema = new EntitySchema<PrivateLobbyEntity>({
       columnType: "text",
       nullable: true,
     },
+    category: {
+      type: "string",
+      columnType: "text",
+      defaultRaw: "'Miscellaneous'",
+    },
+    tags: {
+      type: "string",
+      array: true,
+      columnType: "text[]",
+      defaultRaw: "'{}'",
+    },
     visibility: { type: "string", columnType: "text", defaultRaw: "'private'" },
+    voting: { type: "json", columnType: "jsonb", nullable: true },
+    roundEndsAt: { type: Date, fieldName: "round_ends_at", nullable: true },
     state: {
       type: "string",
       columnType: "text",
