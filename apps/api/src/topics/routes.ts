@@ -437,6 +437,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
     const participants = await options.livekit.listParticipants(
       `debate-${lobbyId}`,
     );
+    const votingEndsAt = Date.now() + 30_000;
     const updated = await store.updateState(
       lobbyId,
       "DEBATE_IN_PROGRESS",
@@ -444,7 +445,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       undefined,
       {
         roundId: randomUUID(),
-        endsAt: new Date(Date.now() + 30_000).toISOString(),
+        endsAt: new Date(votingEndsAt).toISOString(),
         eligible: participants
           .filter((p) => p.role === "spectator")
           .map((p) => p.identity),
@@ -469,6 +470,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       },
     );
     if (!updated) return false;
+    scheduleDeadline(lobbyId, publicLobby, "VOTING", votingEndsAt);
     publishPublicChange();
     try {
       await options.livekit.updateRoomMetadata(`debate-${lobbyId}`, "VOTING");
@@ -513,33 +515,97 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
     }
     return true;
   }
-  let checkingTimers = false;
-  const roundTimer = setInterval(() => {
-    if (checkingTimers) return;
-    checkingTimers = true;
-    void (async () => {
-      for (const lobby of await options.privateLobbies.dueRounds(new Date()))
-        await finishRound(lobby.id, false);
-      for (const lobby of await options.publicLobbyState.dueRounds(new Date()))
-        await finishRound(lobby.topicId, true);
-      for (const lobby of await options.privateLobbies.dueVotes(new Date())) {
-        if (lobby.voting) await finalizeVoting(lobby.id, false, lobby.voting);
-      }
-      for (const lobby of await options.publicLobbyState.dueVotes(new Date())) {
-        if (lobby.voting)
-          await finalizeVoting(lobby.topicId, true, lobby.voting);
-      }
-    })()
-      .catch((err: unknown) =>
-        app.log.error({ err }, "Could not end timed rounds"),
-      )
-      .finally(() => {
-        checkingTimers = false;
-      });
-  }, 1000);
-  roundTimer.unref();
+  const deadlines = new Map<string, ReturnType<typeof setTimeout>>();
+  const pendingDeadlines = new Set<Promise<void>>();
+  let closing = false;
+
+  function scheduleDeadline(
+    lobbyId: string,
+    publicLobby: boolean,
+    phase: "DEBATE_IN_PROGRESS" | "VOTING",
+    deadline: number,
+  ) {
+    const key = `${publicLobby}:${lobbyId}`;
+    clearTimeout(deadlines.get(key));
+    if (closing) return;
+    const timer = setTimeout(
+      () => {
+        deadlines.delete(key);
+        const task = (async () => {
+          const lobby = publicLobby
+            ? await options.publicLobbyState.find(lobbyId)
+            : await options.privateLobbies.findById(lobbyId);
+          if (!lobby || lobby.state !== phase) return;
+          const savedDeadline =
+            phase === "VOTING"
+              ? lobby.voting && Date.parse(lobby.voting.endsAt)
+              : lobby.roundEndsAt?.getTime();
+          if (savedDeadline == null) return;
+          if (savedDeadline > Date.now()) {
+            scheduleDeadline(lobbyId, publicLobby, phase, savedDeadline);
+          } else if (phase === "DEBATE_IN_PROGRESS") {
+            await finishRound(lobbyId, publicLobby);
+          } else if (lobby.voting) {
+            await finalizeVoting(lobbyId, publicLobby, lobby.voting);
+          }
+        })()
+          .catch((err: unknown) => {
+            app.log.error(
+              { err, lobbyId },
+              "Could not process lobby deadline; retrying",
+            );
+            scheduleDeadline(lobbyId, publicLobby, phase, Date.now() + 5000);
+          })
+          .finally(() => {
+            pendingDeadlines.delete(task);
+          });
+        pendingDeadlines.add(task);
+      },
+      Math.min(2_147_483_647, Math.max(1, deadline - Date.now())),
+    );
+    timer.unref();
+    deadlines.set(key, timer);
+  }
+
+  // Recover future and overdue work once on startup, including after a crash.
+  app.addHook("onReady", async () => {
+    const latest = new Date("9999-12-31T23:59:59.999Z");
+    for (const lobby of await options.privateLobbies.dueRounds(latest))
+      scheduleDeadline(
+        lobby.id,
+        false,
+        "DEBATE_IN_PROGRESS",
+        lobby.roundEndsAt!.getTime(),
+      );
+    for (const lobby of await options.publicLobbyState.dueRounds(latest))
+      scheduleDeadline(
+        lobby.topicId,
+        true,
+        "DEBATE_IN_PROGRESS",
+        lobby.roundEndsAt!.getTime(),
+      );
+    for (const lobby of await options.privateLobbies.dueVotes(latest))
+      if (lobby.voting)
+        scheduleDeadline(
+          lobby.id,
+          false,
+          "VOTING",
+          Date.parse(lobby.voting.endsAt),
+        );
+    for (const lobby of await options.publicLobbyState.dueVotes(latest))
+      if (lobby.voting)
+        scheduleDeadline(
+          lobby.topicId,
+          true,
+          "VOTING",
+          Date.parse(lobby.voting.endsAt),
+        );
+  });
   app.addHook("onClose", async () => {
-    clearInterval(roundTimer);
+    closing = true;
+    for (const timer of deadlines.values()) clearTimeout(timer);
+    deadlines.clear();
+    await Promise.all(pendingDeadlines);
   });
 
   app.post(
@@ -786,6 +852,14 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
           message: "This lobby can no longer be started.",
         });
       }
+
+      if (roundEndsAt)
+        scheduleDeadline(
+          lobbyId,
+          isPublicLobby,
+          "DEBATE_IN_PROGRESS",
+          roundEndsAt.getTime(),
+        );
 
       if (!(await publishDebateStarted(lobbyId))) {
         return reply.code(503).send({

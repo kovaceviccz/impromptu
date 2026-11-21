@@ -34,6 +34,10 @@ const app = await buildApp({
   mailboxAccountIds: config.MAILBOX_ACCOUNT_IDS.split(",")
     .map((id) => id.trim())
     .filter(Boolean),
+  checkDatabase: async () => {
+    const pool = await orm.em.getConnection().getNativeClient();
+    await pool.query({ text: "select 1", query_timeout: 2000 });
+  },
   accounts: createPostgresAccountStore(orm),
   debateResults: createPostgresDebateResultStore(orm),
   privateLobbies: createPostgresPrivateLobbyStore(orm),

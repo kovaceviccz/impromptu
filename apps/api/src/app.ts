@@ -34,6 +34,7 @@ type BuildAppOptions = {
   publicOrigin?: string;
   mailpitUrl?: string;
   mailboxAccountIds?: string[];
+  checkDatabase?: () => Promise<void>;
   accounts: AccountStore;
   livekit: LiveKitGateway;
   privateLobbies: PrivateLobbyStore;
@@ -67,7 +68,7 @@ export async function buildApp(options: BuildAppOptions) {
   });
 
   await app.register(cookie);
-  await app.register(healthRoutes);
+  await app.register(healthRoutes, { checkDatabase: options.checkDatabase });
   await app.register(accountRoutes, {
     accounts: options.accounts,
     debateResults,

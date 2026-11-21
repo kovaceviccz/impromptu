@@ -4,6 +4,7 @@ apps/web/build/
 apps/web/.react-router/
 .env
 .env.*
+!deploy/.env.database.example
 !deploy/.env.example
 !deploy/.env.staging.example
 !deploy/opentofu/.env.example
