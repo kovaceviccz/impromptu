@@ -11,6 +11,7 @@ import type {
   TopicStatus,
 } from "@impromptu/api/contracts";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -21,19 +22,25 @@ import {
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { createLobbyMock, joinTopicByCodeMock, lookupPrivateLobbyMock } =
-  vi.hoisted(() => ({
-    createLobbyMock: vi.fn<(input: LobbyCreateInput) => Promise<JoinResult>>(),
-    joinTopicByCodeMock:
-      vi.fn<
-        (input: JoinByCodeInput) => Promise<JoinResult | SideUnavailableError>
-      >(),
-    lookupPrivateLobbyMock:
-      vi.fn<(code: string) => Promise<PrivateLobbyPreview>>(),
-  }));
+const {
+  createLobbyMock,
+  joinTopicByCodeMock,
+  lookupPrivateLobbyMock,
+  getTopicsMock,
+} = vi.hoisted(() => ({
+  getTopicsMock: vi.fn<() => Promise<TopicStatus[]>>(),
+  createLobbyMock: vi.fn<(input: LobbyCreateInput) => Promise<JoinResult>>(),
+  joinTopicByCodeMock:
+    vi.fn<
+      (input: JoinByCodeInput) => Promise<JoinResult | SideUnavailableError>
+    >(),
+  lookupPrivateLobbyMock:
+    vi.fn<(code: string) => Promise<PrivateLobbyPreview>>(),
+}));
 
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
+  getTopics: getTopicsMock,
   createLobby: createLobbyMock,
   joinTopicByCode: joinTopicByCodeMock,
   lookupPrivateLobby: lookupPrivateLobbyMock,
@@ -41,7 +48,58 @@ vi.mock("../api", async (importOriginal) => ({
 
 import Home, { MEDIA_PERMISSION_MESSAGE, TopicList } from "./home";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  getTopicsMock.mockReset();
+});
+
+it("coalesces change events while a slow topic refresh is in flight", async () => {
+  const source = Object.assign(new EventTarget(), {
+    onopen: null,
+    close: vi.fn<() => void>(),
+  });
+  vi.stubGlobal(
+    "EventSource",
+    vi.fn(function EventSource() {
+      return source;
+    }),
+  );
+  let resolveFirst!: (topics: TopicStatus[]) => void;
+  let resolveSecond!: (topics: TopicStatus[]) => void;
+  const first = new Promise<TopicStatus[]>((resolve) => {
+    resolveFirst = resolve;
+  });
+  const second = new Promise<TopicStatus[]>((resolve) => {
+    resolveSecond = resolve;
+  });
+  getTopicsMock.mockReturnValueOnce(first).mockReturnValueOnce(second);
+  const router = createMemoryRouter([
+    {
+      path: "/",
+      loader: () => ({ account: null, topics: [] }),
+      element: <Home />,
+    },
+  ]);
+  render(<RouterProvider router={router} />);
+  await screen.findByRole("heading", {
+    name: "Choose a topic and side to debate",
+  });
+  act(() => {
+    for (let i = 0; i < 5; i++) source.dispatchEvent(new Event("changed"));
+  });
+  expect(getTopicsMock).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    resolveFirst([]);
+    await first;
+  });
+  expect(getTopicsMock).toHaveBeenCalledTimes(2);
+  await act(async () => {
+    resolveSecond([]);
+    await second;
+  });
+  expect(getTopicsMock).toHaveBeenCalledTimes(2);
+});
 
 describe("TopicList", () => {
   it("makes role intent explicit before joining and browses one topic at a time", async () => {

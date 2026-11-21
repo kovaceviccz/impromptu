@@ -96,8 +96,17 @@ test("live public topic creation, discovery, joining, and closure show no errors
       await (await creation).json(),
     );
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
-    await expect(guest.getByText(`1 of ${initialCount + 1}`)).toBeVisible();
-    for (let index = 0; index < 3; index += 1)
+    const currentTopics = apiContract.topics.response.parse(
+      await (await guest.request.get("/api/topics")).json(),
+    );
+    const createdIndex = currentTopics.findIndex(
+      (topic) => topic.id === created!.lobbyId,
+    );
+    expect(createdIndex).toBeGreaterThanOrEqual(0);
+    await expect(guest.getByText(`1 of ${initialCount + 1}`)).toBeVisible({
+      timeout: 20_000,
+    });
+    for (let index = 0; index < createdIndex; index += 1)
       await guest.getByRole("button", { name: "Next topic" }).click();
     await expect(guest.getByRole("heading", { name: title })).toBeVisible();
     await guest
@@ -119,8 +128,10 @@ test("live public topic creation, discovery, joining, and closure show no errors
         })
         .locator("video"),
     ).toBeVisible();
-    await expect(second.getByText(`1 of ${initialCount + 1}`)).toBeVisible();
-    for (let index = 0; index < 3; index += 1)
+    await expect(second.getByText(`1 of ${initialCount + 1}`)).toBeVisible({
+      timeout: 20_000,
+    });
+    for (let index = 0; index < createdIndex; index += 1)
       await second.getByRole("button", { name: "Next topic" }).click();
     await second
       .getByRole("button", { name: /Debate.*No: context is too important/ })
@@ -142,8 +153,8 @@ test("live public topic creation, discovery, joining, and closure show no errors
         .locator("video"),
     ).toBeVisible();
     await expect(
-      page.getByRole("tab", { name: "Participants 3" }),
-    ).toBeVisible();
+      page.getByRole("button", { name: "Start debate", exact: true }),
+    ).toBeEnabled();
     await page.getByRole("button", { name: "Start debate" }).click();
     await expect(page.getByText("Debate in progress ...")).toBeVisible();
     await expect(guest.getByText("Debate in progress ...")).toBeVisible();

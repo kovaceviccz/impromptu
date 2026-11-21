@@ -35,11 +35,15 @@ static_resources:
                     - name: staging_application
                       domains: ["staging.impromptu.social"]
                       routes:
+                        - match: { path: "/api/lobbies/public/events" }
+                          route: { cluster: staging_application, timeout: 0s }
                         - match: { prefix: "/" }
                           route: { cluster: staging_application }
                     - name: application
                       domains: ["*"]
                       routes:
+                        - match: { path: "/api/lobbies/public/events" }
+                          route: { cluster: application, timeout: 0s }
                         - match: { prefix: "/" }
                           route: { cluster: application }
                 http_filters:

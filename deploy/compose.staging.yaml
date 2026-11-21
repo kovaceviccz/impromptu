@@ -35,8 +35,6 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     tmpfs: [/tmp]
-    mem_limit: 256m
-    cpus: 0.15
     healthcheck:
       test: [CMD, wget, --quiet, --spider, http://127.0.0.1:3001/api/health]
       interval: 10s
@@ -69,8 +67,6 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     tmpfs: [/tmp]
-    mem_limit: 512m
-    cpus: 0.35
     command: ["--config", "/etc/livekit.yaml"]
     environment:
       LIVEKIT_KEYS:

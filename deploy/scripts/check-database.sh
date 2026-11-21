@@ -10,9 +10,9 @@ for name in POSTGRES_PASSWORD PRODUCTION_DATABASE_PASSWORD STAGING_DATABASE_PASS
 done
 export DATABASE_ENV_FILE="$database_env"
 # CI uses a separate project, volume, and port; cleanup never touches live data.
-export POSTGRES_BIND_PORT=15432
+export POSTGRES_BIND_PORT=0
 compose() {
-  docker compose --project-name impromptu-database-ci --file compose.database.yaml "$@"
+  docker compose --project-name "${COMPOSE_PROJECT_NAME:-impromptu}-database-check" --file compose.database.yaml "$@"
 }
 cleanup() {
   compose down --volumes --remove-orphans

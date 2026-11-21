@@ -1347,21 +1347,31 @@ export default function Home() {
   useEffect(() => {
     if (typeof EventSource === "undefined") return undefined;
     let active = true;
-    let refreshVersion = 0;
+    let refreshing = false;
+    let refreshQueued = false;
     const events = new EventSource(apiContract.publicLobbyEvents.path);
     const refresh = () => {
-      const version = ++refreshVersion;
-      void getTopics().then(
-        (latestTopics) => {
-          if (!active || version !== refreshVersion) return;
-          setTopics(latestTopics);
-          setTopicListError(undefined);
-        },
-        () => {
-          if (active && version === refreshVersion)
-            setTopicListError("Debate topics could not be refreshed.");
-        },
-      );
+      if (!active) return;
+      refreshQueued = true;
+      if (refreshing) return;
+      refreshing = true;
+      void (async () => {
+        do {
+          refreshQueued = false;
+          try {
+            const latestTopics = await getTopics();
+            if (active) {
+              setTopics(latestTopics);
+              setTopicListError(undefined);
+            }
+          } catch {
+            if (active)
+              setTopicListError("Debate topics could not be refreshed.");
+          }
+          if (!active) break;
+        } while (refreshQueued);
+        refreshing = false;
+      })();
     };
     events.addEventListener("changed", refresh);
     events.onopen = refresh;
