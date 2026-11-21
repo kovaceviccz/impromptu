@@ -18,7 +18,7 @@ jobs:
   deploy:
     if: >-
       (github.event_name == 'workflow_dispatch' && github.ref ==
-      'refs/heads/main') || (github.event_name == 'workflow_run' &&
+      'refs/heads/staging') || (github.event_name == 'workflow_run' &&
        vars.STAGING_AUTO_DEPLOY_ENABLED == 'true' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: main
+          ref: ${{ github.event.workflow_run.head_sha || 'staging' }}
 
       - name: Select the current staging commit
         id: revision
@@ -85,9 +85,10 @@ jobs:
         run: |
           ssh "impromptu@$DEPLOY_HOST" \
             'mkdir -p /opt/impromptu/deploy/secrets /opt/impromptu/deploy/scripts'
-          scp deploy/compose.staging.yaml deploy/livekit.staging.yaml \
+          scp deploy/compose.staging.yaml deploy/compose.database.yaml deploy/livekit.staging.yaml \
             deploy/envoy.yaml "impromptu@$DEPLOY_HOST:/opt/impromptu/deploy/"
-          scp deploy/scripts/up-staging.sh deploy/scripts/validate-envoy.sh \
+          scp deploy/scripts/up-staging.sh deploy/scripts/up-database.sh \
+            deploy/scripts/init-databases.sh deploy/scripts/validate-envoy.sh \
             "impromptu@$DEPLOY_HOST:/opt/impromptu/deploy/scripts/"
 
       - name: Install staging secrets

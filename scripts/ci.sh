@@ -66,6 +66,7 @@ ci_stage='validate containers and infrastructure'
 docker compose config --quiet
 docker build --file deploy/Dockerfile --tag impromptu:ci .
 sh deploy/scripts/check.sh
+sh deploy/scripts/check-database.sh
 
 cleanup() {
   result=$?

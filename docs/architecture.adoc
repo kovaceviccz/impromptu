@@ -153,6 +153,12 @@ server validation appear beside the same fields. Account-only pages check the
 session in their loader and redirect to the login page with a same-origin
 `redirectTo` path.
 
+Round and voting deadlines are stored in PostgreSQL. The API schedules a timer
+for each deadline and reloads unfinished work when it starts. A failed deadline
+operation is retried; an idle application does not poll the database for work.
+The health endpoint checks database connectivity and returns `503` when the
+connection fails.
+
 == Frontend
 
 The web application uses React Router Framework Mode, shadcn/ui, Tailwind, and
@@ -205,10 +211,16 @@ LiveKit media reaches the host directly because a standard Cloudflare HTTP proxy
 does not carry the required media transports.
 
 Production and staging share the Hetzner host and Envoy. They use separate
-Compose projects, LiveKit instances, media ports, and Neon database branches.
-Staging stays online at `staging.impromptu.social`. Its database branch persists
-across deployments; each deployment applies versioned migrations before starting
-the new application image.
+Compose projects, LiveKit instances, and media ports. One PostgreSQL container
+serves separate databases for production and staging, each owned by a different
+login role. Database access is restricted to host loopback and the container
+network. The application roles cannot connect to each other's databases.
+
+PostgreSQL data lives in a persistent Docker volume in a separate Compose
+project. Application deployments do not recreate the database or reset its data.
+Staging stays online at `staging.impromptu.social`. Each deployment applies
+versioned migrations and idempotent demo seeds before starting the new image.
+Database credentials are provisioned separately from application deployments.
 
 OpenTofu owns the Hetzner host, firewall, SSH access, Cloudflare DNS records,
 origin certificates, and the zone settings required at the edge. Private keys
