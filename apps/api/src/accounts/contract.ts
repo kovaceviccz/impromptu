@@ -56,6 +56,7 @@ export const updateAccountBodySchema = z.strictObject({
 });
 
 export const accountSchema = z.strictObject({
+  mailboxAccess: z.literal(true).optional(),
   id: z.uuid(),
   displayName: displayNameSchema,
   username: z.string().min(1),
@@ -93,7 +94,33 @@ export function firstFieldErrors(error: z.ZodError) {
   return fieldErrors;
 }
 
+export const forgotPasswordBodySchema = z.strictObject({ email: emailSchema });
+export const resetPasswordBodySchema = z
+  .strictObject({
+    token: z.string().min(32).max(128),
+    password: newPasswordSchema,
+    confirmPassword: newPasswordSchema,
+  })
+  .refine((input) => input.password === input.confirmPassword, {
+    path: ["confirmPassword"],
+    message: "Passwords must match.",
+  });
 export const accountContracts = {
+  forgotPassword: {
+    method: "POST",
+    path: "/api/auth/forgot-password",
+    body: forgotPasswordBodySchema,
+    response: healthSchema,
+    errors: { 400: formErrorSchema },
+  },
+  resetPassword: {
+    method: "POST",
+    path: "/api/auth/reset-password",
+    body: resetPasswordBodySchema,
+    response: healthSchema,
+    errors: { 400: formErrorSchema },
+  },
+
   register: {
     method: "POST",
     path: "/api/auth/register",

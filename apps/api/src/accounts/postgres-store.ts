@@ -116,6 +116,29 @@ export function createPostgresAccountStore(orm: MikroORM): AccountStore {
       return { account: toAccount(entity) };
     },
 
+    async saveReset(accountId, resetHash, resetExpiresAt) {
+      await orm.em
+        .fork()
+        .nativeUpdate(
+          AccountEntity,
+          { id: accountId },
+          { resetHash, resetExpiresAt },
+        );
+    },
+    async consumeReset(resetHash, passwordHash) {
+      return orm.em.fork().transactional(async (em) => {
+        const rows: { id: string }[] = await em
+          .getConnection()
+          .execute(
+            `update account set password_hash = ?, reset_hash = null, reset_expires_at = null where reset_hash = ? and reset_expires_at > clock_timestamp() returning id`,
+            [passwordHash, resetHash],
+          );
+        const row = rows[0];
+        if (!row) return false;
+        await em.nativeDelete(AccountSessionEntity, { account: row.id });
+        return true;
+      });
+    },
     async delete(accountId) {
       return (
         (await orm.em.fork().nativeDelete(AccountEntity, { id: accountId })) > 0

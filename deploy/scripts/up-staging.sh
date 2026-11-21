@@ -31,6 +31,6 @@ compose exec -T app \
   wget --quiet --spider http://127.0.0.1:3001/api/health
 
 running_services=$(compose ps --status running --services)
-for service in app livekit; do
+for service in app livekit mailpit; do
   echo "$running_services" | grep -qx "$service"
 done

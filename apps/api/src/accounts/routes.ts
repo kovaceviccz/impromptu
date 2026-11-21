@@ -1,3 +1,10 @@
+import { randomBytes } from "node:crypto";
+import { hashSessionToken } from "./store.js";
+import {
+  linkEmail,
+  SendingLimits,
+  type MailDelivery,
+} from "../mail/delivery.js";
 import type { FastifyPluginAsyncZod } from "@fastify/type-provider-zod";
 import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 
@@ -16,19 +23,37 @@ const duplicateMessages = {
 export type AccountRoutesOptions = {
   accounts: AccountStore;
   debateResults: DebateResultStore;
+  mail?: MailDelivery;
+  publicOrigin?: string;
+  mailboxAccountIds?: string[];
   secureCookies: boolean;
 };
 
 export const accountRoutes: FastifyPluginAsyncZod<
   AccountRoutesOptions
-> = async (app, { accounts, debateResults, secureCookies }) => {
+> = async (
+  app,
+  {
+    accounts,
+    debateResults,
+    secureCookies,
+    mail,
+    publicOrigin,
+    mailboxAccountIds,
+  },
+) => {
   // Compared against when no account matches, so a missing account and a
   // wrong password take similar time.
   const unmatchedPasswordHash = hashPassword("unmatched-account-password");
 
   async function currentAccount(request: FastifyRequest) {
     const token = request.cookies[SESSION_COOKIE];
-    return token ? accounts.findSessionAccount(token) : undefined;
+    const account = token
+      ? await accounts.findSessionAccount(token)
+      : undefined;
+    return account && mailboxAccountIds?.includes(account.id)
+      ? { ...account, mailboxAccess: true as const }
+      : account;
   }
 
   async function startSession(reply: FastifyReply, accountId: string) {
@@ -57,6 +82,76 @@ export const accountRoutes: FastifyPluginAsyncZod<
       .send({ message: "Check the highlighted fields.", fieldErrors });
   });
 
+  const limits = new SendingLimits();
+  app.post(
+    accountContracts.forgotPassword.path,
+    {
+      schema: {
+        body: accountContracts.forgotPassword.body,
+        response: {
+          200: accountContracts.forgotPassword.response,
+          ...accountContracts.forgotPassword.errors,
+        },
+      },
+    },
+    async (request) => {
+      const email = request.body.email;
+      if (
+        limits.allow(`ip:${request.ip}`, 10, 3600000) &&
+        limits.allow(`email:${email}`, 3, 3600000)
+      ) {
+        const credentials = await accounts.findCredentials(email);
+        if (credentials && mail && publicOrigin) {
+          const token = randomBytes(32).toString("base64url");
+          await accounts.saveReset(
+            credentials.account.id,
+            hashSessionToken(token),
+            new Date(Date.now() + 30 * 60 * 1000),
+          );
+          try {
+            await mail.send(
+              linkEmail(
+                email,
+                "Reset password",
+                "Use this link within 30 minutes to reset your password. If you did not request this, you can ignore this message.",
+                `${publicOrigin}/reset-password#token=${token}`,
+              ),
+            );
+          } catch {
+            app.log.error("Password recovery email could not be submitted");
+          }
+        }
+      }
+      return { status: "ok" as const };
+    },
+  );
+  app.post(
+    accountContracts.resetPassword.path,
+    {
+      schema: {
+        body: accountContracts.resetPassword.body,
+        response: {
+          200: accountContracts.resetPassword.response,
+          ...accountContracts.resetPassword.errors,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (
+        !limits.allow(`reset:${request.ip}`, 20, 3600000) ||
+        !(await accounts.consumeReset(
+          hashSessionToken(request.body.token),
+          await hashPassword(request.body.password),
+        ))
+      )
+        return reply.code(400).send({
+          message: "This reset link is invalid or expired. Request a new link.",
+          fieldErrors: {},
+        });
+      reply.clearCookie(SESSION_COOKIE, { path: "/" });
+      return { status: "ok" as const };
+    },
+  );
   app.post(
     accountContracts.register.path,
     {

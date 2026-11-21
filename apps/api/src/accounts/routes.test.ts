@@ -538,3 +538,127 @@ describe("account management", () => {
     expect(response.statusCode).toBe(401);
   });
 });
+
+describe("password recovery", () => {
+  it("uses the same confirmation for unknown addresses and resets once while revoking existing sessions", async () => {
+    const sent: import("../mail/delivery.js").Email[] = [];
+    const accounts = createMemoryAccountStore();
+    const app = await buildApp({
+      accounts,
+      livekit,
+      privateLobbies: createMemoryPrivateLobbyStore(),
+      livekitPublicUrl: "ws://localhost:7880",
+      tokenTtlSeconds: 60,
+      publicOrigin: "https://example.test",
+      mail: {
+        async send(message) {
+          sent.push(message);
+        },
+      },
+    });
+    apps.push(app);
+    const registered = await register(app);
+    const cookies = sessionCookie(registered);
+    const requestReset = (email: string) =>
+      app.inject({
+        method: "POST",
+        url: "/api/auth/forgot-password",
+        payload: { email },
+      });
+    const known = await requestReset("ada@example.com");
+    const unknown = await requestReset("unknown@example.com");
+    expect(known.json()).toEqual(unknown.json());
+    expect(sent).toHaveLength(1);
+    const url = new URL(sent[0]!.text.trim().split("\n").at(-1)!);
+    const token = new URLSearchParams(url.hash.slice(1)).get("token")!;
+    const payload = {
+      token,
+      password: "new-analytical-password",
+      confirmPassword: "new-analytical-password",
+    };
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/auth/reset-password",
+          payload: { ...payload, confirmPassword: "different-password" },
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/auth/reset-password",
+          payload,
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/auth/reset-password",
+          payload,
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (await app.inject({ method: "GET", url: "/api/account", cookies }))
+        .statusCode,
+    ).toBe(401);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/auth/login",
+          payload: {
+            identifier: "ada@example.com",
+            password: registration.password,
+          },
+        })
+      ).statusCode,
+    ).toBe(401);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/auth/login",
+          payload: {
+            identifier: "ada@example.com",
+            password: payload.password,
+          },
+        })
+      ).statusCode,
+    ).toBe(200);
+  });
+
+  it("rejects expired reset tokens", async () => {
+    const accounts = createMemoryAccountStore();
+    const app = await testApp(accounts);
+    const registered = await register(app);
+    const account = apiContract.register.response.parse(
+      registered.json(),
+    ).account;
+    const { hashSessionToken } = await import("./store.js");
+    const token = "expired-reset-token-with-more-than-32-characters";
+    await accounts.saveReset(
+      account.id,
+      hashSessionToken(token),
+      new Date(Date.now() - 1000),
+    );
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/auth/reset-password",
+          payload: {
+            token,
+            password: "new-password",
+            confirmPassword: "new-password",
+          },
+        })
+      ).statusCode,
+    ).toBe(400);
+  });
+});

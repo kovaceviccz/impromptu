@@ -254,3 +254,27 @@ TypeScript to an older release.
 * https://docs.livekit.io/transport/self-hosting/ports-firewall/[LiveKit ports and firewall]
 * https://developers.cloudflare.com/network/websockets/[Cloudflare WebSockets]
 * https://www.cncf.io/projects/envoy/[CNCF Envoy project]
+
+== Invitations and password recovery
+
+An invitation link grants guest access to one lobby, including private lobbies.
+The API signs invitations and rejects altered or expired links. Opening a link
+shows the current question and availability before joining. Sending an email
+invitation requires the connected host's room token and is subject to sending
+limits. Invitation links preserve the existing role and position checks.
+
+Password recovery gives the same confirmation for registered and unregistered
+addresses. Reset tokens are random, expire, and are stored only as hashes. A
+successful reset consumes the token and revokes existing account sessions.
+Invitation and reset secrets travel in URL fragments to keep them out of HTTP
+request paths.
+
+Each environment has its own Mailpit container and persistent mailbox. The
+application submits email over internal SMTP; Mailpit captures it for inspection
+and does not deliver it to external inboxes. The application proxies its UI and
+WebSocket updates at `/mail/` under the application's existing origin.
+
+Mailbox access is assigned through configured account IDs. Each mailbox request
+requires a current session belonging to an allowed account. Mailpit's HTTP and
+SMTP ports are reachable only within the local stack or through host loopback on
+the server. Production and staging use separate ports and mail volumes.

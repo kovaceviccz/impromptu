@@ -1,3 +1,4 @@
+import { InvitationTools } from "~/components/invitation-tools";
 import {
   PRODUCT,
   joinBodySchema,
@@ -23,8 +24,6 @@ import {
 } from "@livekit/components-react";
 import {
   ArrowDownIcon,
-  CopyIcon,
-  EyeIcon,
   LogOutIcon,
   MicIcon,
   MicOffIcon,
@@ -41,6 +40,7 @@ import {
 } from "livekit-client";
 import {
   type FormEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useRef,
@@ -92,6 +92,8 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
+  DialogTrigger,
   DialogHeader,
   DialogTitle,
 } from "~/components/ui/dialog";
@@ -122,7 +124,7 @@ const chatTimeFormatter = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
 });
 const voteSurface =
-  "flex h-14 min-w-24 basis-0 shrink items-center justify-between gap-2 rounded-lg px-3 text-left whitespace-normal transition-[flex-grow,background-color,color] duration-300 ease-out";
+  "flex min-h-14 min-w-24 basis-0 shrink items-center justify-between gap-2 rounded-lg px-3 py-2 text-left whitespace-normal transition-[flex-grow,background-color,color] duration-300 ease-out";
 const sideTints = [
   "bg-emerald-50 text-emerald-900",
   "bg-red-50 text-red-900",
@@ -426,7 +428,7 @@ function DebateVideos({ join }: { join: JoinResult }) {
             >
               <h2
                 className={
-                  "font-editorial text-base font-semibold sm:text-lg " +
+                  "font-editorial text-base font-semibold [overflow-wrap:anywhere] sm:text-lg " +
                   (slot === 0 ? "text-emerald-900" : "text-red-900")
                 }
               >
@@ -438,9 +440,10 @@ function DebateVideos({ join }: { join: JoinResult }) {
                 <figcaption className="absolute top-3 left-3 z-20 flex items-center gap-1.5">
                   <Badge
                     className={
-                      slot === 0
+                      "h-auto rounded-md px-2 py-1 text-sm " +
+                      (slot === 0
                         ? "bg-emerald-50/80 text-emerald-900"
-                        : "bg-red-50/70 text-red-900"
+                        : "bg-red-50/70 text-red-900")
                     }
                   >
                     {label}
@@ -788,7 +791,9 @@ function LobbyStatus({
   onStart,
   onStateChange,
   starting,
+  children,
 }: {
+  children?: ReactNode;
   join: JoinResult;
   onStart: () => void;
   onStateChange: (state: LobbyState) => void;
@@ -797,9 +802,6 @@ function LobbyStatus({
   const participants = useRoomParticipants(join);
   const room = useRoomContext();
   const debaterCount = assignDebaters(participants, join).size;
-  const hasSpectator = participants.some(
-    (participant) => !publishes(participant, join),
-  );
   const isLobbyHost = join.hostIdentity === join.participantIdentity;
 
   useEffect(() => {
@@ -819,32 +821,24 @@ function LobbyStatus({
     };
   }, [onStateChange, room]);
 
-  if (join.state === "DEBATE_IN_PROGRESS") {
-    return (
-      <p className="shrink-0 text-sm text-muted-foreground">
-        Debate in progress ...
-      </p>
-    );
-  }
-
   if (join.state !== "WAITING") return null;
-  if (!isLobbyHost) {
+  if (!isLobbyHost)
     return (
-      <p className="shrink-0 text-sm text-muted-foreground">
-        Waiting for others to join...
+      <p className="mt-3 text-sm text-muted-foreground">
+        Waiting for the host to start.
       </p>
     );
-  }
-
   return (
-    <Button
-      className="shrink-0"
-      disabled={starting || debaterCount !== 2 || !hasSpectator}
-      type="button"
-      onClick={onStart}
-    >
-      Start Debate
-    </Button>
+    <div className="mt-3 grid grid-cols-2 gap-2">
+      {children}
+      <Button
+        disabled={starting || debaterCount !== 2}
+        type="button"
+        onClick={onStart}
+      >
+        {starting ? "Starting…" : "Start debate"}
+      </Button>
+    </div>
   );
 }
 
@@ -923,10 +917,7 @@ function ParticipantRoster({
             className="flex items-center justify-between gap-2 text-xs text-muted-foreground"
             id="debaters-heading"
           >
-            <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 font-medium text-violet-900">
-              <MicIcon aria-hidden="true" className="size-3" />
-              Debaters
-            </span>{" "}
+            <span>Debaters</span>{" "}
             <span className="tabular-nums">{debatersBySide.size} of 2</span>
           </h2>
           <ul className="mt-2 grid gap-1.5">
@@ -951,13 +942,19 @@ function ParticipantRoster({
                     <p className="truncate text-xs opacity-80">{side}</p>
                   </div>
                   {participant && isHost(participant, join) ? (
-                    <Badge variant="secondary">Host</Badge>
+                    <span className="text-xs text-muted-foreground">Host</span>
                   ) : null}
                   {!participant && !viewerIsDebater && canChangeRole ? (
                     <Button
+                      className={
+                        sideIndex === 0
+                          ? "bg-emerald-100 text-emerald-900 hover:bg-emerald-200"
+                          : "bg-red-100 text-red-900 hover:bg-red-200"
+                      }
                       disabled={changing}
                       size="xs"
                       type="button"
+                      variant="secondary"
                       onClick={() => setClaimedSide(sideIndex)}
                     >
                       Debate<span className="sr-only">: {side}</span>
@@ -984,10 +981,7 @@ function ParticipantRoster({
             className="flex items-center justify-between gap-2 text-xs text-muted-foreground"
             id="spectators-heading"
           >
-            <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 font-medium text-sky-900">
-              <EyeIcon aria-hidden="true" className="size-3" />
-              Spectators
-            </span>{" "}
+            <span>Spectators</span>{" "}
             <span className="tabular-nums">{spectators.length}</span>
           </h2>
           {spectators.length === 0 ? (
@@ -1003,7 +997,7 @@ function ParticipantRoster({
                 >
                   <span className="truncate">{nameOf(participant)}</span>
                   {isHost(participant, join) ? (
-                    <Badge variant="secondary">Host</Badge>
+                    <span className="text-xs text-muted-foreground">Host</span>
                   ) : null}
                 </li>
               ))}
@@ -1090,8 +1084,10 @@ function AudiencePanel({
   onChangeRole,
   onPrivateLobbyNotFound,
   onTabChange: setActiveTab,
+  lobbyControls,
 }: {
   activeTab: AudienceTab;
+  lobbyControls: ReactNode;
   canVote: boolean;
   voting: VotingStatus;
   votingClosed: boolean;
@@ -1149,7 +1145,7 @@ function AudiencePanel({
   }
 
   return (
-    <aside className="flex min-h-0 flex-col bg-background">
+    <aside className="flex min-h-0 min-w-0 flex-col bg-background">
       <section className="bg-primary/5 px-4 py-3">
         <dl className="grid grid-cols-2 gap-6">
           <div>
@@ -1165,6 +1161,7 @@ function AudiencePanel({
             </dd>
           </div>
         </dl>
+        {lobbyControls}
       </section>
 
       <div
@@ -1311,7 +1308,9 @@ function AudiencePanel({
                     style={{ flexGrow: (voteCounts[index] ?? 0) + 1 }}
                     value={String(index)}
                   >
-                    <span className="min-w-0 leading-tight">{side}</span>
+                    <span className="min-w-0 leading-tight [overflow-wrap:anywhere]">
+                      {side}
+                    </span>
                     <span className="shrink-0 tabular-nums">
                       {voteCounts[index]}{" "}
                       {voteCounts[index] === 1 ? "vote" : "votes"}
@@ -1338,7 +1337,9 @@ function AudiencePanel({
                     key={side}
                     style={{ flexGrow: (voteCounts[index] ?? 0) + 1 }}
                   >
-                    <dt className="min-w-0 leading-tight">{side}</dt>
+                    <dt className="min-w-0 leading-tight [overflow-wrap:anywhere]">
+                      {side}
+                    </dt>
                     <dd className="shrink-0 font-medium tabular-nums">
                       {voteCounts[index]}{" "}
                       {voteCounts[index] === 1 ? "vote" : "votes"}
@@ -1468,14 +1469,15 @@ function LeaveButton({
             ? "Close lobby"
             : "Leave lobby"
       }
-      className={isCreator ? "whitespace-nowrap px-3" : "size-12"}
+      className="size-12"
+      title={isCreator ? "Close lobby" : "Leave lobby"}
       disabled={leaving || submitting}
-      size={isCreator ? undefined : "icon-lg"}
+      size="icon-lg"
       type="button"
-      variant={isCreator ? "secondary" : "destructive"}
+      variant="destructive"
       onClick={() => void leave()}
     >
-      {isCreator ? "Close Lobby" : <LogOutIcon className="size-5" />}
+      <LogOutIcon aria-hidden="true" className="size-5" />
     </Button>
   );
 }
@@ -1543,9 +1545,8 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
   }, [join, leaving]);
   const [privateLobbyClosed, setPrivateLobbyClosed] = useState(false);
   const [mediaPermissionFailed, setMediaPermissionFailed] = useState(false);
-  const [codeCopied, setCodeCopied] = useState(false);
   const [startingDebate, setStartingDebate] = useState(false);
-  const [roundConfigured, setRoundConfigured] = useState(false);
+  const [roundSettingsOpen, setRoundSettingsOpen] = useState(false);
   const [endMode, setEndMode] = useState("manual");
   const [durationMinutes, setDurationMinutes] = useState(5);
   const [roundEndsAt, setRoundEndsAt] = useState<string | null>();
@@ -1708,93 +1709,8 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
     return undefined;
   }
 
-  async function copyJoinCode() {
-    if (!join.joinCode) return;
-    try {
-      await navigator.clipboard.writeText(join.joinCode);
-      setCodeCopied(true);
-    } catch {
-      setRoomError("Private lobby code could not be copied.");
-    }
-  }
-
-  if (
-    join.state === "WAITING" &&
-    (join.isCreator || join.hostIdentity === join.participantIdentity) &&
-    !roundConfigured
-  ) {
-    return (
-      <main className="min-h-svh bg-muted/30">
-        <Dialog open>
-          <DialogContent showCloseButton={false}>
-            <DialogHeader>
-              <DialogTitle>How should this round end?</DialogTitle>
-              <DialogDescription>
-                Choose how to end the round before entering the lobby. The timer
-                starts when you start the debate.
-              </DialogDescription>
-            </DialogHeader>
-            <form
-              className="grid gap-4"
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (
-                  endMode === "timer" &&
-                  (!Number.isInteger(durationMinutes) ||
-                    durationMinutes < 1 ||
-                    durationMinutes > 60)
-                )
-                  return;
-                setRoundConfigured(true);
-              }}
-            >
-              <label className="grid gap-2">
-                End round by
-                <select
-                  className="rounded-md border bg-background p-2"
-                  value={endMode}
-                  onChange={(event) => setEndMode(event.target.value)}
-                >
-                  <option value="manual">End round button</option>
-                  <option value="timer">Timer</option>
-                </select>
-              </label>
-              {endMode === "timer" ? (
-                <div className="grid gap-2">
-                  <label htmlFor="round-duration">
-                    Round duration in minutes
-                  </label>
-                  <Input
-                    id="round-duration"
-                    aria-describedby="round-duration-help"
-                    type="number"
-                    required
-                    min={1}
-                    max={60}
-                    step={1}
-                    value={durationMinutes}
-                    onChange={(event) =>
-                      setDurationMinutes(Number(event.target.value))
-                    }
-                  />
-                  <span
-                    id="round-duration-help"
-                    className="text-xs text-muted-foreground"
-                  >
-                    Choose between 1 and 60 minutes.
-                  </span>
-                </div>
-              ) : null}
-              <Button type="submit">Continue to lobby</Button>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </main>
-    );
-  }
-
   return (
-    <main className="grid h-svh grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-muted/30">
+    <main className="grid h-svh min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-muted/30">
       <LiveKitRoom
         key={join.token}
         audio={isDebater}
@@ -1828,83 +1744,25 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
             </Button>
           </DialogContent>
         </Dialog>
-        <header
-          className={
-            "grid items-center gap-3 bg-[#fbfcfe] px-4 py-2 " +
-            (join.state === "DEBATE_IN_PROGRESS" && roundEndsAt
-              ? "grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"
-              : "grid-cols-[minmax(0,1fr)_auto]")
-          }
-        >
+        <header className="grid min-w-0 grid-cols-1 items-center gap-3 bg-[#fbfcfe] px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-x-6 sm:px-6">
           <div className="min-w-0">
             <p className="font-editorial text-base font-semibold text-primary">
               {PRODUCT.name}
             </p>
-            <div className="flex min-w-0 items-baseline gap-3">
-              <h1 className="font-editorial min-w-0 truncate text-xl font-semibold tracking-tight sm:text-2xl">
-                {join.lobbyName ?? join.topicTitle}
-              </h1>
-              {join.isCreator && join.visibility ? (
-                <span className="text-xs text-muted-foreground">
-                  {join.visibility === "public"
-                    ? "Public lobby"
-                    : "Private lobby"}
-                </span>
-              ) : null}
-              {join.state === "DEBATE_IN_PROGRESS" &&
-              join.hostIdentity === join.participantIdentity &&
-              roundEndsAt === null ? (
-                <Button
-                  disabled={endingRound}
-                  type="button"
-                  onClick={() => void endActiveRound()}
-                >
-                  {endingRound ? "Ending round…" : "End round"}
-                </Button>
-              ) : null}
-              {join.state === "VOTING" || join.state === "ENDED" ? (
-                <output aria-live="polite">
-                  {votingClosed
-                    ? "Voting is closed"
-                    : !isDebater && !eligibleToVote
-                      ? "Voting is in progress. You joined after voting opened and cannot vote this round."
-                      : "Audience voting is open"}
-                </output>
-              ) : null}
-              <LobbyStatus
-                join={join}
-                onStart={() => void startDebate()}
-                onStateChange={updateLobbyState}
-                starting={startingDebate}
-              />
-            </div>
-            {join.isCreator && join.joinCode ? (
-              <Button
-                aria-label={`Copy lobby code ${join.joinCode}`}
-                className="mt-2 h-11 max-w-full justify-start px-3 text-base"
-                type="button"
-                variant="outline"
-                onClick={() => void copyJoinCode()}
-              >
-                <CopyIcon aria-hidden="true" />
-                <span>Lobby code</span>
-                <code className="font-mono text-lg font-semibold">
-                  {join.joinCode}
-                </code>
-                <span
-                  aria-live="polite"
-                  className="text-xs text-muted-foreground"
-                >
-                  {codeCopied ? "Copied" : "Copy"}
-                </span>
-              </Button>
+            <h1 className="font-editorial text-xl leading-snug font-semibold tracking-tight [overflow-wrap:anywhere] sm:text-2xl">
+              {join.lobbyName ?? join.topicTitle}
+            </h1>
+            {join.state === "DEBATE_IN_PROGRESS" ? (
+              <p className="col-span-full text-sm text-muted-foreground sm:row-start-3">
+                Debate in progress ...
+              </p>
             ) : null}
           </div>
-          {join.state === "DEBATE_IN_PROGRESS" && roundEndsAt ? (
-            <RoundCountdown endsAt={roundEndsAt} />
-          ) : null}
-          <div className="flex items-center gap-2 justify-self-end">
-            {join.state === "WAITING" ? <DevicePreview /> : null}
+          <div className="flex min-w-0 items-center justify-self-end gap-1 sm:gap-2">
+            <InvitationTools join={join} />
+            {join.state === "WAITING" ? (
+              <DevicePreview className="size-12" />
+            ) : null}
             <LeaveButton
               join={join}
               leaving={leaving}
@@ -1913,6 +1771,35 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
               onPrivateLobbyNotFound={onPrivateLobbyNotFound}
             />
           </div>
+          {join.state === "DEBATE_IN_PROGRESS" && roundEndsAt ? (
+            <RoundCountdown endsAt={roundEndsAt} />
+          ) : null}
+          {join.state === "DEBATE_IN_PROGRESS" &&
+          join.hostIdentity === join.participantIdentity &&
+          roundEndsAt === null ? (
+            <div>
+              <Button
+                disabled={endingRound}
+                type="button"
+                variant="secondary"
+                onClick={() => void endActiveRound()}
+              >
+                {endingRound ? "Ending round…" : "End round"}
+              </Button>
+            </div>
+          ) : null}
+          {join.state === "VOTING" || join.state === "ENDED" ? (
+            <output
+              aria-live="polite"
+              className="text-sm text-muted-foreground"
+            >
+              {votingClosed
+                ? "Voting is closed"
+                : !isDebater && !eligibleToVote
+                  ? "Voting is in progress. You joined after voting opened and cannot vote this round."
+                  : "Audience voting is open"}
+            </output>
+          ) : null}
           <ParticipantStatus
             join={join}
             onPrivateLobbyNotFound={onPrivateLobbyNotFound}
@@ -1925,9 +1812,89 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
           ) : null}
         </header>
 
-        <div className="grid min-h-0 grid-rows-[minmax(12rem,36svh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)] lg:grid-rows-1">
+        <div className="grid min-h-0 min-w-0 grid-rows-[minmax(10rem,26svh)_minmax(0,1fr)] sm:grid-rows-[minmax(12rem,36svh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)] lg:grid-rows-1">
           <DebateVideos join={join} />
           <AudiencePanel
+            lobbyControls={
+              <LobbyStatus
+                join={join}
+                onStart={() => void startDebate()}
+                onStateChange={updateLobbyState}
+                starting={startingDebate}
+              >
+                <Dialog
+                  open={roundSettingsOpen}
+                  onOpenChange={setRoundSettingsOpen}
+                >
+                  <DialogTrigger
+                    render={<Button type="button" variant="secondary" />}
+                  >
+                    Round settings
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Round settings</DialogTitle>
+                      <DialogDescription>
+                        End the round manually or set a timer. The timer begins
+                        when you start the debate.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <form
+                      className="grid gap-4"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        setRoundSettingsOpen(false);
+                      }}
+                    >
+                      <div className="mt-2 grid gap-3 pb-1">
+                        <div className="grid gap-1.5">
+                          <label htmlFor="round-end-mode">End round by</label>
+                          <select
+                            id="round-end-mode"
+                            className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+                            value={endMode}
+                            onChange={(event) => setEndMode(event.target.value)}
+                          >
+                            <option value="manual">End round button</option>
+                            <option value="timer">Timer</option>
+                          </select>
+                        </div>
+                        {endMode === "timer" && (
+                          <div className="grid gap-1.5">
+                            <label htmlFor="round-duration">
+                              Round duration in minutes
+                            </label>
+                            <Input
+                              id="round-duration"
+                              aria-describedby="round-duration-help"
+                              type="number"
+                              required
+                              min={1}
+                              max={60}
+                              step={1}
+                              value={durationMinutes}
+                              onChange={(event) =>
+                                setDurationMinutes(Number(event.target.value))
+                              }
+                            />
+                            <span
+                              id="round-duration-help"
+                              className="text-xs text-muted-foreground"
+                            >
+                              Choose between 1 and 60 minutes. The timer starts
+                              with the debate.
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <DialogFooter>
+                        <Button type="submit">Done</Button>
+                      </DialogFooter>
+                    </form>
+                  </DialogContent>
+                </Dialog>
+              </LobbyStatus>
+            }
             voting={voting}
             votingClosed={votingClosed}
             onVote={setVoting}

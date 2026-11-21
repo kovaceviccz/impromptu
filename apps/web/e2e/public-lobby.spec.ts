@@ -17,7 +17,6 @@ test("the starter topic card reflects its live room", async ({
       viewer.getByRole("heading", { name: "Is lying ever moral?" }),
     ).toBeVisible();
     await page.getByRole("button", { name: "Watch live" }).click();
-    await page.getByRole("button", { name: "Continue to lobby" }).click();
     await expect(viewer.getByText("1 person watching")).toBeVisible();
     await page.getByRole("button", { name: "Leave lobby" }).click();
     await expect(viewer.getByText("No one watching")).toBeVisible();
@@ -43,7 +42,7 @@ test("creating a public topic creates its only lobby and closing it removes the 
       viewer.getByRole("heading", { name: "Can you cheat in a dream?" }),
     ).toBeVisible();
     await viewerContext.setOffline(true);
-    await page.getByRole("button", { name: "Create or Join" }).click();
+    await page.getByRole("button", { name: "Create debate" }).click();
     await page.getByText("Write your own", { exact: true }).click();
     await page.getByText("Miscellaneous", { exact: true }).click();
     await page.getByLabel("Topic question").fill(title);
@@ -53,7 +52,6 @@ test("creating a public topic creates its only lobby and closing it removes the 
     await page.getByLabel("Creator display name").fill("Public host");
     await page.getByLabel("Join as").selectOption("spectator");
     await page.getByRole("button", { name: "Create and join" }).click();
-    await page.getByRole("button", { name: "Continue to lobby" }).click();
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
     await viewerContext.setOffline(false);
     await expect(viewer.getByText(`1 of ${initialCount + 1}`)).toBeVisible({
@@ -93,7 +91,7 @@ test("public positions reopen after the completed round's debaters leave", async
     await (await page.request.get("/api/topics")).json(),
   ).length;
   await page.goto("/");
-  await page.getByRole("button", { name: "Create or Join" }).click();
+  await page.getByRole("button", { name: "Create debate" }).click();
   await page.getByText("Write your own", { exact: true }).click();
   await page.getByText("Miscellaneous", { exact: true }).click();
   await page.getByLabel("Topic question").fill(title);
@@ -103,7 +101,6 @@ test("public positions reopen after the completed round's debaters leave", async
   await page.getByLabel("Creator display name").fill("Host");
   await page.getByLabel("Join as").selectOption("spectator");
   await page.getByRole("button", { name: "Create and join" }).click();
-  await page.getByRole("button", { name: "Continue to lobby" }).click();
   const guests = [];
   for (const side of ["Yes, reuse it", "No, close it"]) {
     const guest = await page.context().newPage();
@@ -128,7 +125,36 @@ test("public positions reopen after the completed round's debaters leave", async
     await expect(guest).toHaveURL(/\/debates\//);
     await expect(guest.getByRole("heading", { name: title })).toBeVisible();
   }
-  await page.getByRole("button", { name: "Start Debate", exact: true }).click();
+  const start = page.getByRole("button", { name: "Start debate", exact: true });
+  await expect(start).toBeEnabled();
+  const mediaBeforeSettings = await page
+    .getByRole("article")
+    .first()
+    .boundingBox();
+  const startBeforeSettings = await start.boundingBox();
+  await page
+    .getByRole("button", { name: "Round settings", exact: true })
+    .click();
+  await page.getByLabel("End round by", { exact: true }).selectOption("timer");
+  await page.getByLabel("Round duration in minutes", { exact: true }).fill("3");
+  expect(await page.locator("article").first().boundingBox()).toEqual(
+    mediaBeforeSettings,
+  );
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(await start.boundingBox()).toEqual(startBeforeSettings);
+  await page
+    .getByRole("button", { name: "Round settings", exact: true })
+    .click();
+  await expect(page.getByLabel("End round by", { exact: true })).toHaveValue(
+    "timer",
+  );
+  await expect(
+    page.getByLabel("Round duration in minutes", { exact: true }),
+  ).toHaveValue("3");
+  await page.getByLabel("End round by", { exact: true }).selectOption("manual");
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("button", { name: "Start debate", exact: true }).click();
   await page.getByRole("button", { name: "End round", exact: true }).click();
   await expect(page.getByRole("region", { name: "Round results" })).toBeVisible(
     { timeout: 35_000 },
@@ -154,7 +180,7 @@ test("public positions reopen after the completed round's debaters leave", async
     await expect(card.getByText("Both sides open")).toBeVisible();
   }
   await expect(
-    page.getByRole("button", { name: "Start Debate", exact: true }),
+    page.getByRole("button", { name: "Start debate", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Round results" }),

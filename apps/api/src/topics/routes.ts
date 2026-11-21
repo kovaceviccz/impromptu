@@ -1,4 +1,14 @@
-import { randomUUID } from "node:crypto";
+import {
+  linkEmail,
+  SendingLimits,
+  type MailDelivery,
+} from "../mail/delivery.js";
+import {
+  createHmac,
+  timingSafeEqual,
+  randomBytes,
+  randomUUID,
+} from "node:crypto";
 
 import type { FastifyPluginAsyncZod } from "@fastify/type-provider-zod";
 import type { FastifyRequest } from "fastify";
@@ -22,12 +32,15 @@ import {
   type LiveKitGateway,
 } from "./livekit.js";
 import { votingSummary } from "../lobbies/voting.js";
-import type { JoinResult, TopicCategory } from "./contract.js";
+import type { JoinResult, TopicCategory, LobbyTag } from "./contract.js";
 import type { AccountStore } from "../accounts/store.js";
 import { SESSION_COOKIE } from "../accounts/routes.js";
 import type { DebateResultStore } from "../statistics/store.js";
 
 export type TopicRoutesOptions = {
+  invitationSecret?: string;
+  mail?: MailDelivery;
+  publicOrigin?: string;
   accounts: AccountStore;
   debateResults: DebateResultStore;
   livekit: LiveKitGateway;
@@ -45,6 +58,7 @@ type ResolvedTopic = {
   title: string;
   sides: [string, string];
   category?: TopicCategory;
+  tags?: LobbyTag[];
   record?: PrivateLobbyRecord;
 };
 
@@ -85,6 +99,149 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
     options.livekit,
     options.tokenTtlSeconds,
   );
+  const invitationSecret =
+    options.invitationSecret ?? randomBytes(32).toString("hex");
+  const invitationLimits = new SendingLimits();
+  function signInvitation(id: string, expires: string) {
+    return createHmac("sha256", invitationSecret)
+      .update(`invitation:${id}:${expires}`)
+      .digest("base64url");
+  }
+  function validInvitation(id: string, token?: string) {
+    if (!token) return false;
+    const [expires, signature] = token.split(".");
+    if (
+      !expires ||
+      !signature ||
+      !/^\d+$/.test(expires) ||
+      Number(expires) <= Date.now()
+    )
+      return false;
+    const expected = Buffer.from(signInvitation(id, expires));
+    const supplied = Buffer.from(signature);
+    return (
+      supplied.length === expected.length && timingSafeEqual(supplied, expected)
+    );
+  }
+  app.post(
+    topicContracts.invitation.path,
+    {
+      errorHandler(error, _request, reply) {
+        if (error.validation)
+          return reply
+            .code(400)
+            .send({ message: "Check the email address and lobby session." });
+        throw error;
+      },
+      schema: {
+        params: topicContracts.invitation.params,
+        body: topicContracts.invitation.body,
+        response: {
+          200: topicContracts.invitation.response,
+          ...topicContracts.invitation.errors,
+        },
+      },
+    },
+    async (request, reply) => {
+      const topic = await resolveTopic(request.params.topicId);
+      const { lobbyId, token, email } = request.body;
+      if (!topic || lobbyId !== topic.id)
+        return reply.code(404).send({ message: "Lobby not found" });
+      const identity = await options.livekit.verifyParticipantToken(
+        token,
+        `debate-${lobbyId}`,
+      );
+      if (!identity)
+        return reply.code(401).send({ message: "Your room session expired." });
+      const participants = await options.livekit.listParticipants(
+        `debate-${lobbyId}`,
+      );
+      if (!participants.some((p) => p.identity === identity))
+        return reply
+          .code(403)
+          .send({ message: "Join the lobby before sharing invitations." });
+      const expires = String(Date.now() + 7 * 86400000);
+      const url = `${options.publicOrigin ?? "http://localhost:5173"}/invite/${encodeURIComponent(lobbyId)}#invitation=${expires}.${signInvitation(lobbyId, expires)}`;
+      if (email) {
+        const host =
+          topic.record?.creatorIdentity ??
+          (await options.publicLobbyState.find(lobbyId))?.hostIdentity;
+        if (identity !== host)
+          return reply
+            .code(403)
+            .send({ message: "Only the host can send invitations by email." });
+        if (
+          !invitationLimits.allow(identity, 10, 3600000) ||
+          !invitationLimits.allow(
+            `recipient:${email.toLowerCase()}`,
+            3,
+            3600000,
+          )
+        )
+          return reply
+            .code(429)
+            .send({ message: "Invitation limit reached. Try again later." });
+        if (!options.mail)
+          return reply.code(503).send({
+            message: "Email is unavailable. Copy the invitation link instead.",
+          });
+        try {
+          await options.mail.send(
+            linkEmail(
+              email,
+              "Join the debate",
+              `You are invited to debate: ${topic.title}. Choose an available position or spectate. No account is required.`,
+              url,
+            ),
+          );
+        } catch {
+          return reply.code(503).send({
+            message: "The invitation could not be submitted. Try again.",
+          });
+        }
+      }
+      return { url, sent: Boolean(email) };
+    },
+  );
+  app.post(
+    topicContracts.invitationPreview.path,
+    {
+      schema: {
+        params: topicContracts.invitationPreview.params,
+        body: topicContracts.invitationPreview.body,
+        response: {
+          200: topicContracts.invitationPreview.response,
+          ...topicContracts.invitationPreview.errors,
+        },
+      },
+    },
+    async (request, reply) => {
+      const topic = await resolveTopic(request.params.topicId);
+      if (!topic || !validInvitation(topic.id, request.body.invitation))
+        return reply.code(404).send({
+          message:
+            "This invitation is invalid, expired, or its lobby has closed.",
+        });
+      const status = await allocation.status(topic.id);
+      const state =
+        topic.record?.state ??
+        (await options.publicLobbyState.find(topic.id))?.state ??
+        "WAITING";
+      return {
+        id: topic.id,
+        lobbyId: topic.id,
+        title: topic.title,
+        sides: topic.sides,
+        state,
+        category: topic.category,
+        ...status,
+        sideAvailability: [
+          status.sideAvailability[0] && state === "WAITING",
+          status.sideAvailability[1] && state === "WAITING",
+        ] satisfies [boolean, boolean],
+      };
+    },
+  );
   async function newParticipantIdentity(request: FastifyRequest) {
     const sessionToken = request.cookies[SESSION_COOKIE];
     const account = sessionToken
@@ -105,6 +262,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         title: starter.title,
         sides: [starter.sides[0], starter.sides[1]],
         category: starter.category,
+        tags: starter.tags,
       });
     const record = await findLobby(id);
     if (
@@ -120,6 +278,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       title: record.name,
       sides: [record.side0, record.side1],
       category: record.category ?? "Miscellaneous",
+      tags: record.tags ?? [],
       record,
     });
   }
@@ -171,6 +330,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
           title: topic.title,
           sides: [topic.sides[0], topic.sides[1]] as [string, string],
           category: topic.category,
+          tags: topic.tags,
         })),
         ...created
           .filter(
@@ -186,6 +346,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
             title: record.name!,
             sides: [record.side0!, record.side1!] as [string, string],
             category: record.category ?? "Miscellaneous",
+            tags: record.tags ?? [],
             record,
           })),
       ].map(refreshPublicTopic),
@@ -240,7 +401,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
             sides: [topic.sides[0], topic.sides[1]] as [string, string],
             category: topic.category ?? "Miscellaneous",
             state,
-            tags: topic.record?.tags ?? [],
+            tags: topic.tags ?? [],
             debaterCount: status.debaterCount,
             spectatorCount: status.spectatorCount,
             sideAvailability: [
@@ -643,21 +804,16 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
           )
           .map((participant) => participant.sideIndex),
       );
-      const hasSpectator = participants.some(
-        (participant) => participant.role === "spectator",
-      );
       if (
         !participants.some(
           (participant) => participant.identity === identity,
         ) ||
         debaterSides.size !== 2 ||
         !debaterSides.has(0) ||
-        !debaterSides.has(1) ||
-        !hasSpectator
+        !debaterSides.has(1)
       ) {
         return reply.code(409).send({
-          message:
-            "Both debater positions and at least one spectator must be in the lobby to start.",
+          message: "Both debater positions must be in the lobby to start.",
         });
       }
 
@@ -745,7 +901,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
             title: topic.title,
             sides: [topic.sides[0], topic.sides[1]] satisfies [string, string],
             category: topic.category ?? "Miscellaneous",
-            ...(topic.record ? { tags: topic.record.tags ?? [] } : {}),
+            tags: topic.tags ?? [],
             sideAvailability: [
               canDebate && sideAvailability[0],
               canDebate && sideAvailability[1],
@@ -1021,7 +1177,8 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         }
         if (
           privateLobby.visibility !== "public" &&
-          !request.body.previousToken
+          !request.body.previousToken &&
+          !validInvitation(privateLobby.id, request.body.invitation)
         ) {
           return reply.code(403).send({
             message: "Join this private lobby with its code.",

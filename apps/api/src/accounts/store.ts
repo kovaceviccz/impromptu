@@ -27,6 +27,12 @@ export interface AccountStore {
   ): Promise<
     { account: Account } | { duplicates: DuplicateField[] } | undefined
   >;
+  saveReset(
+    accountId: string,
+    tokenHash: string,
+    expiresAt: Date,
+  ): Promise<void>;
+  consumeReset(tokenHash: string, passwordHash: string): Promise<boolean>;
   delete(accountId: string): Promise<boolean>;
   createSession(accountId: string): Promise<{ token: string; expiresAt: Date }>;
   findSessionAccount(token: string): Promise<Account | undefined>;
@@ -65,6 +71,7 @@ export function createMemoryAccountStore(): AccountStore {
     string,
     { account: Account; usernameKey: string; passwordHash: string }
   >();
+  const resets = new Map<string, { accountId: string; expiresAt: Date }>();
   const sessions = new Map<string, { accountId: string; expiresAt: Date }>();
 
   function duplicateFields(username: string, email: string) {
@@ -123,6 +130,23 @@ export function createMemoryAccountStore(): AccountStore {
       };
       accounts.set(accountId, { ...stored, account, usernameKey });
       return { account };
+    },
+    async saveReset(accountId, tokenHash, expiresAt) {
+      for (const [key, reset] of resets)
+        if (reset.accountId === accountId) resets.delete(key);
+      resets.set(tokenHash, { accountId, expiresAt });
+    },
+    async consumeReset(tokenHash, passwordHash) {
+      const reset = resets.get(tokenHash);
+      if (!reset || reset.expiresAt <= new Date()) return false;
+      const stored = accounts.get(reset.accountId);
+      if (!stored) return false;
+      stored.passwordHash = passwordHash;
+      for (const [key, item] of resets)
+        if (item.accountId === reset.accountId) resets.delete(key);
+      for (const [key, item] of sessions)
+        if (item.accountId === reset.accountId) sessions.delete(key);
+      return true;
     },
     async delete(accountId) {
       const deleted = accounts.delete(accountId);

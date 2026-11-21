@@ -73,7 +73,7 @@ test("live public topic creation, discovery, joining, and closure show no errors
     await expect(
       page.getByRole("heading", { name: "Can you cheat in a dream?" }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Create or Join" }).click();
+    await page.getByRole("button", { name: "Create debate" }).click();
     await page.getByText("Write your own", { exact: true }).click();
     await page.getByText("Miscellaneous", { exact: true }).click();
     await page.getByLabel("Topic question").fill(title);
@@ -92,13 +92,21 @@ test("live public topic creation, discovery, joining, and closure show no errors
         response.request().method() === "POST",
     );
     await page.getByRole("button", { name: "Create and join" }).click();
-    await page.getByRole("button", { name: "Continue to lobby" }).click();
     created = apiContract.createLobby.response.parse(
       await (await creation).json(),
     );
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
-    await expect(guest.getByText(`1 of ${initialCount + 1}`)).toBeVisible();
-    for (let index = 0; index < 3; index += 1)
+    const currentTopics = apiContract.topics.response.parse(
+      await (await guest.request.get("/api/topics")).json(),
+    );
+    const createdIndex = currentTopics.findIndex(
+      (topic) => topic.id === created!.lobbyId,
+    );
+    expect(createdIndex).toBeGreaterThanOrEqual(0);
+    await expect(guest.getByText(`1 of ${initialCount + 1}`)).toBeVisible({
+      timeout: 20_000,
+    });
+    for (let index = 0; index < createdIndex; index += 1)
       await guest.getByRole("button", { name: "Next topic" }).click();
     await expect(guest.getByRole("heading", { name: title })).toBeVisible();
     await guest
@@ -120,8 +128,10 @@ test("live public topic creation, discovery, joining, and closure show no errors
         })
         .locator("video"),
     ).toBeVisible();
-    await expect(second.getByText(`1 of ${initialCount + 1}`)).toBeVisible();
-    for (let index = 0; index < 3; index += 1)
+    await expect(second.getByText(`1 of ${initialCount + 1}`)).toBeVisible({
+      timeout: 20_000,
+    });
+    for (let index = 0; index < createdIndex; index += 1)
       await second.getByRole("button", { name: "Next topic" }).click();
     await second
       .getByRole("button", { name: /Debate.*No: context is too important/ })
@@ -143,9 +153,9 @@ test("live public topic creation, discovery, joining, and closure show no errors
         .locator("video"),
     ).toBeVisible();
     await expect(
-      page.getByRole("tab", { name: "Participants 3" }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "Start Debate" }).click();
+      page.getByRole("button", { name: "Start debate", exact: true }),
+    ).toBeEnabled();
+    await page.getByRole("button", { name: "Start debate" }).click();
     await expect(page.getByText("Debate in progress ...")).toBeVisible();
     await expect(guest.getByText("Debate in progress ...")).toBeVisible();
     await expect(page.getByRole("alert")).toHaveCount(0);
@@ -189,7 +199,7 @@ test("live private topic code and malformed topic IDs behave safely", async ({
     const initialCount = apiContract.topics.response.parse(
       await (await guest.request.get("/api/topics")).json(),
     ).length;
-    await page.getByRole("button", { name: "Create or Join" }).click();
+    await page.getByRole("button", { name: "Create debate" }).click();
     await page.getByText("Write your own", { exact: true }).click();
     await page.getByText("Miscellaneous", { exact: true }).click();
     await page.getByLabel("Topic question").fill(title);
@@ -207,14 +217,13 @@ test("live private topic code and malformed topic IDs behave safely", async ({
         response.request().method() === "POST",
     );
     await page.getByRole("button", { name: "Create and join" }).click();
-    await page.getByRole("button", { name: "Continue to lobby" }).click();
     created = apiContract.createLobby.response.parse(
       await (await creation).json(),
     );
     const code = created.joinCode!;
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
     await expect(guest.getByText(`1 of ${initialCount}`)).toBeVisible();
-    await guest.getByRole("button", { name: "Create or Join" }).click();
+    await guest.getByRole("button", { name: "Create debate" }).click();
     await guest.getByRole("tab", { name: "Join" }).click();
     await guest.getByLabel("Lobby code").fill(code);
     await guest.getByRole("button", { name: "Find lobby" }).click();

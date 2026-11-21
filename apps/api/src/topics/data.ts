@@ -1,3 +1,5 @@
+import type { LobbyTag } from "./contract.js";
+
 export const topicPresets = [
   {
     id: "dream-cheating",
@@ -163,8 +165,29 @@ export const topicPresets = [
 
 export type TopicPreset = (typeof topicPresets)[number];
 
-export { topicPresets as topics };
+const defaultTopicTags: Partial<
+  Record<TopicPreset["id"], readonly LobbyTag[]>
+> = {
+  "dream-cheating": ["Open-minded"],
+  "moral-lying": ["Serious"],
+  "privacy-right": ["Educational"],
+  "anime-manga": ["Beginner-friendly"],
+  "books-tv": ["Casual"],
+  "hardest-sport": ["Competitive"],
+  "football-soccer": ["Casual"],
+  "live-studio": ["Open-minded"],
+  "vinyl-streaming": ["Beginner-friendly"],
+};
+
+// Keep the full creation library and existing room URLs beyond the default carousel.
+export const topics = topicPresets.flatMap((topic) => {
+  const tags = defaultTopicTags[topic.id];
+  return tags ? [{ ...topic, tags: [...tags] }] : [];
+});
 
 export function findTopic(topicId: string) {
-  return topicPresets.find((topic) => topic.id === topicId);
+  const topic = topicPresets.find((candidate) => candidate.id === topicId);
+  return topic
+    ? { ...topic, tags: [...(defaultTopicTags[topic.id] ?? [])] }
+    : undefined;
 }

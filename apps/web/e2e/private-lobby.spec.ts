@@ -10,11 +10,10 @@ async function findPrivate(page: Page, code: string, name: string) {
   await page.goto("/");
   await page
     .getByRole("button", {
-      name: "Create or Join",
+      name: "Join with code",
       exact: true,
     })
     .click();
-  await page.getByRole("tab", { name: "Join" }).click();
   await page.getByLabel("Lobby code", { exact: true }).fill(code);
   await page.getByRole("button", { name: "Find lobby" }).click();
   await page.getByLabel("Your display name", { exact: true }).fill(name);
@@ -29,7 +28,7 @@ test("private codes, guests, registered users, reloads, membership recovery and 
   await page.goto("/");
   await page
     .getByRole("button", {
-      name: "Create or Join",
+      name: "Create debate",
       exact: true,
     })
     .click();
@@ -47,8 +46,11 @@ test("private codes, guests, registered users, reloads, membership recovery and 
     .getByRole("combobox", { name: "Join as", exact: true })
     .selectOption("spectator");
   await page.getByRole("button", { name: "Create and join" }).click();
-  await page.getByRole("button", { name: "Continue to lobby" }).click();
+  await page
+    .getByRole("button", { name: "Invite people", exact: true })
+    .click();
   const code = await page.locator("code").innerText();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   expect(code).toMatch(/^[A-HJ-NP-Z2-9]{8}$/);
   const hostRoster = await participants(page);
   await expect(
@@ -63,7 +65,7 @@ test("private codes, guests, registered users, reloads, membership recovery and 
     await guest.goto("/");
     await guest
       .getByRole("button", {
-        name: "Create or Join",
+        name: "Create debate",
         exact: true,
       })
       .click();
@@ -156,10 +158,13 @@ test("private codes, guests, registered users, reloads, membership recovery and 
 
     // A reload restores the same identity, code and host badge without duplicate membership.
     await page.reload();
-    await page.getByRole("button", { name: "Continue to lobby" }).click();
+    await page
+      .getByRole("button", { name: "Invite people", exact: true })
+      .click();
     await expect(
       page.getByRole("button", { name: `Copy lobby code ${code}` }),
     ).toBeVisible();
+    await page.getByRole("button", { name: "Close", exact: true }).click();
     const restoredRoster = await participants(page);
     await expect(restoredRoster.getByText("Host", { exact: true })).toHaveCount(
       1,

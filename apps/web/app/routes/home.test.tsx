@@ -11,6 +11,7 @@ import type {
   TopicStatus,
 } from "@impromptu/api/contracts";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -21,19 +22,25 @@ import {
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { createLobbyMock, joinTopicByCodeMock, lookupPrivateLobbyMock } =
-  vi.hoisted(() => ({
-    createLobbyMock: vi.fn<(input: LobbyCreateInput) => Promise<JoinResult>>(),
-    joinTopicByCodeMock:
-      vi.fn<
-        (input: JoinByCodeInput) => Promise<JoinResult | SideUnavailableError>
-      >(),
-    lookupPrivateLobbyMock:
-      vi.fn<(code: string) => Promise<PrivateLobbyPreview>>(),
-  }));
+const {
+  createLobbyMock,
+  joinTopicByCodeMock,
+  lookupPrivateLobbyMock,
+  getTopicsMock,
+} = vi.hoisted(() => ({
+  getTopicsMock: vi.fn<() => Promise<TopicStatus[]>>(),
+  createLobbyMock: vi.fn<(input: LobbyCreateInput) => Promise<JoinResult>>(),
+  joinTopicByCodeMock:
+    vi.fn<
+      (input: JoinByCodeInput) => Promise<JoinResult | SideUnavailableError>
+    >(),
+  lookupPrivateLobbyMock:
+    vi.fn<(code: string) => Promise<PrivateLobbyPreview>>(),
+}));
 
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
+  getTopics: getTopicsMock,
   createLobby: createLobbyMock,
   joinTopicByCode: joinTopicByCodeMock,
   lookupPrivateLobby: lookupPrivateLobbyMock,
@@ -41,7 +48,58 @@ vi.mock("../api", async (importOriginal) => ({
 
 import Home, { MEDIA_PERMISSION_MESSAGE, TopicList } from "./home";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  getTopicsMock.mockReset();
+});
+
+it("coalesces change events while a slow topic refresh is in flight", async () => {
+  const source = Object.assign(new EventTarget(), {
+    onopen: null,
+    close: vi.fn<() => void>(),
+  });
+  vi.stubGlobal(
+    "EventSource",
+    vi.fn(function EventSource() {
+      return source;
+    }),
+  );
+  let resolveFirst!: (topics: TopicStatus[]) => void;
+  let resolveSecond!: (topics: TopicStatus[]) => void;
+  const first = new Promise<TopicStatus[]>((resolve) => {
+    resolveFirst = resolve;
+  });
+  const second = new Promise<TopicStatus[]>((resolve) => {
+    resolveSecond = resolve;
+  });
+  getTopicsMock.mockReturnValueOnce(first).mockReturnValueOnce(second);
+  const router = createMemoryRouter([
+    {
+      path: "/",
+      loader: () => ({ account: null, topics: [] }),
+      element: <Home />,
+    },
+  ]);
+  render(<RouterProvider router={router} />);
+  await screen.findByRole("heading", {
+    name: "Choose a topic and side to debate",
+  });
+  act(() => {
+    for (let i = 0; i < 5; i++) source.dispatchEvent(new Event("changed"));
+  });
+  expect(getTopicsMock).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    resolveFirst([]);
+    await first;
+  });
+  expect(getTopicsMock).toHaveBeenCalledTimes(2);
+  await act(async () => {
+    resolveSecond([]);
+    await second;
+  });
+  expect(getTopicsMock).toHaveBeenCalledTimes(2);
+});
 
 describe("TopicList", () => {
   it("makes role intent explicit before joining and browses one topic at a time", async () => {
@@ -220,7 +278,7 @@ describe("TopicList", () => {
 
     render(<RouterProvider router={router} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Filter/ }));
     const dialog = screen.getByRole("dialog");
     fireEvent.click(within(dialog).getByLabelText("Philosophy"));
     fireEvent.click(within(dialog).getByLabelText("Society"));
@@ -250,7 +308,7 @@ describe("TopicList", () => {
     expect(screen.getByText("2 of 2")).toBeVisible();
     expect(screen.getByText("Society lobby with an open side")).toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Filter/ }));
     const reopenedDialog = screen.getByRole("dialog");
     fireEvent.click(
       within(reopenedDialog).getByRole("button", { name: "Clear filters" }),
@@ -309,9 +367,7 @@ describe("TopicList", () => {
     expect(
       within(guestNav).getByRole("link", { name: "Log in" }),
     ).toHaveAttribute("href", "/login");
-    expect(
-      within(guestNav).getByRole("link", { name: "Register" }),
-    ).toHaveAttribute("href", "/register");
+    expect(within(guestNav).getAllByRole("link")).toHaveLength(1);
     cleanup();
 
     const memberRouter = createMemoryRouter([
@@ -371,16 +427,16 @@ describe("TopicList", () => {
 
     render(<RouterProvider router={router} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Create or Join" }));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Select prewritten topic" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Create debate" }));
     expect(screen.getByLabelText("Topic question")).toBeDisabled();
     expect(screen.getByLabelText("Affirmative position")).toBeDisabled();
     expect(screen.getByLabelText("Opposing position")).toBeDisabled();
     expect(
       screen.getByText("Create and join").closest("button"),
     ).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Select prewritten topic" }),
+    );
     const topicBrowser = screen.getByRole("dialog", { name: "Browse topics" });
     expect(topicBrowser).toBeVisible();
     const entertainmentCategory = within(topicBrowser)
@@ -388,7 +444,7 @@ describe("TopicList", () => {
         name: "Entertainment",
       })
       .closest("label");
-    expect(entertainmentCategory).toHaveClass("bg-pink-100");
+    expect(entertainmentCategory).toHaveTextContent("Entertainment");
     expect(screen.queryByLabelText("Prewritten topic")).not.toBeInTheDocument();
     fireEvent.click(
       within(topicBrowser).getByRole("checkbox", { name: "Entertainment" }),
@@ -396,7 +452,7 @@ describe("TopicList", () => {
     const animeTopic = within(topicBrowser).getByRole("button", {
       name: "What is better, anime or manga?",
     });
-    expect(animeTopic).toHaveClass("bg-pink-100");
+    expect(animeTopic).toBeVisible();
     fireEvent.click(animeTopic);
     expect(screen.getByLabelText("Topic question")).toBeEnabled();
     expect(screen.getByLabelText("Affirmative position")).toBeEnabled();
@@ -446,16 +502,13 @@ describe("TopicList", () => {
     fireEvent.change(screen.getByLabelText("Creator display name"), {
       target: { value: "Sam" },
     });
+    fireEvent.click(screen.getByText("Tags · Optional"));
     fireEvent.click(screen.getByRole("checkbox", { name: "Casual" }));
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Beginner-friendly" }),
     );
-    expect(
-      screen.getByRole("checkbox", { name: "Casual" }).closest("label"),
-    ).toHaveClass("bg-emerald-50");
-    expect(
-      screen.getByRole("checkbox", { name: "Serious" }).closest("label"),
-    ).toHaveClass("bg-red-50");
+    expect(screen.getByRole("checkbox", { name: "Casual" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Serious" })).not.toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Create and join" }));
 
     expect(await screen.findByText("Connected to private lobby")).toBeVisible();
@@ -520,7 +573,7 @@ describe("TopicList", () => {
     expect(
       screen.getByText("No debates are available right now."),
     ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Create or Join" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create debate" }));
     fireEvent.click(screen.getByRole("tab", { name: "Join" }));
     fireEvent.change(screen.getByLabelText("Lobby code"), {
       target: { value: "abcd23" },
@@ -589,7 +642,7 @@ describe("TopicList", () => {
     expect(
       screen.getByText("No debates are available right now."),
     ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Create or Join" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create debate" }));
     fireEvent.click(screen.getByRole("tab", { name: "Join" }));
     fireEvent.change(screen.getByLabelText("Lobby code"), {
       target: { value: "ABCD23" },

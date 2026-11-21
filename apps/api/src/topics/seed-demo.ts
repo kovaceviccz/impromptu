@@ -1,6 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { DEMO_HOST_ID, seedDemoAccounts } from "../accounts/seed-demo.js";
 import { pathToFileURL } from "node:url";
 
+import { PrivateLobbyEntity } from "../lobbies/entity.js";
 import { openDatabase } from "../database.js";
 import { hashLobbyCode } from "../lobbies/codes.js";
 import { createPostgresPrivateLobbyStore } from "../lobbies/postgres-store.js";
@@ -9,41 +10,49 @@ import type { PrivateLobbyRecord } from "../lobbies/store.js";
 const publicId = "b9f857ae-9aa5-43d8-a285-75f2c8ff3c17";
 const privateId = "611d53c8-b130-4cf4-bb73-3b3375101224";
 
+export const demoTopicDefinitions = [
+  {
+    id: publicId,
+    name: "Demo: Should AI judge debates?",
+    side0: "Yes: it can apply rules consistently",
+    side1: "No: human judgment is essential",
+    category: "Miscellaneous",
+    tags: ["Educational", "Competitive"],
+    visibility: "public",
+  },
+  {
+    id: privateId,
+    name: "Demo: Should public transit be free?",
+    side0: "Yes: everyone benefits from access",
+    side1: "No: riders should share the cost",
+    category: "Society",
+    tags: ["Serious"],
+    visibility: "private",
+  },
+] satisfies Pick<
+  PrivateLobbyRecord,
+  "id" | "name" | "side0" | "side1" | "category" | "tags" | "visibility"
+>[];
+
 export async function seedDemoTopics(databaseUrl: string, privateCode: string) {
   if (!/^[A-HJ-NP-Z2-9]{8}$/.test(privateCode)) {
     throw new Error("DEMO_PRIVATE_CODE must be eight unambiguous characters.");
   }
   const orm = await openDatabase(databaseUrl);
   try {
+    await seedDemoAccounts(orm);
     const store = createPostgresPrivateLobbyStore(orm);
-    const topics: (PrivateLobbyRecord & { name: string })[] = [
-      {
-        id: publicId,
-        topicId: publicId,
-        name: "Demo: Should AI judge debates?",
-        side0: "Yes: it can apply rules consistently",
-        side1: "No: human judgment is essential",
-        visibility: "public",
+    const topics: (PrivateLobbyRecord & { name: string })[] =
+      demoTopicDefinitions.map((topic) => ({
+        ...topic,
+        topicId: topic.id,
         state: "WAITING",
-        codeHash: null,
-        creatorIdentity: randomUUID(),
+        codeHash:
+          topic.visibility === "private" ? hashLobbyCode(privateCode) : null,
+        creatorIdentity: DEMO_HOST_ID,
         createdAt: new Date(),
         expiresAt: null,
-      },
-      {
-        id: privateId,
-        topicId: privateId,
-        name: "Demo: Should public transit be free?",
-        side0: "Yes: everyone benefits from access",
-        side1: "No: riders should share the cost",
-        visibility: "private",
-        state: "WAITING",
-        codeHash: hashLobbyCode(privateCode),
-        creatorIdentity: randomUUID(),
-        createdAt: new Date(),
-        expiresAt: null,
-      },
-    ];
+      }));
     for (const topic of topics) {
       const existing = await store.findById(topic.id);
       if (existing) {
@@ -54,6 +63,21 @@ export async function seedDemoTopics(databaseUrl: string, privateCode: string) {
           existing.codeHash !== topic.codeHash
         ) {
           throw new Error(`Existing demo topic ${topic.id} does not match.`);
+        }
+        if (
+          existing.creatorIdentity !== topic.creatorIdentity ||
+          existing.category !== topic.category ||
+          JSON.stringify(existing.tags ?? []) !== JSON.stringify(topic.tags)
+        ) {
+          await orm.em.fork().nativeUpdate(
+            PrivateLobbyEntity,
+            { id: topic.id },
+            {
+              creatorIdentity: topic.creatorIdentity,
+              category: topic.category,
+              tags: topic.tags,
+            },
+          );
         }
         continue;
       }

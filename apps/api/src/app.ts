@@ -1,3 +1,6 @@
+import httpProxy from "@fastify/http-proxy";
+import type { MailDelivery } from "./mail/delivery.js";
+import { SESSION_COOKIE } from "./accounts/routes.js";
 import { fileURLToPath } from "node:url";
 
 import cookie from "@fastify/cookie";
@@ -26,6 +29,11 @@ import {
 } from "./statistics/store.js";
 
 type BuildAppOptions = {
+  invitationSecret?: string;
+  mail?: MailDelivery;
+  publicOrigin?: string;
+  mailpitUrl?: string;
+  mailboxAccountIds?: string[];
   checkDatabase?: () => Promise<void>;
   accounts: AccountStore;
   livekit: LiveKitGateway;
@@ -65,8 +73,14 @@ export async function buildApp(options: BuildAppOptions) {
     accounts: options.accounts,
     debateResults,
     secureCookies: options.secureCookies ?? false,
+    mail: options.mail,
+    publicOrigin: options.publicOrigin,
+    mailboxAccountIds: options.mailboxAccountIds,
   });
   await app.register(topicRoutes, {
+    invitationSecret: options.invitationSecret,
+    mail: options.mail,
+    publicOrigin: options.publicOrigin,
     accounts: options.accounts,
     debateResults,
     livekit: options.livekit,
@@ -79,6 +93,48 @@ export async function buildApp(options: BuildAppOptions) {
   app.addHook("onClose", async () => options.privateLobbies.close());
   app.addHook("onClose", async () => publicLobbyState.close());
 
+  if (options.mailpitUrl) {
+    await app.register(httpProxy, {
+      upstream: options.mailpitUrl,
+      prefix: "/mail",
+      rewritePrefix: "/mail",
+      websocket: true,
+      wsClientOptions: {
+        rewriteRequestHeaders: () => ({ origin: options.mailpitUrl }),
+      },
+      preHandler: async (request, reply) => {
+        const origin = request.headers.origin;
+        if (
+          origin &&
+          (!URL.canParse(origin) ||
+            new URL(origin).host !== request.headers.host)
+        )
+          return reply.code(403).send({
+            message: "Mailbox requests must use the application origin.",
+          });
+        const token = request.cookies[SESSION_COOKIE];
+        const account = token
+          ? await options.accounts.findSessionAccount(token)
+          : undefined;
+        if (!account || !options.mailboxAccountIds?.includes(account.id))
+          return reply.code(403).send({ message: "Mailbox access required." });
+        return undefined;
+      },
+      replyOptions: {
+        rewriteRequestHeaders: (_request, headers) => {
+          const {
+            cookie: _cookie,
+            authorization: _authorization,
+            ...rest
+          } = headers;
+          return {
+            ...rest,
+            ...(headers.origin ? { origin: options.mailpitUrl } : {}),
+          };
+        },
+      },
+    });
+  }
   if (options.serveWeb) {
     const root = fileURLToPath(
       new URL("../../web/build/client", import.meta.url),

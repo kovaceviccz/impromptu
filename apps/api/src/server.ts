@@ -1,3 +1,5 @@
+import { smtpDelivery } from "./mail/delivery.js";
+import { seedDemoTopics } from "./topics/seed-demo.js";
 import { createPostgresAccountStore } from "./accounts/postgres-store.js";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
@@ -22,7 +24,16 @@ if (config.DEV_DATABASE_RESET === "true") {
   await orm.schema.drop({ dropMigrationsTable: true });
   await orm.migrator.up();
 }
+if (config.DEV_DATABASE_RESET === "true")
+  await seedDemoTopics(config.DATABASE_URL, "DEBATE26");
 const app = await buildApp({
+  invitationSecret: config.LIVEKIT_API_SECRET,
+  mail: smtpDelivery(config.SMTP_HOST, config.SMTP_PORT),
+  publicOrigin: config.PUBLIC_ORIGIN,
+  mailpitUrl: config.MAILPIT_URL,
+  mailboxAccountIds: config.MAILBOX_ACCOUNT_IDS.split(",")
+    .map((id) => id.trim())
+    .filter(Boolean),
   checkDatabase: async () => {
     const pool = await orm.em.getConnection().getNativeClient();
     await pool.query({ text: "select 1", query_timeout: 2000 });

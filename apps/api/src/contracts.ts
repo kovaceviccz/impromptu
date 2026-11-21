@@ -3,6 +3,8 @@ import { healthContract } from "./health/contract.js";
 import { topicContracts } from "./topics/contract.js";
 
 export {
+  forgotPasswordBodySchema,
+  resetPasswordBodySchema,
   firstFieldErrors,
   accountStatisticsSchema,
   formErrorSchema,

@@ -1,6 +1,11 @@
 import { z } from "zod";
 
 const configSchema = z.object({
+  SMTP_HOST: z.string().default("127.0.0.1"),
+  SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(1025),
+  MAILPIT_URL: z.url().default("http://127.0.0.1:8025"),
+  PUBLIC_ORIGIN: z.url().default("http://localhost:5173"),
+  MAILBOX_ACCOUNT_IDS: z.string().default(""),
   HOST: z.string().default("0.0.0.0"),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
   DATABASE_URL: z.url({ protocol: /^postgres(?:ql)?$/ }),

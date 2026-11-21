@@ -53,7 +53,6 @@ test("loads backend topics and enters a debate", async ({
   ).toHaveCount(0);
   await preJoin.getByPlaceholder("Display name").fill("Playwright Guest");
   await preJoin.getByRole("button", { name: "Debate" }).click();
-  await page.getByRole("button", { name: "Continue to lobby" }).click();
 
   await expect(
     page.getByRole("heading", {
@@ -137,7 +136,6 @@ test("loads backend topics and enters a debate", async ({
 
   await expect(dreamTopic.getByText("Both sides open")).toBeVisible();
   await dreamTopic.getByRole("button", { name: "Watch live" }).click();
-  await page.getByRole("button", { name: "Continue to lobby" }).click();
   await expect(
     page.getByRole("textbox", { name: "Display name", exact: true }),
   ).toBeVisible();
@@ -161,7 +159,7 @@ test("spectators can vote during voting and chat while debaters have a read-only
 }) => {
   test.setTimeout(90_000);
   await page.goto("/");
-  await page.getByRole("button", { name: "Create or Join" }).click();
+  await page.getByRole("button", { name: "Create debate" }).click();
   await page.getByText("Write your own", { exact: true }).click();
   await page.getByText("Miscellaneous", { exact: true }).click();
   await page
@@ -174,14 +172,17 @@ test("spectators can vote during voting and chat while debaters have a read-only
   await page.getByLabel("Creator display name").fill("Debater Guest");
   await page.getByLabel("Join as").selectOption("0");
   await page.getByRole("button", { name: "Create and join" }).click();
-  await page.getByRole("button", { name: "Continue to lobby" }).click();
+  await page
+    .getByRole("button", { name: "Invite people", exact: true })
+    .click();
   const code = await page.locator("code").innerText();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page.getByText("Sides filled", { exact: true })).toBeVisible();
   await expect(page.getByRole("textbox")).toHaveCount(0);
 
   const spectator = await page.context().newPage();
   await spectator.goto("/");
-  await spectator.getByRole("button", { name: "Create or Join" }).click();
+  await spectator.getByRole("button", { name: "Create debate" }).click();
   await spectator.getByRole("tab", { name: "Join", exact: true }).click();
   await spectator.getByLabel("Lobby code", { exact: true }).fill(code);
   await spectator.getByRole("button", { name: "Find lobby" }).click();
@@ -209,7 +210,7 @@ test("spectators can vote during voting and chat while debaters have a read-only
 
   const opponent = await page.context().newPage();
   await opponent.goto("/");
-  await opponent.getByRole("button", { name: "Create or Join" }).click();
+  await opponent.getByRole("button", { name: "Create debate" }).click();
   await opponent.getByRole("tab", { name: "Join", exact: true }).click();
   await opponent.getByLabel("Lobby code", { exact: true }).fill(code);
   await opponent.getByRole("button", { name: "Find lobby" }).click();
@@ -225,7 +226,7 @@ test("spectators can vote during voting and chat while debaters have a read-only
   await expect(
     spectator.getByRole("button", { name: /No: dreams are involuntary.*vote/ }),
   ).toHaveCount(0);
-  await page.getByRole("button", { name: "Start Debate", exact: true }).click();
+  await page.getByRole("button", { name: "Start debate", exact: true }).click();
   await expect(spectator.getByText("Debate in progress ...")).toBeVisible();
   await page.getByRole("button", { name: "End round", exact: true }).click();
   await expect(
@@ -309,7 +310,6 @@ test("participants switch between spectating and debating in the room", async ({
     has: page.getByRole("heading", { name: "Can you cheat in a dream?" }),
   });
   await topic.getByRole("button", { name: "Watch live" }).click();
-  await page.getByRole("button", { name: "Continue to lobby" }).click();
   await page.getByRole("tab", { name: /Participants/ }).click();
 
   const participants = page.getByRole("region", { name: "Participants" });
@@ -405,4 +405,80 @@ test("manages an account across registration, login, editing, and deletion", asy
   ).toBeVisible();
   await page.getByRole("button", { name: "Permanently delete" }).click();
   await expect(page.getByRole("link", { name: "Log in" })).toBeVisible();
+});
+
+test("keeps topic browsing, tags, filters, and code entry available on mobile", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page
+    .getByRole("button", { name: "Create debate", exact: true })
+    .click();
+  await page.getByText("Write your own", { exact: true }).click();
+  await page.getByRole("radio", { name: "Society", exact: true }).check();
+  await page.getByText("Tags · Optional", { exact: true }).click();
+  await page.getByRole("checkbox", { name: "Beginner-friendly" }).check();
+  await page
+    .getByRole("combobox", { name: "Visibility", exact: true })
+    .selectOption("public");
+  await page.getByText("Choose a topic", { exact: true }).click();
+  await page.getByRole("button", { name: "Select prewritten topic" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await page
+    .getByRole("checkbox", { name: "Entertainment", exact: true })
+    .check();
+  await page
+    .getByRole("button", {
+      name: "What is better, anime or manga?",
+      exact: true,
+    })
+    .click();
+  await expect(page.getByLabel("Topic question", { exact: true })).toHaveValue(
+    "What is better, anime or manga?",
+  );
+  await expect(
+    page.getByRole("combobox", { name: "Visibility", exact: true }),
+  ).toHaveValue("public");
+  await page.getByText("Tags · 1 selected", { exact: true }).click();
+  await expect(
+    page.getByRole("checkbox", { name: "Beginner-friendly" }),
+  ).toBeChecked();
+  await page.keyboard.press("Escape");
+  await page
+    .getByRole("button", { name: "Join with code", exact: true })
+    .click();
+  await expect(page.getByLabel("Lobby code", { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Filter", exact: true }).click();
+  const philosophy = page.getByRole("checkbox", {
+    name: "Philosophy",
+    exact: true,
+  });
+  await philosophy.focus();
+  await philosophy.press("Space");
+  await expect(philosophy).toBeChecked();
+  await page.getByRole("checkbox", { name: "Casual", exact: true }).check();
+  await page.getByLabel("Minimum", { exact: true }).fill("1");
+  await page.getByLabel("At least one debate side is open").check();
+  await page.getByRole("button", { name: "Apply filters" }).click();
+  await page.getByRole("button", { name: "Filter (4)", exact: true }).click();
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await expect(
+    page.getByRole("checkbox", { name: "Philosophy", exact: true }),
+  ).not.toBeChecked();
+  await expect(
+    page.getByRole("checkbox", { name: "Casual", exact: true }),
+  ).not.toBeChecked();
+  await expect(page.getByLabel("Minimum", { exact: true })).toHaveValue("");
+  await expect(
+    page.getByLabel("At least one debate side is open"),
+  ).not.toBeChecked();
+  await page.getByRole("button", { name: "Apply filters" }).click();
+  await expect(
+    page.getByRole("button", { name: "Filter", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(390);
 });

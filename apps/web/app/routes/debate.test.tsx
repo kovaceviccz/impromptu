@@ -503,6 +503,11 @@ describe("DebateExperience", () => {
     );
     setAttributes.mockClear();
 
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /No: dreams are involuntary.*0/ }),
+      ).toBeEnabled(),
+    );
     fireEvent.click(
       screen.getByRole("button", { name: /No: dreams are involuntary.*0/ }),
     );
@@ -783,7 +788,6 @@ describe("DebateExperience", () => {
         <DebateExperience join={join} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
 
     const room = screen.getByTestId("livekit-room");
     expect(room).toHaveAttribute("data-video", "true");
@@ -847,8 +851,8 @@ describe("DebateExperience", () => {
         <DebateExperience join={join} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
 
+    fireEvent.click(screen.getByRole("button", { name: "Invite people" }));
     const copyButton = screen.getByRole("button", {
       name: "Copy lobby code ABCD23",
     });
@@ -1031,7 +1035,7 @@ describe("Participant roster", () => {
     token: "debater-token",
   };
 
-  it("requires creator setup before connecting and keeps the timer choice for starting", async () => {
+  it("connects immediately and keeps round settings in a stable dialog", async () => {
     const creator = {
       ...spectatorJoin,
       isCreator: true,
@@ -1052,13 +1056,9 @@ describe("Participant roster", () => {
         <DebateExperience join={creator} />
       </MemoryRouter>,
     );
-    expect(
-      screen.getByRole("dialog", { name: "How should this round end?" }),
-    ).toBeVisible();
-    expect(screen.queryByTestId("livekit-room")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Start Debate" })).toBeNull();
-    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.getByTestId("livekit-room")).toBeVisible();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Round settings" }));
     fireEvent.change(screen.getByRole("combobox", { name: "End round by" }), {
       target: { value: "timer" },
     });
@@ -1066,10 +1066,10 @@ describe("Participant roster", () => {
       screen.getByRole("spinbutton", { name: "Round duration in minutes" }),
       { target: { value: "10" } },
     );
-    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByTestId("livekit-room")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Start Debate" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start debate" }));
     await waitFor(() =>
       expect(startDebateRequest).toHaveBeenCalledWith(creator.topicId, {
         lobbyId: creator.lobbyId,
@@ -1145,7 +1145,7 @@ describe("Participant roster", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("Waiting for others to join...")).toBeVisible();
+    expect(screen.getByText("Waiting for the host to start.")).toBeVisible();
 
     unmount();
     render(
@@ -1157,7 +1157,7 @@ describe("Participant roster", () => {
     );
 
     expect(
-      screen.queryByText("Waiting for others to join..."),
+      screen.queryByText("Waiting for the host to start."),
     ).not.toBeInTheDocument();
   });
 
@@ -1188,36 +1188,17 @@ describe("Participant roster", () => {
       },
     ];
     startDebateRequest.mockResolvedValue({ state: "DEBATE_IN_PROGRESS" });
-    const view = render(
+    render(
       <MemoryRouter>
         <DebateExperience join={creator} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
 
-    const start = screen.getByRole("button", { name: "Start Debate" });
-    expect(start).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start debate" })).toBeEnabled();
     expect(
-      screen.queryByText("Waiting for others to join..."),
+      screen.queryByText("Waiting for the host to start."),
     ).not.toBeInTheDocument();
-
-    roomState.participants = [
-      ...roomState.participants,
-      {
-        attributes: {},
-        identity: "spectator-guest",
-        name: "Spectator guest",
-        permissions: { canPublish: false },
-      },
-    ];
-    view.rerender(
-      <MemoryRouter>
-        <DebateExperience join={creator} />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByRole("button", { name: "Start Debate" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Start Debate" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start debate" }));
     expect(await screen.findByText("Debate in progress ...")).toBeVisible();
     expect(startDebateRequest).toHaveBeenCalledWith(creator.topicId, {
       lobbyId: creator.lobbyId,
@@ -1231,7 +1212,7 @@ describe("Participant roster", () => {
         <DebateExperience join={spectatorJoin} />
       </MemoryRouter>,
     );
-    expect(screen.getByText("Waiting for others to join...")).toBeVisible();
+    expect(screen.getByText("Waiting for the host to start.")).toBeVisible();
 
     act(() => {
       for (const listener of roomState.metadataListeners) {
@@ -1241,7 +1222,7 @@ describe("Participant roster", () => {
 
     expect(screen.getByText("Debate in progress ...")).toBeVisible();
     expect(
-      screen.queryByText("Waiting for others to join..."),
+      screen.queryByText("Waiting for the host to start."),
     ).not.toBeInTheDocument();
   });
 
@@ -1451,7 +1432,7 @@ describe("Participant roster", () => {
     act(() => {
       for (const listener of roomState.metadataListeners) listener("WAITING");
     });
-    expect(screen.getByText("Waiting for others to join...")).toBeVisible();
+    expect(screen.getByText("Waiting for the host to start.")).toBeVisible();
     await act(async () => {});
     const choice = screen.getByRole("button", {
       name: /No: dreams are involuntary/,
@@ -1572,8 +1553,7 @@ describe("Participant roster", () => {
         <DebateExperience join={publicHost} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
-    expect(screen.getByRole("button", { name: "Start Debate" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start debate" })).toBeDisabled();
 
     unmount();
     const guest: JoinResult = {
@@ -1585,8 +1565,8 @@ describe("Participant roster", () => {
         <DebateExperience join={guest} />
       </MemoryRouter>,
     );
-    expect(screen.queryByRole("button", { name: "Start Debate" })).toBeNull();
-    expect(screen.getByText("Waiting for others to join...")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Start debate" })).toBeNull();
+    expect(screen.getByText("Waiting for the host to start.")).toBeVisible();
   });
 
   function roster() {
@@ -1625,10 +1605,11 @@ describe("Participant roster", () => {
       { initialEntries: ["/debates/dream-cheating"] },
     );
     render(<RouterProvider router={router} />);
-    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
+    fireEvent.click(screen.getByRole("button", { name: "Invite people" }));
     expect(
       screen.getByRole("button", { name: "Copy lobby code ABCD2345" }),
     ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(within(roster().debaters).getByText("Host")).toBeVisible();
     expect(screen.getByTestId("livekit-room")).toHaveAttribute(
       "data-token",
@@ -1739,7 +1720,6 @@ describe("Participant roster", () => {
         />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
     const rows = within(roster().spectators).getAllByRole("listitem");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toHaveTextContent("Spectator (you)Host");
@@ -2044,7 +2024,6 @@ describe("Participant roster", () => {
         <DebateExperience join={privateJoin} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
     fireEvent.click(
       within(roster().debaters).getByRole("button", {
         name: /Debate.*No: dreams are involuntary/,
@@ -2063,9 +2042,11 @@ describe("Participant roster", () => {
     );
     expect(within(roster().debaters).getByText("Host")).toBeVisible();
     expect(leaveRoom).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Invite people" }));
     expect(
       screen.getByRole("button", { name: "Copy lobby code ABCD2345" }),
     ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
   });
 
   it("changes role inside a private lobby and keeps the creator's code", async () => {
@@ -2087,7 +2068,6 @@ describe("Participant roster", () => {
         <DebateExperience join={privateJoin} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
 
     fireEvent.click(
       within(roster().debaters).getByRole("button", {
@@ -2115,9 +2095,11 @@ describe("Participant roster", () => {
       "private-lobby-id",
       "spectator-token",
     );
+    fireEvent.click(screen.getByRole("button", { name: "Invite people" }));
     expect(
       screen.getByRole("button", { name: "Copy lobby code ABCD2345" }),
     ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
   });
 });
 
@@ -2277,7 +2259,9 @@ describe("Camera and microphone preview", () => {
         <DebateExperience join={join} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Check Camera & Mic" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Camera and microphone settings" }),
+    );
     expect(getUserMedia).toHaveBeenCalledWith(
       expect.objectContaining({ audio: true, video: expect.anything() }),
     );
@@ -2302,7 +2286,9 @@ describe("Camera and microphone preview", () => {
         <DebateExperience join={join} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Check Camera & Mic" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Camera and microphone settings" }),
+    );
     expect(
       await screen.findByText("Camera and microphone access was blocked"),
     ).toBeVisible();
@@ -2323,13 +2309,13 @@ describe("Camera and microphone preview", () => {
       </MemoryRouter>,
     );
     expect(
-      screen.queryByRole("button", { name: "Check Camera & Mic" }),
+      screen.queryByRole("button", { name: "Camera and microphone settings" }),
     ).toBeNull();
   });
 });
 
 describe("Participant roles", () => {
-  it("gives debaters and spectators distinct labels and colors", () => {
+  it("labels the separate debater and spectator rosters", () => {
     render(
       <MemoryRouter>
         <DebateExperience
@@ -2357,9 +2343,9 @@ describe("Participant roles", () => {
     fireEvent.click(screen.getByRole("tab", { name: /Participants/ }));
     const debaters = screen.getByRole("region", { name: /^Debaters/ });
     const spectators = screen.getByRole("region", { name: /^Spectators/ });
-    expect(within(debaters).getByText("Debaters")).toHaveClass("bg-violet-100");
-    expect(within(spectators).getByText("Spectators")).toHaveClass(
-      "bg-sky-100",
+    expect(within(debaters).getByRole("heading")).toHaveTextContent("Debaters");
+    expect(within(spectators).getByRole("heading")).toHaveTextContent(
+      "Spectators",
     );
     expect(
       within(debaters).getByText("Debater guest").closest("li"),
