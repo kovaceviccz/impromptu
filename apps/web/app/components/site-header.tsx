@@ -1,5 +1,5 @@
 import { PRODUCT, type Account } from "@impromptu/api/contracts";
-import { CircleUserIcon, MailIcon } from "lucide-react";
+import { CircleUserIcon } from "lucide-react";
 import { Link } from "react-router";
 
 import { buttonVariants } from "~/components/ui/button";
@@ -18,12 +18,6 @@ export function SiteHeader({ account }: { account: Account | null }) {
           aria-label="Account"
           className="flex min-w-0 items-center gap-1 sm:gap-2"
         >
-          {account?.mailboxAccess && (
-            <a className={buttonVariants({ variant: "ghost" })} href="/mail/">
-              <MailIcon />
-              <span className="sr-only sm:not-sr-only">Mailbox</span>
-            </a>
-          )}
           {account ? (
             <Link
               className={buttonVariants({
@@ -36,17 +30,12 @@ export function SiteHeader({ account }: { account: Account | null }) {
               <span className="truncate">{account.displayName}</span>
             </Link>
           ) : (
-            <>
-              <Link
-                className={buttonVariants({ variant: "ghost" })}
-                to="/login"
-              >
-                Log in
-              </Link>
-              <Link className={buttonVariants()} to="/register">
-                Register
-              </Link>
-            </>
+            <Link
+              className="inline-flex min-h-10 items-center rounded-sm px-2 text-sm text-muted-foreground underline-offset-4 hover:text-primary hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
+              to="/login"
+            >
+              Log in
+            </Link>
           )}
         </nav>
       </div>

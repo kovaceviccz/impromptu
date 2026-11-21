@@ -95,7 +95,7 @@ function InvitationDetails({
   return (
     <>
       <SiteHeader account={null} />
-      <main className="mx-auto grid max-w-2xl gap-6 p-6">
+      <main className="mx-auto grid max-w-3xl gap-6 px-4 py-10 sm:px-6 sm:py-16">
         {error && (
           <>
             {!preview && (
@@ -116,13 +116,18 @@ function InvitationDetails({
             <p>
               No account is required. Choose an available position or spectate.
             </p>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3">
               {preview.sides.map((position, index) => (
                 <div
-                  className="grid min-w-0 grid-rows-[1fr_auto_auto] gap-2"
+                  className={
+                    "grid min-w-0 grid-rows-[1fr_auto_auto] gap-3 rounded-lg p-3 sm:p-5 " +
+                    (index === 0
+                      ? "bg-emerald-50 text-emerald-900"
+                      : "bg-red-50 text-red-900")
+                  }
                   key={position}
                 >
-                  <h2 className="font-editorial text-xl [overflow-wrap:anywhere]">
+                  <h2 className="font-editorial text-xl leading-snug font-semibold [overflow-wrap:anywhere]">
                     {position}
                   </h2>
                   <p>

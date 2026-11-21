@@ -29,7 +29,7 @@ test("a stale side choice returns home with a visible reason", async ({
       await (await waiting.request.get("/api/topics")).json(),
     ).length;
 
-    await page.getByRole("button", { name: "Create or Join" }).click();
+    await page.getByRole("button", { name: "Create debate" }).click();
     await page.getByText("Write your own", { exact: true }).click();
     await page.getByText("Miscellaneous", { exact: true }).click();
     await page.getByLabel("Topic question").fill(title);
@@ -44,7 +44,6 @@ test("a stale side choice returns home with a visible reason", async ({
         response.request().method() === "POST",
     );
     await page.getByRole("button", { name: "Create and join" }).click();
-    await page.getByRole("button", { name: "Continue to lobby" }).click();
     created = apiContract.createLobby.response.parse(
       await (await creation).json(),
     );

@@ -13,7 +13,6 @@ async function enter(page: Page, join: JoinResult) {
     { value: join, key: `${PRODUCT.name}.room.${join.topicId}` },
   );
   await page.goto(`/debates/${join.topicId}`);
-  await page.getByRole("button", { name: "Continue to lobby" }).click();
 }
 
 test("shares a private invitation with a separate guest session and captures host email in the protected mailbox", async ({
@@ -39,7 +38,9 @@ test("shares a private invitation with a separate guest session and captures hos
   const host = apiContract.createLobby.response.parse(await created.json());
   trackLobby(host);
   await enter(page, host);
-  await page.getByText("Invite participants", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Invite people", exact: true })
+    .click();
   const linkResponse = page.waitForResponse(
     (response) =>
       response.url().endsWith("/invitation") &&
@@ -224,7 +225,8 @@ test("keeps invitations usable on narrow screens and joins when room storage is 
   await page.goto("/");
   await expect(
     page.getByRole("link", { name: "Mailbox", exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "demo_host" })).toBeVisible();
   expect(
     await page
       .locator("header")
@@ -233,7 +235,7 @@ test("keeps invitations usable on narrow screens and joins when room storage is 
   ).toBeLessThanOrEqual(320);
   const watch = page.getByRole("button", { name: "Watch live", exact: true });
   const create = page.getByRole("button", {
-    name: "Create or Join",
+    name: "Create debate",
     exact: true,
   });
   const watchBox = await watch.boundingBox();
@@ -255,9 +257,23 @@ test("keeps invitations usable on narrow screens and joins when room storage is 
   );
   trackLobby(host);
   await enter(page, host);
+  const leaveBox = await page
+    .getByRole("button", { name: "Close lobby", exact: true })
+    .boundingBox();
+  const settingsBox = await page
+    .getByRole("button", {
+      name: "Camera and microphone settings",
+      exact: true,
+    })
+    .boundingBox();
+  const invitationBox = await page
+    .getByRole("button", { name: "Invite people", exact: true })
+    .boundingBox();
+  expect(settingsBox!.height).toBe(leaveBox!.height);
+  expect(invitationBox!.height).toBe(leaveBox!.height);
   const mediaBefore = await page.getByRole("article").first().boundingBox();
   await page
-    .getByRole("button", { name: "Invite participants", exact: true })
+    .getByRole("button", { name: "Invite people", exact: true })
     .click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
@@ -293,7 +309,7 @@ test("keeps invitations usable on narrow screens and joins when room storage is 
   );
   await page.keyboard.press("Escape");
   await expect(
-    page.getByRole("button", { name: "Invite participants", exact: true }),
+    page.getByRole("button", { name: "Invite people", exact: true }),
   ).toBeFocused();
   const context = await browser.newContext({
     viewport: { width: 320, height: 740 },

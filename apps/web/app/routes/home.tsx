@@ -10,10 +10,10 @@ import {
   type TopicStatus,
 } from "@impromptu/api/contracts";
 import {
+  CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   FilterIcon,
-  LockKeyholeIcon,
 } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
@@ -69,23 +69,10 @@ export async function clientLoader() {
   return { account, topics };
 }
 
-const topicCategoryStyles: Record<TopicCategory, string> = {
-  Philosophy: "border-violet-200 bg-violet-100 text-violet-900",
-  Society: "border-sky-200 bg-sky-100 text-sky-900",
-  Sports: "border-emerald-200 bg-emerald-100 text-emerald-900",
-  Music: "border-amber-200 bg-amber-100 text-amber-900",
-  Entertainment: "border-pink-200 bg-pink-100 text-pink-900",
-  Miscellaneous: "border-slate-200 bg-slate-100 text-slate-900",
-};
-
-const lobbyTagStyles: Record<LobbyTag, string> = {
-  Casual: "border-emerald-200 bg-emerald-50 text-emerald-900",
-  Serious: "border-red-200 bg-red-50 text-red-900",
-  "Beginner-friendly": "border-emerald-200 bg-emerald-50 text-emerald-900",
-  Competitive: "border-red-200 bg-red-50 text-red-900",
-  Educational: "border-red-200 bg-red-50 text-red-900",
-  "Open-minded": "border-emerald-200 bg-emerald-50 text-emerald-900",
-};
+const choiceClassName =
+  "relative flex min-h-10 cursor-pointer items-center justify-between gap-3 rounded-lg bg-muted/60 px-3 py-2 text-sm font-medium leading-snug transition-colors hover:bg-secondary has-checked:bg-primary/10 has-checked:text-primary has-focus-visible:ring-3 has-focus-visible:ring-ring/50";
+const choiceInputClassName =
+  "peer absolute inset-0 h-full w-full cursor-pointer opacity-0";
 
 type Selection = {
   topic: TopicStatus;
@@ -259,505 +246,567 @@ function PrivateLobby({
 
   return (
     <>
-      <Button
-        className="fixed right-4 bottom-4 z-40 h-11 text-base sm:right-6 sm:bottom-6"
-        size="lg"
-        type="button"
-        onClick={() => setOpen(true)}
+      <nav
+        aria-label="Create or join a debate"
+        className="flex flex-wrap items-center justify-center gap-2 pt-1"
       >
-        <LockKeyholeIcon aria-hidden="true" />
-        Create or Join
-      </Button>
+        <Button
+          variant="ghost"
+          type="button"
+          onClick={() => {
+            setActiveMode("create");
+            setOpen(true);
+          }}
+        >
+          Create debate
+        </Button>
+        <Button
+          variant="ghost"
+          type="button"
+          onClick={() => {
+            setActiveMode("join");
+            setOpen(true);
+          }}
+        >
+          Join with code
+        </Button>
+      </nav>
       <Dialog
         open={open}
         onOpenChange={(nextOpen) => {
           setOpen(nextOpen);
-          if (!nextOpen) setError(undefined);
+          if (!nextOpen) {
+            setError(undefined);
+            setTopicBrowserOpen(false);
+          }
         }}
       >
         <DialogContent className="max-h-[calc(100svh-2rem)] gap-5 overflow-y-auto sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="font-editorial text-xl">
-              Create or Join
-            </DialogTitle>
-            <DialogDescription>
-              Create a public or private debate topic, or join with a code.
-            </DialogDescription>
-          </DialogHeader>
+          {topicBrowserOpen ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Browse topics</DialogTitle>
+                <DialogDescription>
+                  Choose one or more categories to find a prewritten topic.
+                </DialogDescription>
+              </DialogHeader>
 
-          <div
-            aria-label="Lobby action"
-            className="grid grid-cols-2 rounded-lg border bg-muted p-1"
-            role="tablist"
-          >
-            <button
-              aria-controls="create-lobby-panel"
-              aria-selected={activeMode === "create"}
-              className={
-                "rounded-md px-3 py-2 text-sm font-medium " +
-                (activeMode === "create"
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground")
-              }
-              id="create-lobby-tab"
-              role="tab"
-              tabIndex={activeMode === "create" ? 0 : -1}
-              type="button"
-              onClick={() => {
-                setActiveMode("create");
-                setError(undefined);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
-                  event.preventDefault();
-                  setActiveMode("join");
-                  setError(undefined);
-                  event.currentTarget.parentElement
-                    ?.querySelector<HTMLButtonElement>("#join-lobby-tab")
-                    ?.focus();
-                }
-              }}
-            >
-              Create
-            </button>
-            <button
-              aria-controls="join-lobby-panel"
-              aria-selected={activeMode === "join"}
-              className={
-                "rounded-md px-3 py-2 text-sm font-medium " +
-                (activeMode === "join"
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground")
-              }
-              id="join-lobby-tab"
-              role="tab"
-              tabIndex={activeMode === "join" ? 0 : -1}
-              type="button"
-              onClick={() => {
-                setActiveMode("join");
-                setError(undefined);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
-                  event.preventDefault();
-                  setActiveMode("create");
-                  setError(undefined);
-                  event.currentTarget.parentElement
-                    ?.querySelector<HTMLButtonElement>("#create-lobby-tab")
-                    ?.focus();
-                }
-              }}
-            >
-              Join
-            </button>
-          </div>
-
-          {activeMode === "create" ? (
-            <section
-              aria-labelledby="create-lobby-tab"
-              className="grid gap-3"
-              id="create-lobby-panel"
-              role="tabpanel"
-            >
-              <form className="grid gap-3" onSubmit={createLobby}>
-                <fieldset className="grid gap-1.5">
-                  <legend className="mb-1.5 text-sm">Topic source</legend>
-                  <div
-                    className="grid grid-cols-2 rounded-lg border bg-muted p-1"
-                    role="radiogroup"
-                  >
-                    <label
-                      className={
-                        "cursor-pointer rounded-md px-3 py-2 text-center text-sm font-medium " +
-                        (topicSource === "preset"
-                          ? "bg-primary text-primary-foreground shadow-sm"
-                          : "text-muted-foreground")
-                      }
-                    >
+              <fieldset>
+                <legend className="mb-2 text-sm font-medium">Categories</legend>
+                <div className="grid grid-cols-2 gap-2">
+                  {Array.from(
+                    new Set(topicPresets.map((topic) => topic.category)),
+                  ).map((category) => (
+                    <label className={choiceClassName} key={category}>
                       <input
-                        checked={topicSource === "preset"}
-                        className="sr-only"
-                        name="topic-source"
-                        type="radio"
-                        onChange={() => {
-                          setTopicSource("preset");
-                          const preset = topicPresets.find(
-                            (topic) => topic.id === selectedPresetId,
+                        className={choiceInputClassName}
+                        checked={selectedCategories.includes(category)}
+                        type="checkbox"
+                        onChange={(event) => {
+                          setSelectedCategories((categories) =>
+                            event.target.checked
+                              ? [...categories, category]
+                              : categories.filter((item) => item !== category),
                           );
-                          if (preset) {
-                            setSelectedCategory(preset.category);
-                            setLobbyName(preset.title);
-                            setAffirmative(preset.sides[0]);
-                            setOpposing(preset.sides[1]);
-                          }
                         }}
                       />
-                      Choose a topic
-                    </label>
-                    <label
-                      className={
-                        "cursor-pointer rounded-md px-3 py-2 text-center text-sm font-medium " +
-                        (topicSource === "custom"
-                          ? "bg-primary text-primary-foreground shadow-sm"
-                          : "text-muted-foreground")
-                      }
-                    >
-                      <input
-                        checked={topicSource === "custom"}
-                        className="sr-only"
-                        name="topic-source"
-                        type="radio"
-                        onChange={() => {
-                          setTopicSource("custom");
-                          setSelectedCategory(undefined);
-                          setLobbyName("");
-                          setAffirmative("");
-                          setOpposing("");
-                        }}
+                      {category}
+                      <CheckIcon
+                        aria-hidden="true"
+                        className="size-4 shrink-0 text-primary opacity-0 peer-checked:opacity-100"
                       />
-                      Write your own
                     </label>
-                  </div>
-                </fieldset>
+                  ))}
+                </div>
+              </fieldset>
 
-                {topicSource === "preset" ? (
-                  <Button
-                    aria-label="Select prewritten topic"
-                    className="justify-center"
-                    type="button"
-                    variant="outline"
-                    onClick={() => setTopicBrowserOpen(true)}
-                  >
-                    Select prewritten topic
-                  </Button>
-                ) : null}
+              {selectedCategories.length > 0 ? (
+                <section className="grid gap-2" aria-live="polite">
+                  <h3 className="text-sm font-medium">Topics</h3>
+                  {topicPresets
+                    .filter((topic) =>
+                      selectedCategories.includes(topic.category),
+                    )
+                    .map((topic) => (
+                      <Button
+                        className="h-auto justify-start px-3 py-2.5 text-left whitespace-normal"
+                        key={topic.id}
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          setSelectedPresetId(topic.id);
+                          setSelectedCategory(topic.category);
+                          setLobbyName(topic.title);
+                          setAffirmative(topic.sides[0]);
+                          setOpposing(topic.sides[1]);
+                          setTopicBrowserOpen(false);
+                        }}
+                      >
+                        <span>{topic.title}</span>
+                      </Button>
+                    ))}
+                </section>
+              ) : null}
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setTopicBrowserOpen(false)}
+              >
+                Back to debate
+              </Button>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle className="font-editorial text-xl">
+                  {activeMode === "create" ? "Create debate" : "Join with code"}
+                </DialogTitle>
+                <DialogDescription>
+                  {activeMode === "create"
+                    ? "Choose a question and the two positions to debate."
+                    : "Enter a private lobby code to see its question and available positions."}
+                </DialogDescription>
+              </DialogHeader>
 
-                {topicSource === "custom" ? (
-                  <fieldset
-                    aria-required="true"
-                    className="grid gap-1.5"
-                    role="radiogroup"
-                  >
-                    <legend className="mb-1.5 text-sm">Category</legend>
-                    <div className="flex flex-wrap gap-2">
-                      {topicCategories.map((category) => (
+              <div
+                aria-label="Lobby action"
+                className="grid grid-cols-2 gap-1 rounded-lg bg-muted/70 p-1"
+                role="tablist"
+              >
+                <button
+                  aria-controls="create-lobby-panel"
+                  aria-selected={activeMode === "create"}
+                  className={
+                    "rounded-md px-3 py-2 text-sm font-medium " +
+                    (activeMode === "create"
+                      ? "bg-secondary text-primary"
+                      : "text-muted-foreground hover:text-foreground")
+                  }
+                  id="create-lobby-tab"
+                  role="tab"
+                  tabIndex={activeMode === "create" ? 0 : -1}
+                  type="button"
+                  onClick={() => {
+                    setActiveMode("create");
+                    setError(undefined);
+                  }}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === "ArrowRight" ||
+                      event.key === "ArrowLeft"
+                    ) {
+                      event.preventDefault();
+                      setActiveMode("join");
+                      setError(undefined);
+                      event.currentTarget.parentElement
+                        ?.querySelector<HTMLButtonElement>("#join-lobby-tab")
+                        ?.focus();
+                    }
+                  }}
+                >
+                  Create
+                </button>
+                <button
+                  aria-controls="join-lobby-panel"
+                  aria-selected={activeMode === "join"}
+                  className={
+                    "rounded-md px-3 py-2 text-sm font-medium " +
+                    (activeMode === "join"
+                      ? "bg-secondary text-primary"
+                      : "text-muted-foreground hover:text-foreground")
+                  }
+                  id="join-lobby-tab"
+                  role="tab"
+                  tabIndex={activeMode === "join" ? 0 : -1}
+                  type="button"
+                  onClick={() => {
+                    setActiveMode("join");
+                    setError(undefined);
+                  }}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === "ArrowRight" ||
+                      event.key === "ArrowLeft"
+                    ) {
+                      event.preventDefault();
+                      setActiveMode("create");
+                      setError(undefined);
+                      event.currentTarget.parentElement
+                        ?.querySelector<HTMLButtonElement>("#create-lobby-tab")
+                        ?.focus();
+                    }
+                  }}
+                >
+                  Join
+                </button>
+              </div>
+
+              {activeMode === "create" ? (
+                <section
+                  aria-labelledby="create-lobby-tab"
+                  className="grid gap-3"
+                  id="create-lobby-panel"
+                  role="tabpanel"
+                >
+                  <form className="grid gap-4" onSubmit={createLobby}>
+                    <fieldset className="grid gap-1.5">
+                      <legend className="mb-1.5 text-sm">Topic source</legend>
+                      <div
+                        className="grid grid-cols-2 gap-1 rounded-lg bg-muted/70 p-1"
+                        role="radiogroup"
+                      >
                         <label
                           className={
-                            "flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-sm " +
-                            topicCategoryStyles[category] +
-                            (selectedCategory === category
-                              ? " ring-2 ring-primary"
-                              : "")
+                            "cursor-pointer rounded-md px-3 py-2.5 text-center text-sm font-medium focus-within:ring-2 focus-within:ring-ring " +
+                            (topicSource === "preset"
+                              ? "bg-secondary text-primary"
+                              : "text-muted-foreground")
                           }
-                          key={category}
                         >
                           <input
-                            checked={selectedCategory === category}
+                            checked={topicSource === "preset"}
                             className="sr-only"
-                            name="custom-category"
-                            required={!selectedCategory}
+                            name="topic-source"
                             type="radio"
-                            value={category}
-                            onChange={() => setSelectedCategory(category)}
+                            onChange={() => {
+                              setTopicSource("preset");
+                              const preset = topicPresets.find(
+                                (topic) => topic.id === selectedPresetId,
+                              );
+                              if (preset) {
+                                setSelectedCategory(preset.category);
+                                setLobbyName(preset.title);
+                                setAffirmative(preset.sides[0]);
+                                setOpposing(preset.sides[1]);
+                              }
+                            }}
                           />
-                          {category}
+                          Choose a topic
                         </label>
-                      ))}
-                    </div>
-                  </fieldset>
-                ) : null}
+                        <label
+                          className={
+                            "cursor-pointer rounded-md px-3 py-2.5 text-center text-sm font-medium focus-within:ring-2 focus-within:ring-ring " +
+                            (topicSource === "custom"
+                              ? "bg-secondary text-primary"
+                              : "text-muted-foreground")
+                          }
+                        >
+                          <input
+                            checked={topicSource === "custom"}
+                            className="sr-only"
+                            name="topic-source"
+                            type="radio"
+                            onChange={() => {
+                              setTopicSource("custom");
+                              setSelectedCategory(undefined);
+                              setLobbyName("");
+                              setAffirmative("");
+                              setOpposing("");
+                            }}
+                          />
+                          Write your own
+                        </label>
+                      </div>
+                    </fieldset>
 
-                <label className="grid gap-1.5 text-sm" htmlFor="lobby-name">
-                  Topic question
-                  <Input
-                    disabled={topicSource === "preset" && !selectedPresetId}
-                    id="lobby-name"
-                    maxLength={80}
-                    pattern=".*\S.*"
-                    required
-                    value={lobbyName}
-                    onChange={(event) => setLobbyName(event.target.value)}
-                    onInvalid={() => setError("Enter a topic question.")}
-                  />
-                </label>
-                <label
-                  className="grid gap-1.5 text-sm"
-                  htmlFor="affirmative-position"
-                >
-                  Affirmative position
-                  <Input
-                    disabled={topicSource === "preset" && !selectedPresetId}
-                    id="affirmative-position"
-                    maxLength={120}
-                    required
-                    value={affirmative}
-                    onChange={(event) => setAffirmative(event.target.value)}
-                    onInvalid={() => setError("Enter both argument positions.")}
-                  />
-                </label>
-                <label
-                  className="grid gap-1.5 text-sm"
-                  htmlFor="opposing-position"
-                >
-                  Opposing position
-                  <Input
-                    disabled={topicSource === "preset" && !selectedPresetId}
-                    id="opposing-position"
-                    maxLength={120}
-                    required
-                    value={opposing}
-                    onChange={(event) => setOpposing(event.target.value)}
-                    onInvalid={() => setError("Enter both argument positions.")}
-                  />
-                </label>
-                <label
-                  className="grid gap-1.5 text-sm"
-                  htmlFor="lobby-visibility"
-                >
-                  Visibility
-                  <select
-                    className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
-                    id="lobby-visibility"
-                    value={visibility}
-                    onChange={(event) => {
-                      const next = event.target.value;
-                      if (next === "public" || next === "private")
-                        setVisibility(next);
-                    }}
-                  >
-                    <option value="public">Public</option>
-                    <option value="private">Private</option>
-                  </select>
-                </label>
-                <fieldset className="grid gap-1.5">
-                  <legend className="mb-1.5 text-sm">Tags</legend>
-                  <div className="flex flex-wrap gap-2">
-                    {lobbyTags.map((tag) => (
-                      <label
-                        className={
-                          "flex items-center gap-1.5 rounded-md border px-2 py-1 text-sm " +
-                          lobbyTagStyles[tag]
-                        }
-                        key={tag}
+                    {topicSource === "preset" ? (
+                      <Button
+                        aria-label="Select prewritten topic"
+                        className="justify-center"
+                        type="button"
+                        variant="outline"
+                        onClick={() => setTopicBrowserOpen(true)}
                       >
-                        <input
-                          checked={selectedTags.includes(tag)}
-                          type="checkbox"
-                          onChange={(event) => {
-                            setSelectedTags((tags) =>
-                              event.target.checked
-                                ? [...tags, tag]
-                                : tags.filter((item) => item !== tag),
-                            );
-                          }}
-                        />
-                        {tag}
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-                <label className="grid gap-1.5 text-sm" htmlFor="creator-name">
-                  Creator display name
-                  <Input
-                    autoComplete="nickname"
-                    id="creator-name"
-                    maxLength={40}
-                    pattern=".*\S.*"
-                    required
-                    value={creatorName}
-                    onChange={(event) => setCreatorName(event.target.value)}
-                    onInvalid={() => setError("Enter a display name.")}
-                  />
-                </label>
-                <label className="grid gap-1.5 text-sm" htmlFor="creator-side">
-                  Join as
-                  <select
-                    className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
-                    id="creator-side"
-                    value={creatorChoice}
-                    onChange={(event) =>
-                      setCreatorChoice(parseLobbyChoice(event.target.value))
-                    }
-                  >
-                    <option value="0">{affirmative || "Affirmative"}</option>
-                    <option value="1">{opposing || "Opposing"}</option>
-                    <option value="spectator">Spectate</option>
-                  </select>
-                </label>
-                <Button
-                  disabled={
-                    busy ||
-                    (topicSource === "custom" && !selectedCategory) ||
-                    !lobbyName.trim() ||
-                    !affirmative.trim() ||
-                    !opposing.trim()
-                  }
-                  type="submit"
-                >
-                  {busy ? "Please wait…" : "Create and join"}
-                </Button>
-              </form>
-            </section>
-          ) : (
-            <section
-              aria-labelledby="join-lobby-tab"
-              className="grid gap-3"
-              id="join-lobby-panel"
-              role="tabpanel"
-            >
-              <form className="grid gap-3" onSubmit={joinLobby}>
-                <label className="grid gap-1.5 text-sm" htmlFor="lobby-code">
-                  Lobby code
-                  <Input
-                    autoCapitalize="characters"
-                    autoComplete="off"
-                    id="lobby-code"
-                    maxLength={8}
-                    minLength={6}
-                    pattern="[A-Za-z0-9]{6,8}"
-                    required
-                    value={joinCode}
-                    onChange={(event) => {
-                      setJoinCode(event.target.value.toUpperCase());
-                      setPreview(undefined);
-                    }}
-                  />
-                </label>
-                <Button
-                  disabled={busy || !joinCode.trim()}
-                  type="button"
-                  variant="outline"
-                  onClick={() => void findLobby()}
-                >
-                  Find lobby
-                </Button>
-                {preview ? (
-                  <div className="grid gap-3 rounded-lg border bg-muted/30 p-3">
-                    <div>
-                      <p className="font-medium">{preview.title}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {preview.debaterCount} debating ·{" "}
-                        {preview.spectatorCount} watching
-                      </p>
-                    </div>
-                    <label className="grid gap-1.5 text-sm" htmlFor="join-side">
-                      Position
+                        Select prewritten topic
+                      </Button>
+                    ) : null}
+
+                    {topicSource === "custom" ? (
+                      <fieldset
+                        aria-required="true"
+                        className="grid gap-1.5"
+                        role="radiogroup"
+                      >
+                        <legend className="mb-1.5 text-sm">Category</legend>
+                        <div className="grid grid-cols-2 gap-2">
+                          {topicCategories.map((category) => (
+                            <label className={choiceClassName} key={category}>
+                              <input
+                                checked={selectedCategory === category}
+                                className={choiceInputClassName}
+                                name="custom-category"
+                                required={!selectedCategory}
+                                type="radio"
+                                value={category}
+                                onChange={() => setSelectedCategory(category)}
+                              />
+                              {category}
+                              <CheckIcon
+                                aria-hidden="true"
+                                className="size-4 shrink-0 text-primary opacity-0 peer-checked:opacity-100"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </fieldset>
+                    ) : null}
+
+                    <label
+                      className="grid gap-1.5 text-sm"
+                      htmlFor="lobby-name"
+                    >
+                      Topic question
+                      <Input
+                        disabled={topicSource === "preset" && !selectedPresetId}
+                        id="lobby-name"
+                        maxLength={80}
+                        pattern=".*\S.*"
+                        required
+                        value={lobbyName}
+                        onChange={(event) => setLobbyName(event.target.value)}
+                        onInvalid={() => setError("Enter a topic question.")}
+                      />
+                    </label>
+                    <label
+                      className="grid gap-1.5 text-sm"
+                      htmlFor="affirmative-position"
+                    >
+                      Affirmative position
+                      <Input
+                        disabled={topicSource === "preset" && !selectedPresetId}
+                        id="affirmative-position"
+                        maxLength={120}
+                        required
+                        value={affirmative}
+                        onChange={(event) => setAffirmative(event.target.value)}
+                        onInvalid={() =>
+                          setError("Enter both argument positions.")
+                        }
+                      />
+                    </label>
+                    <label
+                      className="grid gap-1.5 text-sm"
+                      htmlFor="opposing-position"
+                    >
+                      Opposing position
+                      <Input
+                        disabled={topicSource === "preset" && !selectedPresetId}
+                        id="opposing-position"
+                        maxLength={120}
+                        required
+                        value={opposing}
+                        onChange={(event) => setOpposing(event.target.value)}
+                        onInvalid={() =>
+                          setError("Enter both argument positions.")
+                        }
+                      />
+                    </label>
+                    <label
+                      className="grid gap-1.5 text-sm"
+                      htmlFor="lobby-visibility"
+                    >
+                      Visibility
                       <select
-                        className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
-                        id="join-side"
-                        value={joinChoice}
+                        className="h-10 w-full rounded-lg border border-input bg-transparent px-3 text-sm focus-visible:ring-3 focus-visible:ring-ring/50"
+                        id="lobby-visibility"
+                        value={visibility}
+                        onChange={(event) => {
+                          const next = event.target.value;
+                          if (next === "public" || next === "private")
+                            setVisibility(next);
+                        }}
+                      >
+                        <option value="public">Public</option>
+                        <option value="private">Private</option>
+                      </select>
+                    </label>
+                    <details className="rounded-lg bg-muted/50 p-3">
+                      <summary className="cursor-pointer text-sm font-medium">
+                        Tags
+                        {selectedTags.length
+                          ? ` · ${selectedTags.length} selected`
+                          : " · Optional"}
+                      </summary>
+                      <div className="mt-3">
+                        <fieldset className="grid gap-1.5">
+                          <legend className="mb-1.5 text-sm">Tags</legend>
+                          <div className="grid grid-cols-2 gap-2">
+                            {lobbyTags.map((tag) => (
+                              <label className={choiceClassName} key={tag}>
+                                <input
+                                  checked={selectedTags.includes(tag)}
+                                  className={choiceInputClassName}
+                                  type="checkbox"
+                                  onChange={(event) => {
+                                    setSelectedTags((tags) =>
+                                      event.target.checked
+                                        ? [...tags, tag]
+                                        : tags.filter((item) => item !== tag),
+                                    );
+                                  }}
+                                />
+                                {tag}
+                                <CheckIcon
+                                  aria-hidden="true"
+                                  className="size-4 shrink-0 text-primary opacity-0 peer-checked:opacity-100"
+                                />
+                              </label>
+                            ))}
+                          </div>
+                        </fieldset>
+                      </div>
+                    </details>
+                    <label
+                      className="grid gap-1.5 text-sm"
+                      htmlFor="creator-name"
+                    >
+                      Creator display name
+                      <Input
+                        autoComplete="nickname"
+                        id="creator-name"
+                        maxLength={40}
+                        pattern=".*\S.*"
+                        required
+                        value={creatorName}
+                        onChange={(event) => setCreatorName(event.target.value)}
+                        onInvalid={() => setError("Enter a display name.")}
+                      />
+                    </label>
+                    <label
+                      className="grid gap-1.5 text-sm"
+                      htmlFor="creator-side"
+                    >
+                      Join as
+                      <select
+                        className="h-10 w-full rounded-lg border border-input bg-transparent px-3 text-sm focus-visible:ring-3 focus-visible:ring-ring/50"
+                        id="creator-side"
+                        value={creatorChoice}
                         onChange={(event) =>
-                          setJoinChoice(parseLobbyChoice(event.target.value))
+                          setCreatorChoice(parseLobbyChoice(event.target.value))
                         }
                       >
-                        {preview.sideAvailability.map((available, sideIndex) =>
-                          available ? (
-                            <option key={sideIndex} value={sideIndex}>
-                              {preview.sides[sideIndex]}
-                            </option>
-                          ) : null,
-                        )}
+                        <option value="0">
+                          {affirmative || "Affirmative"}
+                        </option>
+                        <option value="1">{opposing || "Opposing"}</option>
                         <option value="spectator">Spectate</option>
                       </select>
                     </label>
-                  </div>
-                ) : null}
-                <label
-                  className="grid gap-1.5 text-sm"
-                  htmlFor="lobby-display-name"
+                    <Button
+                      disabled={
+                        busy ||
+                        (topicSource === "custom" && !selectedCategory) ||
+                        !lobbyName.trim() ||
+                        !affirmative.trim() ||
+                        !opposing.trim()
+                      }
+                      type="submit"
+                    >
+                      {busy ? "Please wait…" : "Create and join"}
+                    </Button>
+                  </form>
+                </section>
+              ) : (
+                <section
+                  aria-labelledby="join-lobby-tab"
+                  className="grid gap-3"
+                  id="join-lobby-panel"
+                  role="tabpanel"
                 >
-                  Your display name
-                  <Input
-                    autoComplete="nickname"
-                    id="lobby-display-name"
-                    maxLength={40}
-                    pattern=".*\S.*"
-                    required
-                    value={joinerName}
-                    onChange={(event) => setJoinerName(event.target.value)}
-                  />
-                </label>
-                <Button disabled={busy || !preview} type="submit">
-                  {busy ? "Please wait…" : "Join private lobby"}
-                </Button>
-              </form>
-            </section>
+                  <form className="grid gap-4" onSubmit={joinLobby}>
+                    <label
+                      className="grid gap-1.5 text-sm"
+                      htmlFor="lobby-code"
+                    >
+                      Lobby code
+                      <Input
+                        autoCapitalize="characters"
+                        autoComplete="off"
+                        id="lobby-code"
+                        maxLength={8}
+                        minLength={6}
+                        pattern="[A-Za-z0-9]{6,8}"
+                        required
+                        value={joinCode}
+                        onChange={(event) => {
+                          setJoinCode(event.target.value.toUpperCase());
+                          setPreview(undefined);
+                        }}
+                      />
+                    </label>
+                    <Button
+                      disabled={busy || !joinCode.trim()}
+                      type="button"
+                      variant="outline"
+                      onClick={() => void findLobby()}
+                    >
+                      Find lobby
+                    </Button>
+                    {preview ? (
+                      <div className="grid gap-3 rounded-lg border bg-muted/30 p-3">
+                        <div>
+                          <p className="font-medium">{preview.title}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {preview.debaterCount} debating ·{" "}
+                            {preview.spectatorCount} watching
+                          </p>
+                        </div>
+                        <label
+                          className="grid gap-1.5 text-sm"
+                          htmlFor="join-side"
+                        >
+                          Position
+                          <select
+                            className="h-10 w-full rounded-lg border border-input bg-transparent px-3 text-sm focus-visible:ring-3 focus-visible:ring-ring/50"
+                            id="join-side"
+                            value={joinChoice}
+                            onChange={(event) =>
+                              setJoinChoice(
+                                parseLobbyChoice(event.target.value),
+                              )
+                            }
+                          >
+                            {preview.sideAvailability.map(
+                              (available, sideIndex) =>
+                                available ? (
+                                  <option key={sideIndex} value={sideIndex}>
+                                    {preview.sides[sideIndex]}
+                                  </option>
+                                ) : null,
+                            )}
+                            <option value="spectator">Spectate</option>
+                          </select>
+                        </label>
+                      </div>
+                    ) : null}
+                    <label
+                      className="grid gap-1.5 text-sm"
+                      htmlFor="lobby-display-name"
+                    >
+                      Your display name
+                      <Input
+                        autoComplete="nickname"
+                        id="lobby-display-name"
+                        maxLength={40}
+                        pattern=".*\S.*"
+                        required
+                        value={joinerName}
+                        onChange={(event) => setJoinerName(event.target.value)}
+                      />
+                    </label>
+                    <Button disabled={busy || !preview} type="submit">
+                      {busy ? "Please wait…" : "Join private lobby"}
+                    </Button>
+                  </form>
+                </section>
+              )}
+              {error ? (
+                <p className="text-sm text-destructive" role="alert">
+                  {error}
+                </p>
+              ) : null}
+            </>
           )}
-          {error ? (
-            <p className="text-sm text-destructive" role="alert">
-              {error}
-            </p>
-          ) : null}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={topicBrowserOpen} onOpenChange={setTopicBrowserOpen}>
-        <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Browse topics</DialogTitle>
-            <DialogDescription>
-              Choose one or more categories to find a prewritten topic.
-            </DialogDescription>
-          </DialogHeader>
-
-          <fieldset>
-            <legend className="mb-2 text-sm font-medium">Categories</legend>
-            <div className="flex flex-wrap gap-2">
-              {Array.from(
-                new Set(topicPresets.map((topic) => topic.category)),
-              ).map((category) => (
-                <label
-                  className={
-                    "flex items-center gap-1.5 rounded-md border px-2 py-1 text-sm " +
-                    topicCategoryStyles[category]
-                  }
-                  key={category}
-                >
-                  <input
-                    checked={selectedCategories.includes(category)}
-                    type="checkbox"
-                    onChange={(event) => {
-                      setSelectedCategories((categories) =>
-                        event.target.checked
-                          ? [...categories, category]
-                          : categories.filter((item) => item !== category),
-                      );
-                    }}
-                  />
-                  {category}
-                </label>
-              ))}
-            </div>
-          </fieldset>
-
-          {selectedCategories.length > 0 ? (
-            <section className="grid gap-2" aria-live="polite">
-              <h3 className="text-sm font-medium">Topics</h3>
-              {topicPresets
-                .filter((topic) => selectedCategories.includes(topic.category))
-                .map((topic) => (
-                  <Button
-                    className={
-                      "h-auto justify-start px-3 py-2.5 text-left whitespace-normal " +
-                      topicCategoryStyles[topic.category]
-                    }
-                    key={topic.id}
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setSelectedPresetId(topic.id);
-                      setSelectedCategory(topic.category);
-                      setLobbyName(topic.title);
-                      setAffirmative(topic.sides[0]);
-                      setOpposing(topic.sides[1]);
-                      setTopicBrowserOpen(false);
-                    }}
-                  >
-                    <span>{topic.title}</span>
-                  </Button>
-                ))}
-            </section>
-          ) : null}
         </DialogContent>
       </Dialog>
     </>
@@ -833,6 +882,13 @@ export function TopicList({
     );
   }
 
+  const activeFilterCount =
+    selectedCategories.length +
+    selectedTags.length +
+    Number(minimumSpectators !== "") +
+    Number(maximumSpectators !== "") +
+    Number(requireOpenSide);
+
   const filterDialog = (
     <Dialog open={filterOpen} onOpenChange={setFilterOpen}>
       <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-lg">
@@ -846,20 +902,14 @@ export function TopicList({
         <fieldset className="grid gap-3">
           <legend className="text-sm font-medium">Categories</legend>
           <p className="text-xs text-muted-foreground">
-            Lobbies matching any selected category will be shown.
+            Match any selected category.
           </p>
           <div className="grid grid-cols-2 gap-2">
             {topicCategories.map((category) => (
-              <label
-                className={
-                  "flex items-center gap-2 rounded-md border px-2 py-1 text-sm " +
-                  topicCategoryStyles[category]
-                }
-                key={category}
-              >
+              <label className={choiceClassName} key={category}>
                 <input
                   checked={selectedCategories.includes(category)}
-                  className="size-4 accent-primary"
+                  className={choiceInputClassName}
                   type="checkbox"
                   onChange={(event) => {
                     const checked = event.currentTarget.checked;
@@ -873,6 +923,10 @@ export function TopicList({
                   }}
                 />
                 {category}
+                <CheckIcon
+                  aria-hidden="true"
+                  className="size-4 shrink-0 text-primary opacity-0 peer-checked:opacity-100"
+                />
               </label>
             ))}
           </div>
@@ -880,14 +934,14 @@ export function TopicList({
         <fieldset className="grid gap-3">
           <legend className="text-sm font-medium">Tags</legend>
           <p className="text-xs text-muted-foreground">
-            Lobbies matching any selected tag will be shown.
+            Match any selected tag.
           </p>
           <div className="grid grid-cols-2 gap-2">
             {lobbyTags.map((tag) => (
-              <label className="flex items-center gap-2 text-sm" key={tag}>
+              <label className={choiceClassName} key={tag}>
                 <input
                   checked={selectedTags.includes(tag)}
-                  className="size-4 accent-primary"
+                  className={choiceInputClassName}
                   type="checkbox"
                   onChange={(event) => {
                     const checked = event.currentTarget.checked;
@@ -901,6 +955,10 @@ export function TopicList({
                   }}
                 />
                 {tag}
+                <CheckIcon
+                  aria-hidden="true"
+                  className="size-4 shrink-0 text-primary opacity-0 peer-checked:opacity-100"
+                />
               </label>
             ))}
           </div>
@@ -942,16 +1000,20 @@ export function TopicList({
             />
           </label>
         </fieldset>
-        <label className="flex items-center gap-2 text-sm">
+        <label className={choiceClassName}>
           <input
             checked={requireOpenSide}
-            className="size-4 accent-primary"
+            className={choiceInputClassName}
             type="checkbox"
             onChange={(event) =>
               setRequireOpenSide(event.currentTarget.checked)
             }
           />
           At least one debate side is open
+          <CheckIcon
+            aria-hidden="true"
+            className="size-4 shrink-0 text-primary opacity-0 peer-checked:opacity-100"
+          />
         </label>
         <div className="flex justify-between gap-2">
           <Button
@@ -997,7 +1059,7 @@ export function TopicList({
                 onClick={() => setFilterOpen(true)}
               >
                 <FilterIcon />
-                Filter
+                Filter{activeFilterCount ? ` (${activeFilterCount})` : ""}
               </Button>
             </div>
           </header>
@@ -1034,7 +1096,7 @@ export function TopicList({
               onClick={() => setFilterOpen(true)}
             >
               <FilterIcon />
-              Filter
+              Filter{activeFilterCount ? ` (${activeFilterCount})` : ""}
             </Button>
           </div>
         </header>
@@ -1054,34 +1116,28 @@ export function TopicList({
             }}
           >
             <header className="grid min-h-24 content-center gap-3 px-5 py-4 sm:min-h-28 sm:px-7">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                {topic.category ? (
+                  <span className="flex items-center gap-2 text-sm font-medium tracking-wide text-muted-foreground">
+                    {topic.category}
+                  </span>
+                ) : null}
+                {topic.tags?.length ? (
+                  <div
+                    aria-label="Lobby tags"
+                    className="flex flex-wrap gap-x-3 gap-y-1"
+                  >
+                    {topic.tags.map((tag) => (
+                      <span className="text-sm text-muted-foreground" key={tag}>
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
               <h2 className="font-editorial max-w-full text-[clamp(1.5rem,5.5vw,2.75rem)] leading-tight font-semibold tracking-tight break-words">
                 {topic.title}
               </h2>
-              {topic.category ? (
-                <span
-                  className={
-                    "w-fit rounded-md border px-2 py-0.5 text-xs font-medium " +
-                    topicCategoryStyles[topic.category]
-                  }
-                >
-                  {topic.category}
-                </span>
-              ) : null}
-              {topic.tags?.length ? (
-                <div aria-label="Lobby tags" className="flex flex-wrap gap-1.5">
-                  {topic.tags.map((tag) => (
-                    <span
-                      className={
-                        "rounded-md border px-2 py-0.5 text-xs font-medium " +
-                        lobbyTagStyles[tag]
-                      }
-                      key={tag}
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
               <p className="flex flex-wrap gap-x-2 gap-y-1 text-sm text-muted-foreground">
                 <span>
                   {topic.sideAvailability.every((available) => !available)
@@ -1339,7 +1395,7 @@ export default function Home() {
   return (
     <main className="grid h-svh grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-background">
       <SiteHeader account={account} />
-      <section className="mx-auto flex min-h-0 w-full max-w-3xl flex-col gap-3 px-4 pt-3 pb-20 sm:px-6 sm:pt-5 sm:pb-24">
+      <section className="mx-auto flex min-h-0 w-full max-w-3xl flex-col gap-3 px-4 pt-3 pb-3 sm:px-6 sm:pt-5 sm:pb-4">
         {showMediaPermissionFailure ? (
           <p className="text-sm font-medium text-destructive" role="alert">
             {MEDIA_PERMISSION_MESSAGE}

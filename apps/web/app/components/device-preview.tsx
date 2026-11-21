@@ -1,4 +1,4 @@
-import { CameraIcon, RotateCcwIcon } from "lucide-react";
+import { RotateCcwIcon, SettingsIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
@@ -39,7 +39,7 @@ function stopStream(stream: MediaStream | undefined) {
  * stream. Nothing here is published to the room, and every track is stopped
  * when the preview closes so the browser's camera indicator turns off.
  */
-export function DevicePreview() {
+export function DevicePreview({ className }: { className?: string }) {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<PreviewStatus>("requesting");
   const [stream, setStream] = useState<MediaStream>();
@@ -88,16 +88,18 @@ export function DevicePreview() {
   return (
     <>
       <Button
-        className="shrink-0"
+        className={className}
+        size="icon"
+        aria-label="Camera and microphone settings"
+        title="Camera & microphone"
         type="button"
-        variant="outline"
+        variant="secondary"
         onClick={() => {
           setOpen(true);
           void start();
         }}
       >
-        <CameraIcon aria-hidden="true" />
-        Check Camera & Mic
+        <SettingsIcon className="size-5" aria-hidden="true" />
       </Button>
       <Dialog
         open={open}
@@ -108,7 +110,7 @@ export function DevicePreview() {
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="font-editorial text-xl">
-              Check camera & mic
+              Camera & microphone
             </DialogTitle>
             <DialogDescription>
               Only you can see this preview. Nothing is shared with the lobby.

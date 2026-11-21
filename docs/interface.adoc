@@ -72,9 +72,18 @@ Ordinary controls use shadcn/ui behavior, sizes, focus treatment, and disabled
 states. Tailwind handles layout and the established debate colors. A custom
 button skin or wrapper needs a reason specific to Impromptu.
 
+Inputs, selects, and ordinary action buttons share a consistent height and type
+size. Compact controls remain readable and large enough to operate by touch.
 Primary actions are easy to find and secondary actions remain visibly
 secondary. Destructive actions use red. Icon-only controls have an accessible
 name and retain a useful pointer and keyboard target.
+
+Dialogs share heading sizes, padding, field spacing, and action placement. A
+subdued backdrop separates the dialog from the page. Category and tag choices
+use borderless tiles at the ordinary control height. Selected tiles show a
+checkmark and a blue tint; their native checkboxes and radios retain keyboard
+behavior. A choice within a form can replace the dialog's contents, with a way
+back, instead of opening another dialog above it.
 
 Feedback appears beside the action or state it describes. Inline errors,
 disabled controls, pressed states, and changed counts cover routine feedback.
@@ -95,10 +104,16 @@ hierarchies.
 The home lobby shows one topic at a time. Each topic card is its lobby and shows
 the current side availability and audience count. Arrows and touch swipes browse
 public topics. Creation asks for a question, both positions, and visibility.
-Writing a custom topic also requires one category, shown in its category color.
+Writing a custom topic also requires one category.
+The category appears above the question as a quiet section label. Tags share
+that metadata row, separate from availability and audience counts.
+Creation and joining by code have separate entry actions aligned with the topic
+card. Topic browsing, category selection, tags, and public filters remain
+available within these flows.
 Private topics stay out of the public carousel and are joined by code.
 
-The participant list sits above the audience vote. Debaters appear by side in
+The participant list sits above the audience vote. Its Debaters and Spectators
+headings use the same plain metadata typography as occupancy counts. Debaters appear by side in
 the position colors with the position text; spectators appear in a separate
 list. The current participant is marked `(you)`. A spectator can take an open
 side from its row, and a debater can give up their side with Spectate on their
@@ -106,7 +121,14 @@ own row. Lists update from room presence as roles change. These controls disappe
 the host starts the debate.
 
 The host can start when both debater positions are occupied by connected
-participants. Spectators are optional.
+participants. Spectators are optional. The host's start action and round settings
+sit with the participant counts in the audience sidebar. The host changes the
+round's ending mode and timer in a dialog that leaves the room layout in place.
+Camera checks and invitations remain in the room header. Utility controls match
+the leave control's height. Camera and microphone preview opens from a settings
+icon, while invitations have a people icon. Each icon control has an accessible
+name and a browser tooltip naming its action. Device preview
+is available to waiting participants and starts only when requested.
 
 Interactive controls follow the permissions issued by the backend. Spectators
 can use audience actions made available to them; debaters see read-only results
@@ -118,8 +140,11 @@ permission boundary.
 Registration, login, and account pages share a narrow single-column form.
 Each field has a visible label, and a validation error appears directly beneath
 the field it describes. Errors that do not belong to a field appear as an alert
-above the form. The header shows Log in and Register to guests, and the username
-linking to the account page for signed-in people.
+above the form. Guests have one Log in link in the header. The login form offers
+Create an account. Signed-in people see their display name linking to the
+account page. The account page places profile
+editing before a compact statistics summary. Log out sits near the account
+heading; account deletion remains a separate action with confirmation.
 
 == Chat
 
@@ -182,7 +207,9 @@ default. New visual treatment should explain hierarchy, state, or interaction.
 Participants can copy an invitation link from the room. The host can also submit
 an invitation to one email address. Confirmation appears after the link is
 copied or the mail service accepts the invitation. Invalid addresses have an
-error beside the field.
+error beside the field. The invitation dialog also holds the creator's private
+join code and its copy action. Visibility appears with these access details
+rather than beside the debate question.
 
 The invitation page shows the current question and both positions, with their
 availability, before a guest chooses a role. Private invitations carry access
@@ -192,4 +219,3 @@ invitation explains the problem and links home.
 Password recovery uses the account forms' field validation. Its confirmation
 does not reveal whether an address belongs to an account. A successful reset
 returns to login; an expired or used link offers a way to request another one.
-Accounts permitted to inspect captured email have a Mailbox link in navigation.

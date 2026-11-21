@@ -1,5 +1,6 @@
 import { apiContract, type JoinResult } from "@impromptu/api/contracts";
 import { useState } from "react";
+import { CopyIcon, UserRoundPlusIcon } from "lucide-react";
 import { ApiError, contractPost } from "~/api";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -13,6 +14,7 @@ import {
   DialogTrigger,
 } from "~/components/ui/dialog";
 export function InvitationTools({ join }: { join: JoinResult }) {
+  const [codeCopied, setCodeCopied] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [fieldError, setFieldError] = useState("");
@@ -69,10 +71,30 @@ export function InvitationTools({ join }: { join: JoinResult }) {
       setBusy(false);
     }
   }
+  async function copyCode() {
+    if (!join.joinCode) return;
+    try {
+      await navigator.clipboard.writeText(join.joinCode);
+      setCodeCopied(true);
+    } catch {
+      setError("Private lobby code could not be copied.");
+    }
+  }
   return (
     <Dialog>
-      <DialogTrigger render={<Button type="button" variant="secondary" />}>
-        Invite participants
+      <DialogTrigger
+        render={
+          <Button
+            type="button"
+            variant="secondary"
+            size="icon-lg"
+            className="size-12"
+            aria-label="Invite people"
+            title="Invite people"
+          />
+        }
+      >
+        <UserRoundPlusIcon className="size-5" aria-hidden="true" />
       </DialogTrigger>
       <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto">
         <DialogHeader>
@@ -82,7 +104,38 @@ export function InvitationTools({ join }: { join: JoinResult }) {
             spectate.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid min-w-0 gap-4">
+        <div className="grid min-w-0 gap-5">
+          {join.isCreator && join.joinCode ? (
+            <div className="grid gap-2 rounded-lg bg-secondary/60 p-3">
+              <p className="text-sm text-muted-foreground">
+                {join.visibility === "public"
+                  ? "Public lobby code"
+                  : "Private lobby code"}
+              </p>
+              <div className="flex min-w-0 items-center justify-between gap-3">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  aria-label={`Copy lobby code ${join.joinCode}`}
+                  onClick={() => void copyCode()}
+                >
+                  <code className="font-mono text-lg tracking-wider">
+                    {join.joinCode}
+                  </code>
+                  <CopyIcon aria-hidden="true" />
+                  {codeCopied ? "Copied" : "Copy"}
+                </Button>
+              </div>
+              <output className="sr-only">
+                {codeCopied ? "Lobby code copied." : ""}
+              </output>
+            </div>
+          ) : null}
+          {!join.joinCode && join.visibility && (
+            <p className="text-sm text-muted-foreground">
+              {join.visibility === "private" ? "Private lobby" : "Public lobby"}
+            </p>
+          )}
           <Button
             disabled={busy}
             variant="secondary"
@@ -92,7 +145,7 @@ export function InvitationTools({ join }: { join: JoinResult }) {
           </Button>
           {join.hostIdentity === join.participantIdentity && (
             <form
-              className="grid min-w-0 gap-3"
+              className="grid min-w-0 gap-3 border-t border-border/60 pt-5"
               noValidate
               onSubmit={(event) => {
                 event.preventDefault();

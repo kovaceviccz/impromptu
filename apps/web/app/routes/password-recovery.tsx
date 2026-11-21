@@ -23,8 +23,8 @@ export default function PasswordRecovery() {
   return (
     <>
       <SiteHeader account={null} />
-      <main className="mx-auto grid max-w-sm gap-6 px-4 py-12">
-        <h1 className="font-editorial text-3xl">
+      <main className="mx-auto grid max-w-md gap-6 px-4 py-10 sm:py-16">
+        <h1 className="font-editorial text-3xl font-semibold tracking-tight">
           {reset ? "Reset password" : "Forgot password"}
         </h1>
         {message &&

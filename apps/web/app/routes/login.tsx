@@ -58,7 +58,7 @@ export default function Login() {
   return (
     <>
       <SiteHeader account={null} />
-      <main className="mx-auto grid w-full max-w-sm gap-6 px-4 py-10 sm:py-16">
+      <main className="mx-auto grid w-full max-w-md gap-6 px-4 py-10 sm:py-16">
         <h1 className="font-editorial text-3xl font-semibold tracking-tight">
           Log in
         </h1>

@@ -57,7 +57,7 @@ export default function Register() {
     return (
       <>
         <SiteHeader account={result.account} />
-        <main className="mx-auto grid w-full max-w-sm gap-6 px-4 py-10 sm:py-16">
+        <main className="mx-auto grid w-full max-w-md gap-6 px-4 py-10 sm:py-16">
           <header className="grid gap-2">
             <h1 className="font-editorial text-3xl font-semibold tracking-tight">
               Account created
@@ -87,7 +87,7 @@ export default function Register() {
   return (
     <>
       <SiteHeader account={null} />
-      <main className="mx-auto grid w-full max-w-sm gap-6 px-4 py-10 sm:py-16">
+      <main className="mx-auto grid w-full max-w-md gap-6 px-4 py-10 sm:py-16">
         <h1 className="font-editorial text-3xl font-semibold tracking-tight">
           Create an account
         </h1>

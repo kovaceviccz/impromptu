@@ -32,7 +32,7 @@ import {
   type LiveKitGateway,
 } from "./livekit.js";
 import { votingSummary } from "../lobbies/voting.js";
-import type { JoinResult, TopicCategory } from "./contract.js";
+import type { JoinResult, TopicCategory, LobbyTag } from "./contract.js";
 import type { AccountStore } from "../accounts/store.js";
 import { SESSION_COOKIE } from "../accounts/routes.js";
 import type { DebateResultStore } from "../statistics/store.js";
@@ -58,6 +58,7 @@ type ResolvedTopic = {
   title: string;
   sides: [string, string];
   category?: TopicCategory;
+  tags?: LobbyTag[];
   record?: PrivateLobbyRecord;
 };
 
@@ -261,6 +262,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
         title: starter.title,
         sides: [starter.sides[0], starter.sides[1]],
         category: starter.category,
+        tags: starter.tags,
       });
     const record = await findLobby(id);
     if (
@@ -276,6 +278,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
       title: record.name,
       sides: [record.side0, record.side1],
       category: record.category ?? "Miscellaneous",
+      tags: record.tags ?? [],
       record,
     });
   }
@@ -327,6 +330,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
           title: topic.title,
           sides: [topic.sides[0], topic.sides[1]] as [string, string],
           category: topic.category,
+          tags: topic.tags,
         })),
         ...created
           .filter(
@@ -342,6 +346,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
             title: record.name!,
             sides: [record.side0!, record.side1!] as [string, string],
             category: record.category ?? "Miscellaneous",
+            tags: record.tags ?? [],
             record,
           })),
       ].map(refreshPublicTopic),
@@ -396,7 +401,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
             sides: [topic.sides[0], topic.sides[1]] as [string, string],
             category: topic.category ?? "Miscellaneous",
             state,
-            tags: topic.record?.tags ?? [],
+            tags: topic.tags ?? [],
             debaterCount: status.debaterCount,
             spectatorCount: status.spectatorCount,
             sideAvailability: [
@@ -822,7 +827,7 @@ export const topicRoutes: FastifyPluginAsyncZod<TopicRoutesOptions> = async (
             title: topic.title,
             sides: [topic.sides[0], topic.sides[1]] satisfies [string, string],
             category: topic.category ?? "Miscellaneous",
-            ...(topic.record ? { tags: topic.record.tags ?? [] } : {}),
+            tags: topic.tags ?? [],
             sideAvailability: [
               canDebate && sideAvailability[0],
               canDebate && sideAvailability[1],

@@ -559,7 +559,7 @@ describe("API contracts", () => {
     const topics = apiContract.topics.response.parse(response.json());
 
     expect(response.statusCode).toBe(200);
-    expect(topics).toHaveLength(20);
+    expect(topics).toHaveLength(9);
     expect(new Set(topicPresets.map((topic) => topic.category))).toEqual(
       new Set(["Philosophy", "Society", "Sports", "Music", "Entertainment"]),
     );
@@ -569,6 +569,7 @@ describe("API contracts", () => {
       title: "Can you cheat in a dream?",
       sides: ["Yes: intention still matters", "No: dreams are involuntary"],
       category: "Philosophy",
+      tags: ["Open-minded"],
       sideAvailability: [false, true],
       debaterCount: 1,
       spectatorCount: 2,

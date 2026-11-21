@@ -120,7 +120,7 @@ export default function AccountPage() {
   return (
     <>
       <SiteHeader account={account} />
-      <main className="mx-auto grid w-full max-w-sm gap-8 px-4 py-10 sm:py-16">
+      <main className="mx-auto grid w-full max-w-md gap-8 px-4 py-10 sm:py-16">
         <header className="grid gap-2">
           <h1 className="font-editorial text-3xl font-semibold tracking-tight">
             Your account
@@ -131,39 +131,25 @@ export default function AccountPage() {
               {memberSinceFormatter.format(new Date(account.createdAt))}
             </time>
           </p>
+          <Form method="post">
+            <Button
+              disabled={navigation.state !== "idle"}
+              name="intent"
+              type="submit"
+              value="logout"
+              variant="ghost"
+              className="-ml-3 w-fit"
+            >
+              {submittingIntent === "logout" ? "Logging out…" : "Log out"}
+            </Button>
+          </Form>
         </header>
 
-        <section className="grid gap-4" aria-labelledby="statistics-heading">
-          <div className="grid gap-1">
-            <h2 className="text-lg font-semibold" id="statistics-heading">
-              Debate statistics
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              Results from debates completed while signed in.
-            </p>
-          </div>
-          <dl className="grid grid-cols-2 gap-3">
-            {[
-              ["Total debates", statistics.totalDebates],
-              ["Wins", statistics.wins],
-              ["Losses", statistics.losses],
-              ["Win percentage", `${statistics.winPercentage}%`],
-            ].map(([label, value]) => (
-              <div
-                className="rounded-lg border bg-card p-4 text-card-foreground"
-                key={label}
-              >
-                <dt className="text-sm text-muted-foreground">{label}</dt>
-                <dd className="font-editorial mt-1 text-2xl font-semibold">
-                  {value}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-
         <section className="grid gap-4" aria-labelledby="profile-heading">
-          <h2 className="text-lg font-semibold" id="profile-heading">
+          <h2
+            className="font-editorial text-xl font-semibold"
+            id="profile-heading"
+          >
             Profile
           </h2>
           <Form
@@ -224,25 +210,33 @@ export default function AccountPage() {
           </Form>
         </section>
 
-        <section
-          className="grid gap-3 border-t pt-6"
-          aria-labelledby="access-heading"
-        >
-          <h2 className="text-lg font-semibold" id="access-heading">
-            Account access
-          </h2>
-          <Form method="post">
-            <Button
-              disabled={navigation.state !== "idle"}
-              name="intent"
-              size="lg"
-              type="submit"
-              value="logout"
-              variant="outline"
+        <section className="grid gap-4" aria-labelledby="statistics-heading">
+          <div className="grid gap-1">
+            <h2
+              className="font-editorial text-xl font-semibold"
+              id="statistics-heading"
             >
-              {submittingIntent === "logout" ? "Logging out…" : "Log out"}
-            </Button>
-          </Form>
+              Debate statistics
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Results from debates completed while signed in.
+            </p>
+          </div>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-4 rounded-lg bg-secondary/50 p-4">
+            {[
+              ["Total debates", statistics.totalDebates],
+              ["Wins", statistics.wins],
+              ["Losses", statistics.losses],
+              ["Win percentage", `${statistics.winPercentage}%`],
+            ].map(([label, value]) => (
+              <div className="min-w-0" key={label}>
+                <dt className="text-sm text-muted-foreground">{label}</dt>
+                <dd className="font-editorial mt-1 text-2xl font-semibold">
+                  {value}
+                </dd>
+              </div>
+            ))}
+          </dl>
         </section>
 
         <section
@@ -250,7 +244,10 @@ export default function AccountPage() {
           aria-labelledby="danger-heading"
         >
           <div className="grid gap-1">
-            <h2 className="text-lg font-semibold" id="danger-heading">
+            <h2
+              className="font-editorial text-xl font-semibold"
+              id="danger-heading"
+            >
               Delete account
             </h2>
             <p className="text-sm text-muted-foreground">
