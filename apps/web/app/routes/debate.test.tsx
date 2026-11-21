@@ -503,6 +503,11 @@ describe("DebateExperience", () => {
     );
     setAttributes.mockClear();
 
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /No: dreams are involuntary.*0/ }),
+      ).toBeEnabled(),
+    );
     fireEvent.click(
       screen.getByRole("button", { name: /No: dreams are involuntary.*0/ }),
     );
@@ -1188,35 +1193,17 @@ describe("Participant roster", () => {
       },
     ];
     startDebateRequest.mockResolvedValue({ state: "DEBATE_IN_PROGRESS" });
-    const view = render(
+    render(
       <MemoryRouter>
         <DebateExperience join={creator} />
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Continue to lobby" }));
 
-    const start = screen.getByRole("button", { name: "Start Debate" });
-    expect(start).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start Debate" })).toBeEnabled();
     expect(
       screen.queryByText("Waiting for others to join..."),
     ).not.toBeInTheDocument();
-
-    roomState.participants = [
-      ...roomState.participants,
-      {
-        attributes: {},
-        identity: "spectator-guest",
-        name: "Spectator guest",
-        permissions: { canPublish: false },
-      },
-    ];
-    view.rerender(
-      <MemoryRouter>
-        <DebateExperience join={creator} />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByRole("button", { name: "Start Debate" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Start Debate" }));
     expect(await screen.findByText("Debate in progress ...")).toBeVisible();
     expect(startDebateRequest).toHaveBeenCalledWith(creator.topicId, {

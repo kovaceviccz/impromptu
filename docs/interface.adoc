@@ -105,6 +105,9 @@ side from its row, and a debater can give up their side with Spectate on their
 own row. Lists update from room presence as roles change. These controls disappear once
 the host starts the debate.
 
+The host can start when both debater positions are occupied by connected
+participants. Spectators are optional.
+
 Interactive controls follow the permissions issued by the backend. Spectators
 can use audience actions made available to them; debaters see read-only results
 where participation is restricted. Hiding a control is not treated as the
@@ -173,3 +176,20 @@ benefits from a bounded shape, not ordinary prose or counts.
 Flat regions are preferred when spacing and tone already establish structure.
 The interface does not add a card, border, shadow, animation, or dependency by
 default. New visual treatment should explain hierarchy, state, or interaction.
+
+== Invitations and password recovery
+
+Participants can copy an invitation link from the room. The host can also submit
+an invitation to one email address. Confirmation appears after the link is
+copied or the mail service accepts the invitation. Invalid addresses have an
+error beside the field.
+
+The invitation page shows the current question and both positions, with their
+availability, before a guest chooses a role. Private invitations carry access
+without asking the guest to enter a code or create an account. An unavailable
+invitation explains the problem and links home.
+
+Password recovery uses the account forms' field validation. Its confirmation
+does not reveal whether an address belongs to an account. A successful reset
+returns to login; an expired or used link offers a way to request another one.
+Accounts permitted to inspect captured email have a Mailbox link in navigation.

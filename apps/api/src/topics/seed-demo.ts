@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { DEMO_HOST_ID, seedDemoAccounts } from "../accounts/seed-demo.js";
 import { pathToFileURL } from "node:url";
 
 import { openDatabase } from "../database.js";
@@ -15,6 +15,7 @@ export async function seedDemoTopics(databaseUrl: string, privateCode: string) {
   }
   const orm = await openDatabase(databaseUrl);
   try {
+    await seedDemoAccounts(orm);
     const store = createPostgresPrivateLobbyStore(orm);
     const topics: (PrivateLobbyRecord & { name: string })[] = [
       {
@@ -26,7 +27,7 @@ export async function seedDemoTopics(databaseUrl: string, privateCode: string) {
         visibility: "public",
         state: "WAITING",
         codeHash: null,
-        creatorIdentity: randomUUID(),
+        creatorIdentity: DEMO_HOST_ID,
         createdAt: new Date(),
         expiresAt: null,
       },
@@ -39,7 +40,7 @@ export async function seedDemoTopics(databaseUrl: string, privateCode: string) {
         visibility: "private",
         state: "WAITING",
         codeHash: hashLobbyCode(privateCode),
-        creatorIdentity: randomUUID(),
+        creatorIdentity: DEMO_HOST_ID,
         createdAt: new Date(),
         expiresAt: null,
       },

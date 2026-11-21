@@ -87,12 +87,14 @@ export const joinBodySchema = z.discriminatedUnion("intent", [
     displayName: z.string().trim().min(1).max(40),
     intent: z.literal("debater"),
     lobbyId: joinLobbySchema,
+    invitation: z.string().max(256).optional(),
     previousToken: z.string().min(1).optional(),
     sideIndex: debateSideSchema,
   }),
   z.strictObject({
     intent: z.literal("spectator"),
     lobbyId: joinLobbySchema,
+    invitation: z.string().max(256).optional(),
     previousToken: z.string().min(1).optional(),
   }),
 ]);
@@ -268,6 +270,32 @@ export const roomParticipantsResultSchema = z.strictObject({
 });
 
 export const topicContracts = {
+  invitation: {
+    method: "POST",
+    path: "/api/topics/:topicId/invitation",
+    params: topicParamsSchema,
+    body: roomParticipantsRequestSchema.extend({
+      email: z.email().max(254).optional(),
+    }),
+    response: z.strictObject({ url: z.string(), sent: z.boolean() }),
+    errors: {
+      400: errorSchema,
+      401: errorSchema,
+      403: errorSchema,
+      404: errorSchema,
+      429: errorSchema,
+      503: errorSchema,
+    },
+  },
+  invitationPreview: {
+    method: "POST",
+    path: "/api/topics/:topicId/invitation-preview",
+    params: topicParamsSchema,
+    body: z.strictObject({ invitation: z.string().max(256) }),
+    response: privateLobbyPreviewSchema,
+    errors: { 404: errorSchema },
+  },
+
   submitVote: {
     method: "POST",
     path: "/api/topics/:topicId/vote",

@@ -8,6 +8,8 @@ export class AccountEntity {
   usernameKey!: string;
   email!: string;
   passwordHash!: string;
+  resetHash!: string | null;
+  resetExpiresAt!: Date | null;
   createdAt!: Date;
 }
 
@@ -32,6 +34,17 @@ export const AccountSchema = new EntitySchema<AccountEntity>({
       type: "string",
       columnType: "text",
       unique: "account_email_key",
+    },
+    resetHash: {
+      type: "string",
+      columnType: "char(64)",
+      nullable: true,
+      fieldName: "reset_hash",
+    },
+    resetExpiresAt: {
+      type: Date,
+      nullable: true,
+      fieldName: "reset_expires_at",
     },
     passwordHash: {
       type: "string",

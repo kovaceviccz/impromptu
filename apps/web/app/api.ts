@@ -23,7 +23,7 @@ export class ApiError extends Error {
   }
 }
 
-async function readResponse<T>(
+export async function readResponse<T>(
   response: Response,
   schema: { parse(value: unknown): T },
 ): Promise<T> {
@@ -269,5 +269,19 @@ export async function submitVote(
       input,
     ),
     apiContract.submitVote.response,
+  );
+}
+
+export async function contractPost<T>(
+  contract: { path: string; response: { parse(value: unknown): T } },
+  body: unknown,
+  topicId?: string,
+) {
+  return readResponse(
+    await postJson(
+      contract.path.replace(":topicId", encodeURIComponent(topicId ?? "")),
+      body,
+    ),
+    contract.response,
   );
 }

@@ -16,7 +16,7 @@ docker compose exec -T app \
   wget --quiet --spider http://127.0.0.1:3000/api/health
 
 running_services=$(docker compose ps --status running --services)
-for service in app envoy livekit; do
+for service in app envoy livekit mailpit; do
   echo "$running_services" | grep -qx "$service"
 done
 

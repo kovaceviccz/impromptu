@@ -62,6 +62,9 @@ export default function Login() {
         <h1 className="font-editorial text-3xl font-semibold tracking-tight">
           Log in
         </h1>
+        {searchParams.get("passwordReset") === "1" && (
+          <output>Password changed. You can now log in.</output>
+        )}
         <Form className="grid gap-4" method="post" noValidate>
           {result?.message && Object.keys(fieldErrors).length === 0 ? (
             <Alert variant="destructive">
@@ -96,6 +99,9 @@ export default function Login() {
             {submitting ? "Logging in…" : "Log in"}
           </Button>
         </Form>
+        <Link className="text-primary underline" to="/forgot-password">
+          Forgot password?
+        </Link>
         <p className="text-sm text-muted-foreground">
           New to {PRODUCT.name}?{" "}
           <Link

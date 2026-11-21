@@ -97,12 +97,16 @@ async function testApp(
   livekit: LiveKitGateway,
   privateLobbies: PrivateLobbyStore = createMemoryPrivateLobbyStore(),
   options: {
+    mail?: import("../mail/delivery.js").MailDelivery;
+    publicOrigin?: string;
     publicLobbyState?: PublicLobbyStateStore;
     accounts?: AccountStore;
     debateResults?: DebateResultStore;
   } = {},
 ) {
   const app = await buildApp({
+    mail: options.mail,
+    publicOrigin: options.publicOrigin,
     publicLobbyState: options.publicLobbyState,
     accounts: options.accounts ?? createMemoryAccountStore(),
     debateResults: options.debateResults ?? createMemoryDebateResultStore(),
@@ -714,15 +718,6 @@ describe("API contracts", () => {
         })
       ).json(),
     );
-    const fourth = apiContract.join.response.parse(
-      (
-        await app.inject({
-          method: "POST",
-          url: "/api/topics/dream-cheating/join",
-          payload: { intent: "spectator" },
-        })
-      ).json(),
-    );
     active.set("debate-dream-cheating", [
       {
         displayName: first.displayName,
@@ -741,12 +736,6 @@ describe("API contracts", () => {
         identity: third.participantIdentity,
         role: "debater",
         sideIndex: 1,
-      },
-      {
-        displayName: fourth.displayName,
-        identity: fourth.participantIdentity,
-        role: "spectator",
-        sideIndex: null,
       },
     ]);
 
@@ -774,6 +763,25 @@ describe("API contracts", () => {
     );
     expect(status.hostIdentity).toBe(second.participantIdentity);
     expect(status.state).toBe("WAITING");
+
+    const connectedDebaters = active.get("debate-dream-cheating")!;
+    expect(
+      connectedDebaters.every((participant) => participant.role === "debater"),
+    ).toBe(true);
+    active.set("debate-dream-cheating", connectedDebaters.slice(0, 1));
+    const missingDebater = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/start",
+      payload: { lobbyId: "dream-cheating", token: second.participantIdentity },
+    });
+    expect(missingDebater.statusCode).toBe(409);
+    active.set("debate-dream-cheating", connectedDebaters);
+    const nonHost = await app.inject({
+      method: "POST",
+      url: "/api/topics/dream-cheating/start",
+      payload: { lobbyId: "dream-cheating", token: third.participantIdentity },
+    });
+    expect(nonHost.statusCode).toBe(403);
 
     const started = await app.inject({
       method: "POST",
@@ -1821,3 +1829,180 @@ describe.each(["starter", "created"] as const)(
     });
   },
 );
+
+describe("invitation links", () => {
+  it.each(["public", "private"] as const)(
+    "joins %s invitations as a guest and rejects forged or closed invitations",
+    async (visibility) => {
+      const livekit = fakeLiveKit();
+      const app = await testApp(livekit.gateway);
+      const created = await app.inject({
+        method: "POST",
+        url: "/api/topics",
+        payload: {
+          name: `Invitation ${visibility}`,
+          sides: ["Yes", "No"],
+          category: "Society",
+          visibility,
+          displayName: "Host",
+          intent: "spectator",
+        },
+      });
+      const host = apiContract.createLobby.response.parse(created.json());
+      livekit.active.set(`debate-${host.lobbyId}`, [
+        {
+          identity: host.participantIdentity,
+          displayName: "Host",
+          role: "spectator",
+          sideIndex: null,
+        },
+      ]);
+      const copied = await app.inject({
+        method: "POST",
+        url: `/api/topics/${host.topicId}/invitation`,
+        payload: { lobbyId: host.lobbyId, token: host.token },
+      });
+      expect(copied.statusCode).toBe(200);
+      const url = new URL(
+        apiContract.invitation.response.parse(copied.json()).url,
+      );
+      const invitation = new URLSearchParams(url.hash.slice(1)).get(
+        "invitation",
+      )!;
+      const preview = await app.inject({
+        method: "POST",
+        url: `/api/topics/${host.topicId}/invitation-preview`,
+        payload: { invitation },
+      });
+      expect(preview.statusCode).toBe(200);
+      expect(preview.json().title).toBe(`Invitation ${visibility}`);
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: `/api/topics/${host.topicId}/invitation-preview`,
+            payload: { invitation: `${invitation}x` },
+          })
+        ).statusCode,
+      ).toBe(404);
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: `/api/topics/${host.topicId}/join`,
+            payload: { intent: "spectator", invitation },
+          })
+        ).statusCode,
+      ).toBe(200);
+      const first = await app.inject({
+        method: "POST",
+        url: `/api/topics/${host.topicId}/join`,
+        payload: {
+          intent: "debater",
+          displayName: "Guest",
+          sideIndex: 0,
+          invitation,
+        },
+      });
+      expect(first.statusCode).toBe(200);
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: `/api/topics/${host.topicId}/join`,
+            payload: {
+              intent: "debater",
+              displayName: "Another",
+              sideIndex: 0,
+              invitation,
+            },
+          })
+        ).statusCode,
+      ).toBe(409);
+      await app.inject({
+        method: "POST",
+        url: `/api/topics/${host.topicId}/close`,
+        payload: { lobbyId: host.lobbyId, token: host.token },
+      });
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: `/api/topics/${host.topicId}/invitation-preview`,
+            payload: { invitation },
+          })
+        ).statusCode,
+      ).toBe(404);
+    },
+  );
+});
+
+it("validates and limits host email invitations without allowing another participant to send them", async () => {
+  const livekit = fakeLiveKit();
+  let failing = false;
+  const sent: import("../mail/delivery.js").Email[] = [];
+  const app = await testApp(livekit.gateway, createMemoryPrivateLobbyStore(), {
+    publicOrigin: "https://example.test",
+    mail: {
+      async send(message) {
+        if (failing) throw new Error("Delivery unavailable");
+        sent.push(message);
+      },
+    },
+  });
+  const host = apiContract.createLobby.response.parse(
+    (
+      await app.inject({
+        method: "POST",
+        url: "/api/topics",
+        payload: {
+          name: "Email invitation",
+          sides: ["Yes", "No"],
+          category: "Society",
+          visibility: "private",
+          displayName: "Host",
+          intent: "spectator",
+        },
+      })
+    ).json(),
+  );
+  livekit.active.set(`debate-${host.lobbyId}`, [
+    {
+      identity: host.participantIdentity,
+      displayName: "Host",
+      role: "spectator",
+      sideIndex: null,
+    },
+    {
+      identity: "guest",
+      displayName: "Guest",
+      role: "spectator",
+      sideIndex: null,
+    },
+  ]);
+  const send = (token: string, email: string) =>
+    app.inject({
+      method: "POST",
+      url: `/api/topics/${host.topicId}/invitation`,
+      payload: { lobbyId: host.lobbyId, token, email },
+    });
+  expect((await send(host.token, "invalid-address")).statusCode).toBe(400);
+  expect((await send("guest", "teacher@example.test")).statusCode).toBe(403);
+  expect(sent).toHaveLength(0);
+  failing = true;
+  expect((await send(host.token, "failure@example.test")).statusCode).toBe(503);
+  failing = false;
+  const outcomes = [];
+  for (let i = 0; i < 9; i++)
+    outcomes.push(
+      (await send(host.token, `teacher${i}@example.test`)).statusCode,
+    );
+  expect(outcomes).toEqual(Array.from({ length: 9 }, () => 200));
+  expect((await send(host.token, "one-more@example.test")).statusCode).toBe(
+    429,
+  );
+  expect(sent).toHaveLength(9);
+  expect(sent[0]!.text).toContain(host.topicTitle);
+  expect(sent[0]!.text).toContain("No account is required.");
+  expect(sent[0]!.text).toContain("https://example.test/invite/");
+});

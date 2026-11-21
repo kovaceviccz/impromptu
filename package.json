@@ -9,6 +9,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "demo:seed": "docker compose exec -T -e DEMO_PRIVATE_CODE=DEBATE26 api node --import tsx apps/api/src/topics/seed-demo.ts",
     "build": "npm run build -w @impromptu/api && npm run build -w @impromptu/web",
     "ci": "sh scripts/ci.sh",
     "format": "oxfmt",
@@ -25,6 +26,7 @@
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.3",
     "@types/node": "26.6.1",
+    "@types/nodemailer": "8.0.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "husky": "9.1.7",

@@ -11,6 +11,7 @@ if command -v cygpath >/dev/null 2>&1; then
 fi
 
 APP_IMAGE=impromptu:ci \
+  APP_HOSTNAME=app.example.com \
   DATABASE_URL=postgresql://ci:ci@localhost/ci \
   MIGRATION_DATABASE_URL=postgresql://ci:ci@localhost/ci \
   LIVEKIT_API_KEY=ci-key \
@@ -20,6 +21,7 @@ APP_IMAGE=impromptu:ci \
     --file "$deploy_root/compose.yaml" config --quiet
 
 APP_IMAGE=impromptu:ci \
+  APP_HOSTNAME=app.example.com \
   DATABASE_URL=postgresql://ci:ci@localhost/ci \
   MIGRATION_DATABASE_URL=postgresql://ci:ci@localhost/ci \
   LIVEKIT_API_KEY=ci-key \

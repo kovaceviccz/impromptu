@@ -1339,7 +1339,7 @@ export default function Home() {
   return (
     <main className="grid h-svh grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-background">
       <SiteHeader account={account} />
-      <section className="mx-auto flex min-h-0 w-full max-w-3xl flex-col gap-3 px-4 py-3 sm:px-6 sm:py-5">
+      <section className="mx-auto flex min-h-0 w-full max-w-3xl flex-col gap-3 px-4 pt-3 pb-20 sm:px-6 sm:pt-5 sm:pb-24">
         {showMediaPermissionFailure ? (
           <p className="text-sm font-medium text-destructive" role="alert">
             {MEDIA_PERMISSION_MESSAGE}

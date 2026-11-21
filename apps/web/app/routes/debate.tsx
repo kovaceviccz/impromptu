@@ -1,3 +1,4 @@
+import { InvitationTools } from "~/components/invitation-tools";
 import {
   PRODUCT,
   joinBodySchema,
@@ -122,7 +123,7 @@ const chatTimeFormatter = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
 });
 const voteSurface =
-  "flex h-14 min-w-24 basis-0 shrink items-center justify-between gap-2 rounded-lg px-3 text-left whitespace-normal transition-[flex-grow,background-color,color] duration-300 ease-out";
+  "flex min-h-14 min-w-24 basis-0 shrink items-center justify-between gap-2 rounded-lg px-3 py-2 text-left whitespace-normal transition-[flex-grow,background-color,color] duration-300 ease-out";
 const sideTints = [
   "bg-emerald-50 text-emerald-900",
   "bg-red-50 text-red-900",
@@ -426,7 +427,7 @@ function DebateVideos({ join }: { join: JoinResult }) {
             >
               <h2
                 className={
-                  "font-editorial text-base font-semibold sm:text-lg " +
+                  "font-editorial text-base font-semibold [overflow-wrap:anywhere] sm:text-lg " +
                   (slot === 0 ? "text-emerald-900" : "text-red-900")
                 }
               >
@@ -797,9 +798,6 @@ function LobbyStatus({
   const participants = useRoomParticipants(join);
   const room = useRoomContext();
   const debaterCount = assignDebaters(participants, join).size;
-  const hasSpectator = participants.some(
-    (participant) => !publishes(participant, join),
-  );
   const isLobbyHost = join.hostIdentity === join.participantIdentity;
 
   useEffect(() => {
@@ -839,7 +837,7 @@ function LobbyStatus({
   return (
     <Button
       className="shrink-0"
-      disabled={starting || debaterCount !== 2 || !hasSpectator}
+      disabled={starting || debaterCount !== 2}
       type="button"
       onClick={onStart}
     >
@@ -1149,7 +1147,7 @@ function AudiencePanel({
   }
 
   return (
-    <aside className="flex min-h-0 flex-col bg-background">
+    <aside className="flex min-h-0 min-w-0 flex-col bg-background">
       <section className="bg-primary/5 px-4 py-3">
         <dl className="grid grid-cols-2 gap-6">
           <div>
@@ -1311,7 +1309,9 @@ function AudiencePanel({
                     style={{ flexGrow: (voteCounts[index] ?? 0) + 1 }}
                     value={String(index)}
                   >
-                    <span className="min-w-0 leading-tight">{side}</span>
+                    <span className="min-w-0 leading-tight [overflow-wrap:anywhere]">
+                      {side}
+                    </span>
                     <span className="shrink-0 tabular-nums">
                       {voteCounts[index]}{" "}
                       {voteCounts[index] === 1 ? "vote" : "votes"}
@@ -1338,7 +1338,9 @@ function AudiencePanel({
                     key={side}
                     style={{ flexGrow: (voteCounts[index] ?? 0) + 1 }}
                   >
-                    <dt className="min-w-0 leading-tight">{side}</dt>
+                    <dt className="min-w-0 leading-tight [overflow-wrap:anywhere]">
+                      {side}
+                    </dt>
                     <dd className="shrink-0 font-medium tabular-nums">
                       {voteCounts[index]}{" "}
                       {voteCounts[index] === 1 ? "vote" : "votes"}
@@ -1794,7 +1796,7 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
   }
 
   return (
-    <main className="grid h-svh grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-muted/30">
+    <main className="grid h-svh min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-muted/30">
       <LiveKitRoom
         key={join.token}
         audio={isDebater}
@@ -1830,18 +1832,18 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
         </Dialog>
         <header
           className={
-            "grid items-center gap-3 bg-[#fbfcfe] px-4 py-2 " +
+            "grid min-w-0 grid-cols-1 items-center gap-3 bg-[#fbfcfe] px-4 py-2 " +
             (join.state === "DEBATE_IN_PROGRESS" && roundEndsAt
-              ? "grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"
-              : "grid-cols-[minmax(0,1fr)_auto]")
+              ? "sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"
+              : "sm:grid-cols-[minmax(0,1fr)_auto]")
           }
         >
           <div className="min-w-0">
             <p className="font-editorial text-base font-semibold text-primary">
               {PRODUCT.name}
             </p>
-            <div className="flex min-w-0 items-baseline gap-3">
-              <h1 className="font-editorial min-w-0 truncate text-xl font-semibold tracking-tight sm:text-2xl">
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+              <h1 className="font-editorial min-w-0 max-w-full truncate text-xl font-semibold tracking-tight sm:text-2xl">
                 {join.lobbyName ?? join.topicTitle}
               </h1>
               {join.isCreator && join.visibility ? (
@@ -1903,8 +1905,9 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
           {join.state === "DEBATE_IN_PROGRESS" && roundEndsAt ? (
             <RoundCountdown endsAt={roundEndsAt} />
           ) : null}
-          <div className="flex items-center gap-2 justify-self-end">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 justify-self-end">
             {join.state === "WAITING" ? <DevicePreview /> : null}
+            <InvitationTools join={join} />
             <LeaveButton
               join={join}
               leaving={leaving}
@@ -1925,7 +1928,7 @@ export function DebateExperience({ join: initialJoin }: { join: JoinResult }) {
           ) : null}
         </header>
 
-        <div className="grid min-h-0 grid-rows-[minmax(12rem,36svh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)] lg:grid-rows-1">
+        <div className="grid min-h-0 min-w-0 grid-rows-[minmax(12rem,36svh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)] lg:grid-rows-1">
           <DebateVideos join={join} />
           <AudiencePanel
             voting={voting}
