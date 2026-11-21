@@ -65,6 +65,8 @@ deploy_host=$(sh "$deploy_root/scripts/tofu.sh" output -raw server_ipv4)
 
 gh api --method PUT "repos/$repository/environments/production" >/dev/null
 gh variable set AUTO_DEPLOY_ENABLED --repo "$repository" --body "$auto_deploy"
+gh variable set MAILBOX_ACCOUNT_IDS --repo "$repository" --env production \
+  --body "${MAILBOX_ACCOUNT_IDS:-}"
 gh variable set APP_HOSTNAME --repo "$repository" --env production \
   --body "$APP_HOSTNAME"
 gh variable set LIVEKIT_HOSTNAME --repo "$repository" --env production \

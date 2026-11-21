@@ -131,9 +131,17 @@ for attempt in 1 2; do
     --env DATABASE_URL=postgresql://impromptu:impromptu@127.0.0.1:5432/migration_check \
     --env DEMO_PRIVATE_CODE=DEBATE26 \
     impromptu:ci node apps/api/dist/topics/seed-demo.js
+  if [ "$attempt" = 1 ]; then
+    # Earlier seeds used an unclaimed guest identity; upgrade only the demo rows.
+    docker compose exec -T postgres psql -U impromptu -d migration_check \
+      -v ON_ERROR_STOP=1 -c "update private_lobby set creator_identity = 'a1000000-0000-4000-8000-000000000001' where topic_id = id::text" >/dev/null
+  fi
 done
 test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
   -Atc "select count(*) from private_lobby where topic_id = id::text")" = 2
+
+test "$(docker compose exec -T postgres psql -U impromptu -d migration_check \
+  -Atc "select count(*) from private_lobby where topic_id = id::text and creator_identity = 'd3000000-0000-4000-8000-000000000001'")" = 2
 
 ci_stage='browser tests'
 if command -v cygpath >/dev/null 2>&1; then

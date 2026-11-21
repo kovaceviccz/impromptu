@@ -65,16 +65,19 @@ export async function seedDemoTopics(databaseUrl: string, privateCode: string) {
           throw new Error(`Existing demo topic ${topic.id} does not match.`);
         }
         if (
+          existing.creatorIdentity !== topic.creatorIdentity ||
           existing.category !== topic.category ||
           JSON.stringify(existing.tags ?? []) !== JSON.stringify(topic.tags)
         ) {
-          await orm.em
-            .fork()
-            .nativeUpdate(
-              PrivateLobbyEntity,
-              { id: topic.id },
-              { category: topic.category, tags: topic.tags },
-            );
+          await orm.em.fork().nativeUpdate(
+            PrivateLobbyEntity,
+            { id: topic.id },
+            {
+              creatorIdentity: topic.creatorIdentity,
+              category: topic.category,
+              tags: topic.tags,
+            },
+          );
         }
         continue;
       }

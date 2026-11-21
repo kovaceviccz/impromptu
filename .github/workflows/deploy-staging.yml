@@ -94,6 +94,8 @@ jobs:
       - name: Install staging secrets
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          APP_HOSTNAME: ${{ vars.APP_HOSTNAME }}
+          MAILBOX_ACCOUNT_IDS: ${{ vars.MAILBOX_ACCOUNT_IDS }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
           LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
@@ -105,10 +107,11 @@ jobs:
             ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
         run: |
           umask 077
+          : "${APP_HOSTNAME:?Set APP_HOSTNAME in the environment}"
           : "${DATABASE_URL:?Set DATABASE_URL in the staging environment}"
           : "${MIGRATION_DATABASE_URL:?Set MIGRATION_DATABASE_URL in the staging environment}"
-          printf 'APP_IMAGE=%s\nDATABASE_URL=%s\nMIGRATION_DATABASE_URL=%s\nLIVEKIT_API_KEY=%s\nLIVEKIT_API_SECRET=%s\nLIVEKIT_HOSTNAME=%s\n' \
-            "$APP_IMAGE" "$DATABASE_URL" "$MIGRATION_DATABASE_URL" "$LIVEKIT_API_KEY" "$LIVEKIT_API_SECRET" "$LIVEKIT_HOSTNAME" \
+          printf 'APP_IMAGE=%s\nAPP_HOSTNAME=%s\nMAILBOX_ACCOUNT_IDS=%s\nDATABASE_URL=%s\nMIGRATION_DATABASE_URL=%s\nLIVEKIT_API_KEY=%s\nLIVEKIT_API_SECRET=%s\nLIVEKIT_HOSTNAME=%s\n' \
+            "$APP_IMAGE" "$APP_HOSTNAME" "$MAILBOX_ACCOUNT_IDS" "$DATABASE_URL" "$MIGRATION_DATABASE_URL" "$LIVEKIT_API_KEY" "$LIVEKIT_API_SECRET" "$LIVEKIT_HOSTNAME" \
             > "$RUNNER_TEMP/impromptu-staging.env"
           printf '%s\n' "$ORIGIN_CERTIFICATE" > "$RUNNER_TEMP/staging-origin.pem"
           printf '%s\n' "$ORIGIN_PRIVATE_KEY" > "$RUNNER_TEMP/staging-origin-key.pem"
