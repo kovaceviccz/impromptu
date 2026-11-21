@@ -14,7 +14,9 @@ export async function openDatabase(databaseUrl: string) {
   const sslMode = connectionUrl.searchParams.get("sslmode");
   return MikroORM.init({
     clientUrl: databaseUrl,
+    pool: { min: 0, max: 5, idleTimeoutMillis: 10_000 },
     driverOptions: {
+      connectionTimeoutMillis: 2000,
       ssl:
         sslMode === "require" ||
         sslMode === "verify-ca" ||

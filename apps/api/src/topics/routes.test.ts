@@ -36,6 +36,7 @@ const debaterInput = {
 
 afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
+  vi.useRealTimers();
 });
 
 function fakeLiveKit(
@@ -1288,6 +1289,79 @@ describe("LiveKit grants", () => {
   );
 });
 
+describe("deadline scheduling", () => {
+  it("does not query idle stores after recovering deadlines once", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const store = createMemoryPrivateLobbyStore();
+    const publicStore = createMemoryPublicLobbyStateStore();
+    const checks = [
+      vi.spyOn(store, "dueRounds"),
+      vi.spyOn(store, "dueVotes"),
+      vi.spyOn(publicStore, "dueRounds"),
+      vi.spyOn(publicStore, "dueVotes"),
+    ];
+    const app = await testApp(fakeLiveKit().gateway, store, {
+      publicLobbyState: publicStore,
+    });
+    await app.ready();
+    for (const check of checks) expect(check).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+    for (const check of checks) expect(check).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers public voting after restart and retries a failed deadline", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const publicStore = createMemoryPublicLobbyStateStore([
+      {
+        topicId: "dream-cheating",
+        hostIdentity: "host",
+        state: "VOTING",
+        voting: {
+          roundId: "recovered-round",
+          endsAt: new Date(Date.now() - 1000).toISOString(),
+          eligible: [],
+          votes: {},
+        },
+      },
+    ]);
+    const update = vi
+      .spyOn(publicStore, "updateState")
+      .mockRejectedValueOnce(new Error("temporary database failure"));
+    const app = await testApp(fakeLiveKit().gateway, undefined, {
+      publicLobbyState: publicStore,
+    });
+    await app.ready();
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await publicStore.find("dream-cheating"))?.state).toBe("VOTING");
+    expect(update).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect((await publicStore.find("dream-cheating"))?.state).toBe("ENDED");
+    expect(update).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(update).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancels recovered timers when the API closes", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const publicStore = createMemoryPublicLobbyStateStore([
+      {
+        topicId: "dream-cheating",
+        hostIdentity: "host",
+        state: "DEBATE_IN_PROGRESS",
+        roundEndsAt: new Date(Date.now() + 60_000),
+      },
+    ]);
+    const find = vi.spyOn(publicStore, "find");
+    const app = await testApp(fakeLiveKit().gateway, undefined, {
+      publicLobbyState: publicStore,
+    });
+    await app.ready();
+    await app.close();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(find).not.toHaveBeenCalled();
+  });
+});
+
 describe("ending rounds", () => {
   const lobbyId = "a5ca122c-e3a2-4dc3-aa8a-8a3c9aac5215";
   const creatorIdentity = "892203fc-0be5-43cb-a4ae-383bf226e947";
@@ -1381,6 +1455,7 @@ describe("ending rounds", () => {
     expect(status.json().state).toBe("VOTING");
   });
   it("rejects manual ending for timed rounds and automatically ends expired deadlines", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
     const { app, store } = await activeLobby(new Date(Date.now() + 60_000));
     const response = await app.inject({
       method: "POST",
@@ -1388,16 +1463,8 @@ describe("ending rounds", () => {
       payload: { lobbyId, token: creatorIdentity },
     });
     expect(response.statusCode).toBe(409);
-    await store.updateState(
-      lobbyId,
-      "DEBATE_IN_PROGRESS",
-      "DEBATE_IN_PROGRESS",
-      new Date(0),
-    );
-    await vi.waitFor(
-      async () => expect((await store.findById(lobbyId))?.state).toBe("VOTING"),
-      { timeout: 2500 },
-    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect((await store.findById(lobbyId))?.state).toBe("VOTING");
   });
 
   it("opens a 30-second voting window and rejects stale submissions after closing", async () => {
@@ -1491,6 +1558,7 @@ describe("ending rounds", () => {
   ])(
     "finalizes results consistently for both clients with totals $counts",
     async ({ votes, counts, winningSide, wins, losses }) => {
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
       const debateResults = createMemoryDebateResultStore();
       const livekit = fakeLiveKit();
       const store = createMemoryPrivateLobbyStore([
@@ -1542,11 +1610,8 @@ describe("ending rounds", () => {
         votes,
       });
 
-      await vi.waitFor(
-        async () =>
-          expect((await store.findById(lobbyId))?.state).toBe("ENDED"),
-        { timeout: 2500 },
-      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect((await store.findById(lobbyId))?.state).toBe("ENDED");
       await expect(
         debateResults.statisticsFor("side-0-account"),
       ).resolves.toMatchObject({
@@ -1710,6 +1775,7 @@ describe.each(["starter", "created"] as const)(
     }
 
     it("reopens after both debaters leave and starts the next round with fresh voting", async () => {
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
       const { id, voting, app, livekit, read, card, debateResults, expire } =
         await completedLobby();
       await debateResults.recordResults(
@@ -1789,10 +1855,8 @@ describe.each(["starter", "created"] as const)(
       expect(next.votes).toEqual({});
       expect(next.eligible).toContain("viewer");
       await expire();
-      await vi.waitFor(
-        async () => expect((await read())?.state).toBe("ENDED"),
-        { timeout: 2500 },
-      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect((await read())?.state).toBe("ENDED");
       await expect(
         debateResults.statisticsFor("a1000000-0000-4000-8000-000000000001"),
       ).resolves.toMatchObject({ totalDebates: 2, wins: 2 });

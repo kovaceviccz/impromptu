@@ -23,6 +23,10 @@ if (config.DEV_DATABASE_RESET === "true") {
   await orm.migrator.up();
 }
 const app = await buildApp({
+  checkDatabase: async () => {
+    const pool = await orm.em.getConnection().getNativeClient();
+    await pool.query({ text: "select 1", query_timeout: 2000 });
+  },
   accounts: createPostgresAccountStore(orm),
   debateResults: createPostgresDebateResultStore(orm),
   privateLobbies: createPostgresPrivateLobbyStore(orm),
